@@ -1,0 +1,199 @@
+package com.tappet.app.bridge
+
+import android.util.Log
+import com.tappet.app.accessibility.TappetAccessibilityService
+import com.tappet.app.device.DEFAULT_LONG_PRESS_MS
+import com.tappet.app.device.DeviceAction
+import com.tappet.app.device.DeviceActionResult
+import com.tappet.app.device.MAX_LONG_PRESS_MS
+import com.tappet.app.device.MIN_LONG_PRESS_MS
+import com.tappet.app.device.PressKey
+import com.tappet.app.device.SwipeDirection
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+
+/**
+ * dsh 设备插件的本地桥：只监听 127.0.0.1，token 鉴权，把 JSON 动作转成
+ * [DeviceAction] 交给无障碍执行层。
+ *
+ * 只服务本进程内的内嵌 Node（端口随机、token 每次进程启动随机），不对外暴露。
+ */
+object DeviceBridgeServer {
+  private const val TAG = "TappetBridge"
+
+  private val started = AtomicBoolean(false)
+  private val token = UUID.randomUUID().toString()
+  @Volatile private var port: Int = -1
+
+  /** 启动（幂等），返回给 Node 的 base URL；token 通过 [authToken] 读取。 */
+  fun start(): String {
+    if (started.compareAndSet(false, true)) {
+      val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
+      port = socket.localPort
+      Thread {
+          Log.i(TAG, "bridge listening on 127.0.0.1:$port")
+          socket.use {
+            while (!it.isClosed) {
+              val client = runCatching { it.accept() }.getOrElse { break }
+              Thread { handle(client) }.start()
+            }
+          }
+        }
+        .apply { isDaemon = true }
+        .start()
+    }
+    return "http://127.0.0.1:$port"
+  }
+
+  fun authToken(): String = token
+
+  private fun handle(client: Socket) {
+    client.use { socket ->
+      val input = BufferedInputStream(socket.getInputStream())
+      val output = BufferedOutputStream(socket.getOutputStream())
+      val response =
+        runCatching { dispatch(input) }
+          .getOrElse { throwable ->
+            Log.w(TAG, "request failed: ${throwable.javaClass.simpleName}")
+            """{"ok":false,"summary":"桥处理失败：${throwable.javaClass.simpleName}"}"""
+          }
+      val bytes = response.toByteArray(Charsets.UTF_8)
+      val header =
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Type: application/json; charset=utf-8\r\n" +
+          "Content-Length: ${bytes.size}\r\n" +
+          "Connection: close\r\n\r\n"
+      output.write(header.toByteArray(Charsets.US_ASCII))
+      output.write(bytes)
+      output.flush()
+    }
+  }
+
+  /** 解析并执行一个请求；这里极简：只支持本地桥自己的 POST /action。 */
+  private fun dispatch(input: BufferedInputStream): String {
+    val requestLine = readLine(input) ?: return errorJson("空请求")
+    val parts = requestLine.split(' ')
+    if (parts.size < 2 || parts[0] != "POST" || !parts[1].startsWith("/action")) {
+      return errorJson("不支持的请求：$requestLine")
+    }
+    var contentLength = 0
+    var authorized = false
+    while (true) {
+      val line = readLine(input) ?: break
+      if (line.isEmpty()) break
+      val colon = line.indexOf(':')
+      if (colon <= 0) continue
+      val name = line.substring(0, colon).trim().lowercase()
+      val value = line.substring(colon + 1).trim()
+      when (name) {
+        "content-length" -> contentLength = value.toIntOrNull() ?: 0
+        "x-android-bridge-token" -> authorized = value == token
+      }
+    }
+    if (!authorized) return errorJson("未授权")
+    val body = ByteArray(contentLength)
+    var read = 0
+    while (read < contentLength) {
+      val count = input.read(body, read, contentLength - read)
+      if (count < 0) break
+      read += count
+    }
+    val root =
+      runCatching { Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject }.getOrNull()
+        ?: return errorJson("非法 JSON")
+    val action = root.string("action") ?: return errorJson("缺少 action")
+    val deviceAction = toDeviceAction(action, root) ?: return errorJson("未知或参数不全的 action：$action")
+    val service = TappetAccessibilityService.get()
+    val result =
+      if (service == null) {
+        DeviceActionResult(false, "无障碍服务未连接：先在探针页或系统设置里启用")
+      } else {
+        runBlocking { service.execute(deviceAction) }
+      }
+    // 只记动作与结构化结果（计数），不记 payload 正文
+    Log.i(TAG, "$action ok=${result.ok} ${result.summary}")
+    return resultJson(result)
+  }
+
+  private fun toDeviceAction(action: String, root: JsonObject): DeviceAction? =
+    when (action) {
+      "read_screen" -> DeviceAction.ReadScreen
+      "tap_node" -> root.int("ref")?.let(DeviceAction::TapNode)
+      "tap_point" -> {
+        val x = root.int("x")
+        val y = root.int("y")
+        if (x == null || y == null) null else DeviceAction.TapPoint(x, y)
+      }
+      "long_press" -> {
+        val duration =
+          root.int("duration_ms")?.toLong()?.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS)
+            ?: DEFAULT_LONG_PRESS_MS
+        val ref = root.int("ref")
+        if (ref != null) {
+          DeviceAction.LongPressNode(ref, duration)
+        } else {
+          val x = root.int("x")
+          val y = root.int("y")
+          if (x == null || y == null) null else DeviceAction.LongPressPoint(x, y, duration)
+        }
+      }
+      "type_text" -> root.string("text")?.let(DeviceAction::TypeText)
+      "press" ->
+        root.string("key")?.let { raw ->
+          runCatching { DeviceAction.Press(PressKey.valueOf(raw.uppercase())) }.getOrNull()
+        }
+      "press_back" -> DeviceAction.Press(PressKey.BACK)
+      "launch_app" -> root.string("query")?.let(DeviceAction::LaunchApp)
+      "screenshot" -> DeviceAction.Screenshot
+      "swipe" ->
+        root.string("direction")?.let { raw ->
+          runCatching { DeviceAction.Swipe(SwipeDirection.valueOf(raw.uppercase())) }.getOrNull()
+        }
+      else -> null
+    }
+
+  private fun readLine(input: BufferedInputStream): String? {
+    val buffer = StringBuilder()
+    while (true) {
+      val next = input.read()
+      if (next < 0) return if (buffer.isEmpty()) null else buffer.toString()
+      if (next == '\n'.code) return buffer.toString().trimEnd('\r')
+      buffer.append(next.toChar())
+    }
+  }
+
+  private fun resultJson(result: DeviceActionResult): String =
+    buildJsonObject {
+        put("ok", result.ok)
+        put("summary", result.summary)
+        result.payload?.let { put("payload", it) }
+      }
+      .toString()
+
+  private fun errorJson(message: String): String =
+    buildJsonObject {
+        put("ok", false)
+        put("summary", message)
+      }
+      .toString()
+
+  private fun JsonObject.string(key: String): String? =
+    this[key]?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+
+  private fun JsonObject.int(key: String): Int? =
+    this[key]?.let { runCatching { it.jsonPrimitive.intOrNull }.getOrNull() }
+}

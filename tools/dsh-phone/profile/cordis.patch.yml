@@ -1,0 +1,156 @@
+# phone profile：Android 上 dsh 的用户 patch 层（已在 PC 上验证组合可跑通，见 docs/dsh-android.md §7）。
+# 原则：只留 agent kernel + LLM + 会话；禁用一切依赖 shell / node-pty / sharp /
+# node-addon-system / pnpm / 客户端 loader 的行。
+
+# --- 桌面/原生/客户端行禁用 ---
+# 注：typert 三件套（registry / loader / api-gateway）是 Web 表层 RPC 的必需行，不能禁。
+- id: plugin-manager
+  disabled: true
+- id: image-offload
+  disabled: true
+# 会话标题是纯展示能力，headless 用不上，且它的 LLM provider 对 mount 顺序有假设
+- id: session-title
+  disabled: true
+- id: session-title-llm
+  disabled: true
+- id: spill-local
+  disabled: true
+- id: spill-policy
+  disabled: true
+- id: subprocess
+  disabled: true
+- id: sandbox
+  disabled: true
+- id: sandbox-policy
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+- id: shell-env
+  disabled: true
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: fs-sandbox
+  disabled: true
+- id: fs-observation-policy
+  disabled: true
+
+# --- 附件存储：换成纯 JS 实现（Android 没有 sharp） ---
+# dsh-base 默认挂 @deepseek-ai/dsh-attachment-local，它用 sharp 做归一化与质量阶梯
+# 编码，而 sharp 没有 Android 产物（bundle 用 --os=android 装，原生二进制根本不在），
+# 一存图就报 Could not load the "sharp" module。这里禁掉，改挂本仓库的纯 JS 等价实现
+# （见文件末尾 insert 段的 android-attachments / tools/dsh-phone/android-attachments）。
+- id: attachment-local
+  disabled: true
+
+# --- DeepSeek 官方通道/遥测禁用（本轮只用 opencode zen） ---
+- id: deepseek-llm-api-extensions
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true
+- id: llm-deepseek
+  disabled: true
+- id: llm-deepseek-account
+  disabled: true
+- id: deepseek-account
+  disabled: true
+- id: otel
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+
+# --- 模型：pi-ai 自定义路由指向 opencode zen（x-opencode-session 是 zen 的硬要求） ---
+- id: llm-pi-ai
+  config:
+    providers:
+      opencode-zen:
+        displayName: opencode zen
+        apiKeyEnv: TAPPET_LLM_KEY
+        api: openai-completions
+        baseURL: https://opencode.ai/zen/go/v1
+        headers:
+          x-opencode-session: !!js process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile'
+        models:
+          - id: deepseek-v4.1-flash
+            # 视觉输入。pi-ai 目录里 deepseek-v4.1-flash 本来就声明 input 含 image，
+            # 实测 zen 端点接受 image_url 并能正确识别图内容；但不显式声明时
+            # MODALITIES 只当 text，工具结果里的图会被 pi-ai 以
+            # "does not support image input" 直接拒掉。
+            input:
+              - text
+              - image
+        compat:
+          thinkingFormat: deepseek
+- id: agent-default-model
+  config:
+    provider: opencode-zen
+    model: deepseek-v4.1-flash
+
+# --- 手机 agent 的系统提示 ---
+- id: system-prompt
+  config:
+    personaPrefix: |-
+      你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面
+      （读屏、点按、长按、输入、按键、启动应用、滑动），帮用户完成任务。
+      每次只做一个原子动作；动作前先读屏，动作后重新读屏确认结果；同一动作失败两次就换策略；
+      只做用户明确要求的事。
+    personaSuffix: ''
+
+- id: agent-preset-registry
+  config:
+    default: phone
+
+- insert:
+    - id: preset-phone
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: phone
+        order: 0
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              complete: true
+              prefix: |-
+                你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面
+                （读屏、点按、长按、输入、按键、启动应用、滑动），帮用户完成任务。
+                每次只做一个原子动作；动作前先读屏，动作后重新读屏确认结果；同一动作失败两次就换策略；
+                只做用户明确要求的事。
+          - id: android-tools
+            name: dsh-plugin-android-tools
+# --- 文件系统：Android 没有 bwrap/node-addon-system，改用本地 FS provider ---
+# dsh-fs-local 的 koffi 只在 win32 分支懒加载，Android 上走 node:fs 直连。
+- insert:
+    - id: fs
+      name: '@deepseek-ai/dsh-fs-local'
+# --- 附件存储：工具结果里的图要经它落盘才能进模型请求 ---
+# dsh 自带的 @deepseek-ai/dsh-attachment-local 依赖 sharp（无 Android 产物），
+# 这里换成纯 JS 的等价实现（源码在 tools/dsh-phone/android-attachments）。
+- insert:
+    - id: android-attachments
+      name: 'dsh-android-attachments'
+
+# --- 设备工具：本地桥（Kotlin DeviceBridgeServer）→ 无障碍执行层 ---
+# 插件源码是独立公开仓库的 git submodule（tools/dsh-phone/plugins/*）。
+- insert:
+    - id: dsh-android-tools
+      name: 'dsh-plugin-android-tools'
+
+# --- SDK stdio JSON-RPC：Kotlin 宿主当 client，提交任务并接收会话事件 ---
+# stdout 归 JSON-RPC（部署约束：不要挂 stdout logger）；诊断走 stderr。
+- insert:
+    - id: sdk-jsonrpc-server
+      name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+      config:
+        maxTokensAsSuccess: true

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 仅 debug 构建存在：探针四问 + 执行层动作的 adb 触发入口（release 不含这些类） -->
+    <application>
+        <receiver
+            android:name=".accessibility.ProbeCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.tappet.app.debug.PROBE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".accessibility.DeviceActionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.tappet.app.debug.ACTION" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".node.NodeDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.tappet.app.debug.NODE" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

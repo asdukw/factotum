@@ -1,0 +1,4 @@
+// dsh bundle 层：安装后把 Android 附件存储插入运行时（提供 ctx.attachments）。
+- insert:
+    - id: dsh-android-attachments
+      name: 'dsh-android-attachments'

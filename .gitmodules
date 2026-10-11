@@ -1,0 +1,3 @@
+[submodule "tools/dsh-phone/plugins/android-tools"]
+	path = tools/dsh-phone/plugins/android-tools
+	url = https://github.com/asdukw/dsh-plugin-android-tools.git

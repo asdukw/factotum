@@ -1,0 +1,37 @@
+# --- 敏感数据与密钥 ---
+# 明文数据库、fixture、导出物和密钥绝不入库。
+*.db
+*.db-wal
+*.db-shm
+keys.json
+all_keys.json
+
+# --- 本地工具 ---
+.workbuddy-ai/
+
+# --- 审计产物（tools/audit/collect.mjs 产出）---
+# 含屏幕正文与工具结果原文，属敏感数据：工具与任务集入库，产物不入库。
+tools/audit/runs/
+
+# --- 临时文件 ---
+# tmp/ 是纯本地草稿区，整体忽略；不提交占位文件。需要留存的东西请放 tools/ 或 docs/。
+tmp/
+
+# --- 编辑器与系统文件 ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- 兜底 ---
+# 根目录下划线开头的临时脚本。
+/_*
+
+# --- 内嵌 Node 运行时（tools/fetch-libnode.ps1 按 pinned 版本拉取） ---
+android/.libnode-cache/
+android/app/libnode/
+android/app/src/main/jniLibs/
+# vendored dsh 运行时（tools/bundle-dsh.ps1 产出）；hello 脚本仍在 nodejs-project/ 里入库
+android/app/src/main/assets/nodejs/
+android/.dsh-cache/
+android/app/src/main/assets/dsh-runtime.zip

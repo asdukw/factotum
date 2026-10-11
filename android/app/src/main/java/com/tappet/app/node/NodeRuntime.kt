@@ -3,7 +3,7 @@ package com.tappet.app.node
 import android.content.Context
 import android.system.Os
 import android.util.Log
-import com.tappet.app.BuildConfig
+import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.bridge.DeviceBridgeServer
 import java.io.BufferedInputStream
 import java.io.File
@@ -197,7 +197,7 @@ object NodeRuntime : NodeLineListener {
           buildJsonObject {
             put("cwd", File(context.applicationContext.filesDir, "dsh-home").absolutePath)
             put("provider", PROVIDER)
-            put("model", BuildConfig.AGENT_MODEL)
+            put("model", AgentConfigStore.current(context.applicationContext).model)
             // 暂不传 reasoningEffort：pi-ai 路由会校验 effort 白名单，低值会被拒；
             // 省略即用模型默认（与 headless 行为一致）。设置页化后再暴露。
           }
@@ -399,12 +399,22 @@ object NodeRuntime : NodeLineListener {
     Os.setenv("NODE_OPTIONS", "--max-old-space-size-percentage=25", true)
   }
 
-  /** dsh 专用 env：DSH_HOME、zen 密钥与设备桥（都不落日志）。 */
+  /**
+   * dsh 专用 env：DSH_HOME、LLM 端点与设备桥（密钥不落日志）。
+   *
+   * 这里是**一次性**的：env 只在 Node 进程启动时设一遍，dsh profile 也只在 mount 时读
+   * `process.env`。所以设置页改完配置要**下次启动**才生效 —— 不在这里重拉 Node 进程，
+   * 因为内嵌 Node 是宿主进程内的单实例，`process.exit()` / SDK `shutdown` 会把整个 App
+   * 带崩（见 AGENTS.md「常见坑」）。
+   */
   private fun applyDshEnvironment(app: Context) {
     val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
+    val config = AgentConfigStore.current(app)
     Os.setenv("DSH_HOME", home.absolutePath, true)
     Os.setenv("TAPPET_WORKDIR", home.absolutePath, true)
-    Os.setenv("TAPPET_LLM_KEY", BuildConfig.AGENT_API_KEY, true)
+    Os.setenv("TAPPET_LLM_KEY", config.apiKey, true)
+    // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
+    Os.setenv("TAPPET_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("TAPPET_LLM_SESSION", persistentSessionId(app), true)
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)

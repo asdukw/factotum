@@ -37,11 +37,12 @@ cd android
 失败）。正确流程是产包后手动 `adb install -r`，再单独跑需要的测试任务。
 完整规则与重装注意事项见 [AGENTS.md](AGENTS.md)。
 
-- API key **只在 debug 变体**由构建期从 `android/local.properties`（gitignored）注入
-  BuildConfig：`tappet.agent.apiKey=...`。绝不入库、不进日志。
-  **release 变体留空**（`AGENT_API_KEY=""`）：BuildConfig 是编译期常量，会以明文进 dex，
-  带密钥的包一旦发出去密钥就等于公开。所以发布物里没有密钥，由使用者运行时自备
-  （设置页仍待做，在此之前 release 包不可用）。
+- **API key 由使用者自己在设置页填**（抽屉 → 设置），存进 Android Keystore 封装的
+  `SecretVault`：密文落盘、硬件封装不可导出、不进云备份、不回填界面、不进日志。
+  设置页保存后**下次启动生效**（内嵌 Node 的 env 只在启动时读一次）。
+- `android/local.properties` 里的 `tappet.agent.apiKey` 只是**开发机上的默认值**，
+  优先级低于设置页。要留意它会以明文进 dex（BuildConfig 是编译期常量），所以
+  **发布物只发源码，不发 APK**；真要对外发包先跑 `tools/check-sensitive.ps1 -ApkPath <包>`。
 - 会话库 `databases/tappet.db` 用 SQLCipher 加密，口令由 Android Keystore 封装：
   **卸载即永久丢失，外部不可解、不可拷。**
 - 项目原名 Memex，2026-10-12 更名为 **Tappet**（含 `applicationId`，见 [AGENTS.md](AGENTS.md)
@@ -59,8 +60,9 @@ docs/             android-accessibility.md：无障碍执行层系统探测与�
 ## 隐私红线
 
 1. **密钥永不入库**：`android/local.properties` 已在 `.gitignore` 内，不要改。
-2. **密钥不进发布物**：只有 debug 变体注入 API key；发布物（源码、release 包）里
-   不得出现密钥，打包前用 `strings` 扫一遍产物确认。
+2. **密钥不进发布物**：源码里不得出现密钥；**APK 的 dex 里一定会有**（BuildConfig 是
+   编译期常量、明文），所以发布物只发源码。真要发包先跑
+   `tools/check-sensitive.ps1 -ApkPath <包>`。
 3. **默认全本地**：手机端数据是否发往云端 LLM 由用户逐次决定。
 4. **不采集他人数据**：随聊天记录管线一并移除；如需重新引入任何采集能力，
    先在设计文档里写清边界与隐私闸门，再动代码。

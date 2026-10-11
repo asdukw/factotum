@@ -46,6 +46,11 @@ Gradle 工程名、CMake 工程名、JNI 符号全部换新，**没有遗留**�
 | `PassphraseVault` 的 `prefsName` | 封装口令的 SharedPreferences 文件 |
 | `PassphraseVault` 的 `keyAlias` | Keystore 里的密钥别名 |
 
+**另一组同类身份（2026-10-12 设置页引入）**：`SecretVault` 的 `prefsName` / `keyAlias`
+（"tappet_agent_secret" / "tappet-agent-llm-key-v1"）与 `AgentConfigStore.PREFS_NAME`。
+改这几个字面量的后果比上面轻（丢的是用户填的 API key，不是聊天库），但同样静默：
+表现出来只是「设置页说我配过，但用起来像没配」。改之前先想清楚要不要保留用户已填的 key。
+
 组件名统一是 `com.tappet.app/...`：`-n com.tappet.app/.node.NodeDebugReceiver`、
 `run-as com.tappet.app`、`dumpsys package com.tappet.app`。
 `OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读 `BuildConfig.APPLICATION_ID`，会自己跟随。
@@ -75,16 +80,17 @@ android/                        唯一运行时（Kotlin / Compose）
     agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ 已暂停的手写 LLM 客户端
     accessibility/              AccessibilityService（执行层实现）
     bridge/                     DeviceBridgeServer（本地 HTTP 桥）
-    data/                       Room + SQLCipher 持久化、Keystore 口令
+    data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/ 下的 SecretVault 存用户填的 API key
     device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
     node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
-    ui/                         Compose 界面（聊天 / 首页 / 四问探针）
+    ui/                         Compose 界面（聊天 / 首页 / 四问探针 / 设置）
   app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
   app/src/test/                 JVM 单测
   app/src/androidTest/          真机（instrumented）测试
 tools/                          PC 侧脚本与 dsh 适配层
   fetch-libnode.ps1             拉取 pinned libnode + libc++_shared
   bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip
+  check-sensitive.ps1           发布前自检：扫工作树 + 全历史 +（可选）APK 里的密钥
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
@@ -122,8 +128,8 @@ docs/                           深度文档
 .\tools\fetch-libnode.ps1
 .\tools\bundle-dsh.ps1
 
-# API key 放在 android/local.properties（gitignored）。**只有 debug 变体**在构建期把它
-# 注入 BuildConfig；release 变体固定空串（见 app/build.gradle.kts 的注释）：
+# API key 的正式入口是**设置页**（抽屉 → 设置），存进 Keystore 封装的 SecretVault。
+# android/local.properties 只是**开发机默认值**（gitignored），优先级低于设置页：
 #   tappet.agent.apiKey=...        （也可用环境变量 TAPPET_AGENT_API_KEY）
 #   tappet.agent.baseUrl / model / reasoningEffort / proxyHost / proxyPort
 ```
@@ -186,6 +192,19 @@ node tools/audit/collect.mjs --label <名字>   # 只采集最新会话
   上一轮改名时有一批手工脚本因为硬编码旧包名一起失效，而且是**静默**失效 ——
   报出来像「没有 session 目录」，看着像设备问题。要留存的东西放 `tools/` 或 `docs/`，别放 `tmp/`。
 - 跨运行才能看出「工具设计问题」这类结论，所以 `index.json` 要留着累积，别删。
+
+### 发布前敏感信息自检
+
+```powershell
+.\tools\check-sensitive.ps1          # 源码：扫工作树 + 全部 git 历史
+.\tools\check-sensitive.ps1 -ApkPath <包>   # 要对外发包时，连包一起扫
+.\tools\check-sensitive.ps1 -SelfTest       # 只验证「扫描器确实会命中」
+```
+
+- 输出**不打印密钥本体**，只报定位；`exit 1` = 有命中。
+- 它认不出「真实标识」——那组启发式只报警不判失败，判断得靠人（历史真出过这类泄漏）。
+- **`-SelfTest` 不是可选项**：不确认扫描器能命中，空结果就只是「碰巧通过」。
+- 密钥从 `android/local.properties` 读（只读长度，不打印）。
 
 ## 真机（一加 15T / ColorOS）
 
@@ -313,5 +332,7 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 | dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘上的会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 加进程级 runtimeTag 后缀再映射回来，别去掉 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
-| release 包跑任务立刻报缺 API key | 刻意的：release 不注入密钥（BuildConfig 是编译期常量、明文进 dex）→ 要用就装 debug 包，或等设置页 |
+| 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置。构建期只提供开发机默认值 |
+| 设置页保存了却没生效 | 设计如此：内嵌 Node 的 env 与 dsh profile 只在启动时读一次 → 重启 App |
+| 设置页显示「已配置」但请求 401 | 多半是继承到了构建期默认值（`local.properties` 里那把 key），换设备就不对了 → 在设置页重填自己的 key |
 | 想确认发布物里没有密钥 | `strings` 扫 APK 的 `classes*.dex`，或直接 grep 到空 |

@@ -78,7 +78,10 @@
         displayName: opencode zen
         apiKeyEnv: TAPPET_LLM_KEY
         api: openai-completions
-        baseURL: https://opencode.ai/zen/go/v1
+        # baseURL 由宿主进程启动时注入的 env 决定（设置页 → AgentConfigStore → NodeRuntime），
+        # 兜底才是这个内置端点。AgentConfig 保证它是非空串（空白值会回落到默认），
+        # 所以这里用 ?? 不会把空串放进来。
+        baseURL: !!js process.env.TAPPET_LLM_BASE_URL ?? 'https://opencode.ai/zen/go/v1'
         headers:
           x-opencode-session: !!js process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile'
         models:

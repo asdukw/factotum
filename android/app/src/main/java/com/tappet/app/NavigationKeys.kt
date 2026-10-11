@@ -11,3 +11,6 @@ import kotlinx.serialization.Serializable
 
 /** 无障碍「四问」探针。 */
 @Serializable data object Probe : NavKey
+
+/** 设置：LLM 端点与自己的 API key（密钥走 Keystore 封装存储）。 */
+@Serializable data object Settings : NavKey

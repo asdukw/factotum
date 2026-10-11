@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.ChatMessage
 import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
@@ -98,12 +99,19 @@ import kotlinx.serialization.json.JsonElement
 fun ChatScreen(
   onOpenProbe: () -> Unit,
   onOpenWeb: () -> Unit,
+  onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
   store: SessionStore = LocalContext.current.tappetSessionStore(),
 ) {
   val appContext = LocalContext.current.applicationContext
   val viewModel: ChatViewModel = viewModel {
-    ChatViewModel(streamer = DshStreamer(appContext), store = store)
+    ChatViewModel(
+      // 配置来自设置页（密钥走 Keystore 封装），构建期注入只是开发机上的兜底默认值。
+      // 这里读一次就定了：设置页改完要下次启动才生效，与内嵌 Node 的 env 时机一致。
+      config = AgentConfigStore.current(appContext),
+      streamer = DshStreamer(appContext),
+      store = store,
+    )
   }
   val state by viewModel.state.collectAsStateWithLifecycle()
   ChatScreen(
@@ -116,6 +124,7 @@ fun ChatScreen(
     onDeleteSession = viewModel::deleteSession,
     onOpenProbe = onOpenProbe,
     onOpenWeb = onOpenWeb,
+    onOpenSettings = onOpenSettings,
     modifier = modifier,
   )
 }
@@ -131,6 +140,7 @@ internal fun ChatScreen(
   onDeleteSession: (String) -> Unit = {},
   onOpenProbe: () -> Unit = {},
   onOpenWeb: () -> Unit = {},
+  onOpenSettings: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
@@ -180,6 +190,10 @@ internal fun ChatScreen(
         },
         onOpenProbe = {
           onOpenProbe()
+          scope.launch { drawerState.close() }
+        },
+        onOpenSettings = {
+          onOpenSettings()
           scope.launch { drawerState.close() }
         },
       )
@@ -261,6 +275,7 @@ private fun SessionDrawer(
   onDeleteSession: (String) -> Unit,
   onOpenWeb: () -> Unit,
   onOpenProbe: () -> Unit,
+  onOpenSettings: () -> Unit,
 ) {
   var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
   val grouped = groupSessions(sessions, System.currentTimeMillis())
@@ -313,6 +328,7 @@ private fun SessionDrawer(
       HorizontalDivider(Modifier.padding(vertical = 8.dp))
       DrawerNavRow("Web 预览（HTML / Office / diff）", onClick = onOpenWeb)
       DrawerNavRow("设备探针", onClick = onOpenProbe)
+      DrawerNavRow("设置（端点 / API key）", onClick = onOpenSettings)
       if (configSummary.isNotBlank()) {
         Text(
           text = configSummary,

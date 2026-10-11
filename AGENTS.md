@@ -50,6 +50,23 @@ Gradle 工程名、CMake 工程名、JNI 符号全部换新，**没有遗留**�
 `run-as com.tappet.app`、`dumpsys package com.tappet.app`。
 `OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读 `BuildConfig.APPLICATION_ID`，会自己跟随。
 
+## Git 历史（2026-10-12 发布前重建，看这里不要以为仓库是新的）
+
+公开发布前做过一次**历史重建**：对外历史的**根提交**是重建出来的，其树与重建前的
+HEAD 逐字节相同（比过 tree hash），**它之前的提交都不存在了**。**别把「历史很短」
+当成仓库刚建** —— 代码和文档都是有来由的，来由在被剥离的旧历史里。
+
+为什么剥离：旧历史里不只有已删除的旧管线代码，还有**第三方的真实数据** ——
+m3 试点报告里的真实群名/群号与某位群成员的真实昵称及其私人信息、schema 文档里的
+真实 NT UID 与逐会话行数；**而且多条提交信息里也写着这些标识**（所以只删文件不够）。
+
+- 完整旧历史（106 提交）在**仓库外**：`../memex-history-backup-2026-10-12.bundle`
+  （`git clone <bundle> <dir>` 可取回）。本地回顾用它，**不随发布**。
+- 因此：`docs/m3-pilot-report.md`、`src/life_graph/**`、`tools/m0_*.ps1` 这些都是
+  **历史之外**的东西，`git log -- <path>` 查不到不等于从未存在。
+- 以后若再往仓库里写任何来自真实数据的内容（调研、报告、fixture、schema 实测），
+  **先脱敏再提交** —— 标识一进 git 就跟着每个 clone 走，事后只能重写历史。
+
 ## 仓库结构
 
 ```
@@ -105,7 +122,8 @@ docs/                           深度文档
 .\tools\fetch-libnode.ps1
 .\tools\bundle-dsh.ps1
 
-# API key 放在 android/local.properties（gitignored，构建期注入 BuildConfig）：
+# API key 放在 android/local.properties（gitignored）。**只有 debug 变体**在构建期把它
+# 注入 BuildConfig；release 变体固定空串（见 app/build.gradle.kts 的注释）：
 #   tappet.agent.apiKey=...        （也可用环境变量 TAPPET_AGENT_API_KEY）
 #   tappet.agent.baseUrl / model / reasoningEffort / proxyHost / proxyPort
 ```
@@ -295,3 +313,5 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 | dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘上的会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 加进程级 runtimeTag 后缀再映射回来，别去掉 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
+| release 包跑任务立刻报缺 API key | 刻意的：release 不注入密钥（BuildConfig 是编译期常量、明文进 dex）→ 要用就装 debug 包，或等设置页 |
+| 想确认发布物里没有密钥 | `strings` 扫 APK 的 `classes*.dex`，或直接 grep 到空 |

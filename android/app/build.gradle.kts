@@ -38,6 +38,23 @@ val tappetAbis =
 
 val agentProxyPort = agentValue("tappet.agent.proxyPort", "TAPPET_AGENT_PROXY_PORT", "7897").toIntOrNull() ?: 7897
 
+// --- 发布签名 ---
+// keystore 与口令都不入库：本机读 android/local.properties（gitignored，键名见 AGENTS.md），
+// CI 读同名环境变量（GitHub secret 注入）。两处都没有时 **release 照常构建，只是不打签名** ——
+// 未签名包装不上，这个后果自己会说话；比起一个「必须先配签名」的构建错误，它更容易排查。
+val releaseSigning =
+  mapOf(
+      "storeFile" to "TAPPET_KEYSTORE_FILE",
+      "storePassword" to "TAPPET_KEYSTORE_PASSWORD",
+      "keyAlias" to "TAPPET_KEY_ALIAS",
+      "keyPassword" to "TAPPET_KEY_PASSWORD",
+    )
+    .mapValues { (prop, env) ->
+      System.getenv(env)?.takeIf { it.isNotBlank() }
+        ?: localProperties.getProperty("tappet.release.$prop")?.takeIf { it.isNotBlank() }
+    }
+val releaseStoreFile = releaseSigning["storeFile"]?.let { File(it) }?.takeIf { it.isFile }
+
 android {
   namespace = "com.tappet.app"
   compileSdk = 36
@@ -74,10 +91,22 @@ android {
     buildConfigField("int", "AGENT_PROXY_PORT", agentProxyPort.toString())
   }
 
+  signingConfigs {
+    // 只有真的拿到 keystore 才建这个配置；否则 release 走未签名（本机没配时也能出包看体积）
+    if (releaseStoreFile != null) {
+      create("release") {
+        storeFile = releaseStoreFile
+        storePassword = releaseSigning["storePassword"]
+        keyAlias = releaseSigning["keyAlias"]
+        keyPassword = releaseSigning["keyPassword"]
+      }
+    }
+  }
   buildTypes {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+      signingConfig = signingConfigs.findByName("release")
     }
   }
   compileOptions {

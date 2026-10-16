@@ -1,5 +1,7 @@
 param(
-  [string]$Version = "0.2.0-rc.2"
+  [string]$Version = "0.2.0-rc.2",
+  # 同 fetch-libnode：代理跟随 HTTPS_PROXY / HTTP_PROXY，没有就直连（CI）
+  [string]$Proxy = $(if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } elseif ($env:HTTP_PROXY) { $env:HTTP_PROXY } else { "" })
 )
 
 # 把 pinned 的 dsh 运行时装配成 android/app/src/main/assets/dsh-runtime.zip：
@@ -11,9 +13,14 @@ $cache = Join-Path $root "android/.dsh-cache/runtime"
 $zipOut = Join-Path $root "android/app/src/main/assets/dsh-runtime.zip"
 $src = Join-Path $root "tools/dsh-phone"
 
-$proxy = "http://127.0.0.1:7897"
-$env:HTTP_PROXY = $proxy
-$env:HTTPS_PROXY = $proxy
+if ($Proxy) {
+  # npm 认这两个变量；没有代理时必须清掉，否则会出现让人摸不着头的 ECONNREFUSED
+  $env:HTTP_PROXY = $Proxy
+  $env:HTTPS_PROXY = $Proxy
+} else {
+  Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+  Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+}
 
 if (-not (Test-Path -LiteralPath (Join-Path $cache "node_modules/@deepseek-ai/dsh/package.json"))) {
   Write-Host "staging @deepseek-ai/dsh@$Version (android/arm64)"

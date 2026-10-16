@@ -119,8 +119,9 @@ docs/                           深度文档
 - **JDK 21**（必须）：`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`
 - Android SDK：compileSdk 36；`ndk;29.0.14206865` 与 `cmake;3.31.6`（`sdkmanager` 安装）
 - PC Node 24 + npm（装配 dsh 运行时用；实测 `C:\nvm4w\nodejs\node.exe`）
-- 代理约定：本地代理 `127.0.0.1:7897`（脚本中硬编码；换了要改脚本）。代理以
-  `HTTP_PROXY`/`HTTPS_PROXY` 环境变量全局注入；代理未开时 npm 会
+- 代理约定：本地代理 `127.0.0.1:7897`。代理以 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量全局注入，
+  `tools/` 下的装配脚本也**只认这两个变量**（不再写死）—— 没有就走直连，CI 就是这种情况。
+  代理未开时 npm 会
   `ECONNREFUSED 127.0.0.1:7897`，临时绕过：当前 shell 清空这两个变量后再执行。
 
 ```powershell
@@ -338,6 +339,28 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
    UnsatisfiedLinkError、界面显示「本地存储不可用」）。
 5. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
    先在 `docs/` 写清边界与隐私闸门，再动代码。
+
+## 发版
+
+打 `v*` tag 即触发 `.github/workflows/release.yml`：装 NDK/CMake → `fetch-libnode.ps1` +
+`bundle-dsh.ps1` 装配运行时 → `assembleRelease`（用 release keystore 签名）→ 验签 + 扫包内密钥
+→ 发 GitHub Release，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
+版本说明写在 `docs/releases/<tag>.md`（有就用它，没有就 `--generate-notes`）。
+
+**签名材料（只在本机与 GitHub secret 里，绝不入库）**：
+
+| 位置 | 内容 |
+|---|---|
+| `C:\Users\asdukw\keys\tappet-release.jks` | release keystore（**仓库外**，RSA 4096 / 10000 天） |
+| `android/local.properties`（gitignored） | `tappet.release.storeFile` / `storePassword` / `keyAlias` / `keyPassword` |
+| GitHub secrets | `TAPPET_KEYSTORE_BASE64` / `TAPPET_KEYSTORE_PASSWORD` / `TAPPET_KEY_ALIAS` / `TAPPET_KEY_PASSWORD` |
+
+- **keystore 丢了就再也发不出能覆盖安装的更新**（换签名 = 另一个 App，设备上旧包的库读不到）。
+  与 SQLCipher 口令同性质：先备份再折腾，别只留一份在开发机上。
+- 本机也能出同样的包：那四个键在 `android/local.properties` 里，`gradlew :app:assembleRelease`
+  出来的就是签名包（本机与 CI 走同一套读取顺序：环境变量 > local.properties）。
+- 发之前至少跑一遍：`gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest`，
+  以及 `tools/check-sensitive.ps1 -ApkPath <包>`（连包一起扫密钥）。
 
 ## 提交纪律（2026-10-03 用户约定）
 

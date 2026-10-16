@@ -23,6 +23,11 @@ tmp/
 .DS_Store
 Thumbs.db
 
+# --- 签名材料（本机那份放在仓库外，这条是兜底：任何路径下的 keystore 都不入库）---
+*.jks
+*.keystore
+keystore.properties
+
 # --- 兜底 ---
 # 根目录下划线开头的临时脚本。
 /_*

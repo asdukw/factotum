@@ -1,0 +1,96 @@
+name: Release
+
+# 打 tag 就出签名 APK 并发 release。**不走 CI 的常规构建路径**：APK 需要按 pinned 版本拉来的
+# libnode（NDK 编译）+ 装配好的 dsh 运行时，这两步只有这里做（日常 CI 不装 NDK、不拉 libnode）。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的 tag 名（补发用）
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: 出签名 APK 并发 release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # release notes / tag 信息要完整历史
+          submodules: recursive # 设备工具插件在独立仓库
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24" # 装配 dsh 运行时用（npm）
+      - uses: android-actions/setup-android@v4
+      - name: 装 SDK 平台 / NDK / CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
+      - uses: gradle/actions/setup-gradle@v6
+
+      # 装配脚本是 PowerShell —— ubuntu runner 自带 pwsh。代理跟随 HTTPS_PROXY（CI 上没有 = 直连）。
+      - name: 装配运行时（libnode + dsh）
+        run: |
+          pwsh -NoProfile -File tools/fetch-libnode.ps1
+          pwsh -NoProfile -File tools/bundle-dsh.ps1
+
+      - name: 还原签名材料
+        env:
+          KEYSTORE_B64: ${{ secrets.TAPPET_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::缺少 secret TAPPET_KEYSTORE_BASE64（见 AGENTS.md 的「发版」一节）"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "TAPPET_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: 出包（签名）
+        working-directory: android
+        env:
+          TAPPET_KEYSTORE_PASSWORD: ${{ secrets.TAPPET_KEYSTORE_PASSWORD }}
+          TAPPET_KEY_ALIAS: ${{ secrets.TAPPET_KEY_ALIAS }}
+          TAPPET_KEY_PASSWORD: ${{ secrets.TAPPET_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --console=plain
+
+      - name: 验签 + 包里不该有密钥
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          SIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$SIGNER" verify --print-certs "$APK"
+          # 未签名的包不该被发出去（配错 secret 时最容易出这种情况）
+          "$SIGNER" verify "$APK" > /dev/null
+          # 结构性保证的回归检查：构建期已经不带密钥，这里确认没被谁改回去。
+          # 只扫常见形状，不做「真实密钥」的判定 —— 那需要密钥本体，而 CI 上没有、也不该有。
+          unzip -p "$APK" 'classes*.dex' > "$RUNNER_TEMP/dex.bin"
+          if grep -aoE 'oc_sk_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9]{32,}|ghp_[A-Za-z0-9]{20,}' "$RUNNER_TEMP/dex.bin"; then
+            echo "::error::包内出现疑似密钥形状，已中止发布"
+            exit 1
+          fi
+
+      - name: 发 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          ASSET="tappet-$TAG-arm64-v8a.apk"
+          cp "$APK" "$ASSET"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          NOTES="docs/releases/$TAG.md"
+          if [ -f "$NOTES" ]; then ARGS=(--notes-file "$NOTES"); else ARGS=(--generate-notes); fi
+          gh release create "$TAG" --title "$TAG" "${ARGS[@]}" "$ASSET" "$ASSET.sha256"

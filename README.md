@@ -5,10 +5,12 @@
 
 [![CI](https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg)](https://github.com/asdukw/tappet/actions/workflows/ci.yml)
 
-> **当前版本 v0.1.0，只发布源码，不提供 APK / Release。**
-> 这与密钥无关了：构建期注入已整个去掉，包里没有、也不可能有编译进去的密钥
-> （见「隐私红线」第 2 条）。纯粹是可用性还没到能发版的程度 —— 真机上只跑通过
-> OpenCode Go 这一条端点路径，跨 App 任务还需要前台服务保活。
+> **当前版本 v0.1.0**：[Releases](https://github.com/asdukw/tappet/releases) 里有**签名 APK**
+> （arm64-v8a）与源码。APK 由 CI 在 `v*` tag 上用 release keystore 签名，证书 SHA-256 指纹
+> `5522b33e1010feab0ab0778c4e304c9571289879dcf0429ffc6a4dee1c9375f6`。
+> 密钥不再编进包（构建期注入已整个去掉），所以发包不再等于公开密钥。
+> 装之前请读 [v0.1.0 的说明](docs/releases/v0.1.0.md) —— 里面写清了要自备 LLM key、要开无障碍，
+> 以及**哪些路径真机验证过、哪些只是「配置对得上」**。
 
 > **方向（2026-10-03 定稿）**：放弃 QQ / 微信聊天记录与知识图谱，不做 PC 客户端，
 > 不采集通知。仓库唯一运行时是 Android App；Python 侧已整体删除。
@@ -41,7 +43,8 @@
 git submodule update --init --recursive    # 设备工具插件在独立仓库
 .\tools\fetch-libnode.ps1                  # libnode.so + libc++_shared.so
 .\tools\bundle-dsh.ps1                     # vendored dsh → assets/dsh-runtime.zip
-#    注意：这两个脚本目前把代理写死成 http://127.0.0.1:7897；本机没有这个代理，先改脚本再跑。
+#    注意：这两个脚本的代理跟随 HTTPS_PROXY / HTTP_PROXY（本机是 127.0.0.1:7897）；
+#    没有这两个变量就走直连（CI 上就是直连）。
 
 # 1）构建（必须 JDK 21）
 $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\'

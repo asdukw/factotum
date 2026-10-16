@@ -51,8 +51,13 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 
 ```powershell
 .\tools\fetch-libnode.ps1 -Abi x86_64
-.\gradlew.bat :app:assembleDebug -Ptappet.abis=x86_64 --console=plain
+.\gradlew.bat :app:assembleDebug "-Ptappet.abis=x86_64" --console=plain
 ```
+
+- **`-Ptappet.abis=x86_64` 必须加引号**：PowerShell 会把不加引号的 `-Ptappet.abis=x86_64` 拆成
+  `-Ptappet` 与 `.abis=x86_64`，Gradle 报 `Task '.abis=x86_64' not found`（与 `GRADLE_OPTS` 那条同类）。
+- 用完记得切回真机 ABI：`tools/fetch-libnode.ps1`（默认 arm64）。**别让 jniLibs 停在 x86_64** ——
+  下次默认构建出的 APK 会缺 arm64 的 `libc++_shared.so`，装到手机上 `dlopen` 失败。
 
 ## 开发工作流
 
@@ -268,6 +273,10 @@ adb shell settings put secure accessibility_enabled 1
 ```
 
 - `pm grant` / `appops set` 会被 ColorOS 加固拦截（uid 2000 无权限），别反复试；App 只需要 `INTERNET`。
+- **无障碍只能用户自己开**（`WRITE_SECURE_SETTINGS` 是系统签名权限，Android 有意不允许应用自授权；
+  `adb shell settings put` 那条是 shell 权限，与应用无关）。应用侧的引导在 `AccessibilityStatus` +
+  聊天页提示卡 + 设置页「无障碍（执行层）」一段：**只有真的有一次设备动作因此失败过**才提示
+  （纯聊天不打扰），码走 `BridgeHealth`，不去匹配中文文案。
 - ColorOS 首次启用 / 重装后弹「保持开启」安全弹窗（3 秒倒计时），不点可能被关闭；
   也会 defer 后台广播 —— 广播前先把 App 拉到前台（`monkey`）。
 - `uiautomator dump` 会顶掉无障碍服务约 1 秒，用 adb 自动化时避开。
@@ -366,6 +375,8 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
+| `Task '.abis=x86_64' not found` | PowerShell 把 `-Ptappet.abis=x86_64` 拆成两个参数 → 加引号：`"-Ptappet.abis=x86_64"` |
+| 装到手机上 `dlopen libc++_shared.so` 失败（刚跑过模拟器） | jniLibs 停在 x86_64 → `tools/fetch-libnode.ps1` 切回 arm64 再出包 |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
 
 ## 深度文档

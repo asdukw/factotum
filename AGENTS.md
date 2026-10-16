@@ -128,10 +128,13 @@ docs/                           深度文档
 .\tools\fetch-libnode.ps1
 .\tools\bundle-dsh.ps1
 
-# API key 的正式入口是**设置页**（抽屉 → 设置），存进 Keystore 封装的 SecretVault。
-# android/local.properties 只是**开发机默认值**（gitignored），优先级低于设置页：
-#   tappet.agent.apiKey=...        （也可用环境变量 TAPPET_AGENT_API_KEY）
+# API key 只有**设置页**（抽屉 → 设置）一个入口，存进 Keystore 封装的 SecretVault。
+# 构建期注入已经整个去掉（AGENT_API_KEY 这个 BuildConfig 字段不存在了）——
+# 理由见 app/build.gradle.kts：只要密钥**能**被编进包，「本机构建的包不能发出去」
+# 就永远是要人记住的规矩，而不是结构性的事实。
+# android/local.properties 只剩非密钥的开发机默认值（gitignored）：
 #   tappet.agent.baseUrl / model / reasoningEffort / proxyHost / proxyPort
+# 端点预选由 baseUrl 反推（LlmPreset.forBaseUrl），所以本机把端点写成哪家，风格就按哪家调。
 ```
 
 ## 构建
@@ -154,6 +157,8 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 ```
 - 改了 `tools/dsh-phone/` 下的 launcher / profile / 插件后，必须重跑 `bundle-dsh.ps1`
   并重装 APK 才会生效（运行时打包在 assets 里；APK 更新后首次启动自动重解压）。
+  `bundle-dsh.ps1` 会先用**真解析器**验一遍 profile（`tools/dsh-phone/check-profile.mjs`）：
+  overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node 与宿主同进程 —— 报错就是整个 App 崩。
 
 ## 测试
 
@@ -295,6 +300,20 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   语义动作；关掉后手势恢复。细节与实测见 `docs/android-accessibility.md` §9。
 - **通用原语边界**：Tappet phone profile 只挂 `dsh-plugin-android-tools`；`chat-tools` 已整体
   移除（不挂载、不打包、无 submodule）。聊天/购物等业务语义由模型组合基础动作。
+- **加一个服务商预选 = 四处对齐**（与「加一个设备动作」同样的四处纪律）：
+  `agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 推理格式）→ `AgentConfigStore`
+  （存预选 id）→ `NodeRuntime`（注入 `TAPPET_LLM_API` / `_MODEL` / `_THINKING_FORMAT` / `_ZEN`，
+  以及 `PROVIDER` 常量）→ `tools/dsh-phone/profile/cordis.patch.yml`（provider 的
+  `api` / `baseURL` / `models`）。**`NodeRuntime.PROVIDER` 必须与 profile 里的 provider 键
+  逐字相同**，改一处漏一处时报的是 `no adapter registered for provider "xxx"`，
+  看着像运行时缺插件。
+  **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
+  `anthropic-messages`，DeepSeek 与 opencode zen 是 `openai-completions`；拿错风格不会在
+  启动时报错，只会在第一次请求时以 404/400 的样子炸出来。模型 id 一律从运行时 pi-ai 目录里
+  取（`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`），
+  目录里没有的 id 会被当成未知模型（模态退化成纯文本，读图直接失败）。
+  改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK。**目前只有 OpenCode Go 这条路径在真机上
+  跑通过**，其余预选是「配置对得上目录、没用真 key 发过请求」——界面里如实标着。
 - **契约与 ROM 解耦**：`ui/probe` 只依赖 `DeviceBridge`；换 ROM 只加一个 `OemProfile`。
   不写 App 专用逻辑——QQ 只是试验任务的目标 App，不是适配对象。
 - 桥只监听 `127.0.0.1` + 每进程随机 token，只暴露 `POST /action`；不在设备上安装插件。
@@ -310,8 +329,10 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 
 ## 数据与隐私红线
 
-1. **密钥永不入库、不进日志、不打印**：`android/local.properties`（gitignored）；
-   dsh 的 key 经 env `TAPPET_LLM_KEY` 注入，日志与提交信息不得出现。
+1. **密钥永不入库、不进日志、不打印，也不进构建产物**：唯一来源是设置页 →
+   `SecretVault`（Keystore 封装），运行时经 env `TAPPET_LLM_KEY` 交给 dsh。
+   构建期那条注入路径已删除（`AGENT_API_KEY` 不存在了），所以「包里有密钥」这件事
+   在结构上不可能发生 —— 而不是靠人记得别发包。
 2. **屏幕与聊天正文不落日志**：日志只记计数 / 类名 / 坐标 / 错误码；读屏 payload 只在
    给模型的工具结果里。debug 广播的 `--ez logPayload true` 仅供调试，用完不要留在脚本里。
 3. `tappet.db`（会话 / 消息 / 工具调用）用 SQLCipher 加密，口令由 Keystore 封装：
@@ -349,6 +370,7 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 | JSON-RPC 偶发不响应 | stdout 混入了日志 → phone profile 不得挂 stdout logger；诊断一律 stderr |
 | `adb shell am broadcast --es task "a b"` 丢参数 | 整条命令再包一层引号：`adb shell "am broadcast ... 'a b'"` |
 | dsh 启动报 `node-addon-require-builtin` | 用了 `boot()`/loader → 改用 `launcher.mjs` |
+| dsh 启动报 `bad indentation of a mapping entry`，**App 直接崩** | profile 里 `!!js` 表达式写了对象字面量：YAML 的 plain scalar 不能含 `": "` → 把整个表达式用双引号包起来。`check-profile.mjs`（`bundle-dsh.ps1` 与 CI 都会跑）能提前拦住 |
 | dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
 | 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
 | 读屏只返回 0–1 个节点（微信） | 该 App 隐藏控件树：微信 8.0.78 只在「触摸探索」为真时启动的进程里暴露节点 → 任务期间自动开触摸探索，目标 App 需在模式开启后启动进程；进程已在跑就只能请用户配合 |
@@ -361,7 +383,8 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 | dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘上的会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 加进程级 runtimeTag 后缀再映射回来，别去掉 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
-| 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置。构建期只提供开发机默认值 |
+| 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置（构建期不带密钥，设计如此） |
 | 设置页保存了却没生效 | 设计如此：内嵌 Node 的 env 与 dsh profile 只在启动时读一次 → 重启 App |
-| 设置页显示「已配置」但请求 401 | 多半是继承到了构建期默认值（`local.properties` 里那把 key），换设备就不对了 → 在设置页重填自己的 key |
+| 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配（例如端点是 Anthropic、key 是 OpenAI 的）→ 换预选或重填 key |
+| 换了服务商后第一次请求就 404/400 | 端点、调用风格（api）、模型三件套没成套：Anthropic 走 `anthropic-messages`，不是 OpenAI 兼容层 |
 | 想确认发布物里没有密钥 | `strings` 扫 APK 的 `classes*.dex`，或直接 grep 到空 |

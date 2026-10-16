@@ -17,9 +17,10 @@
     不判失败** —— 正则分不清「真实标识」和「格式相似的字符串」，判断得靠人。
     本仓库历史上真出过这类泄漏（见 AGENTS.md 的「Git 历史」一节）。
 
-    为什么不是「扫 APK 就完事」：BuildConfig 是编译期常量，**本机 debug 包必然带密钥**，
-    这是预期行为、不是故障。所以默认只查发布物（源码 = git 仓库）；只有你明确要对外
-    发一个包时，才用 -ApkPath 指着它查一遍。
+    为什么不是「扫 APK 就完事」：构建期注入已经去掉，密钥只存在设备上的 Keystore 封装里，
+    所以本机包现在也不带密钥了。这一步留着当**回归检查** —— 确认那条结构性保证没被谁改回去
+    （在删掉注入之前，它靠的是「记得别发包」）。所以默认只查发布物（源码 = git 仓库）；
+    只有你明确要对外发一个包时，才用 -ApkPath 指着它查一遍。
 
 .NOTES
     输出里**不会打印密钥本体**，只报「哪个文件的哪一行」。原因见 AGENTS.md 的
@@ -259,7 +260,7 @@ if ($historyHit) { $failed = $true } else { Write-Host '  ok   未发现密钥' 
 # 4) 可选的 APK
 Write-Host "`n[4/4] 构建产物" -ForegroundColor Cyan
 if (-not $ApkPath) {
-  Write-Host '  跳过（没有 -ApkPath）。本机 debug 包必然带密钥，这是预期行为；' -ForegroundColor DarkGray
+  Write-Host '  跳过（没有 -ApkPath）。密钥已不再编进包，这一步是回归检查；' -ForegroundColor DarkGray
   Write-Host '  只有要对外发一个包时，才需要指着它查。' -ForegroundColor DarkGray
 } elseif (-not (Test-Path -LiteralPath $ApkPath)) {
   Write-Host "  FAIL 找不到文件：$ApkPath" -ForegroundColor Red

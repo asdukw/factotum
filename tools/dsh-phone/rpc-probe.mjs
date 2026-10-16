@@ -124,7 +124,7 @@ const timer = setTimeout(() => {
 
 const init = await request('initialize', {
   cwd: work,
-  provider: 'opencode-zen',
+  provider: 'tappet',
   model: 'deepseek-v4.1-flash',
 })
 console.log('[initialize]', JSON.stringify(init))

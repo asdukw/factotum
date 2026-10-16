@@ -69,7 +69,7 @@ class LlmClient(
   fun stream(history: List<ChatMessage>): Flow<AgentStreamEvent> =
     callbackFlow {
       if (!config.isConfigured) {
-        close(AgentException("Agent 未配置：缺少 API key（见 AGENT_API_KEY）"))
+        close(AgentException("Agent 未配置：缺少 API key（聊天页抽屉 → 设置，填自己的 key）"))
         return@callbackFlow
       }
 

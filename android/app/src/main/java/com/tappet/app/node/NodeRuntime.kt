@@ -63,8 +63,13 @@ object NodeRuntime : NodeLineListener {
   private const val KEY_DSH_UPDATE = "dsh_last_update"
   private const val KEY_SESSION = "llm_session"
 
-  /** profile 里 llm-pi-ai 注册的 provider 路由名。 */
-  private const val PROVIDER = "opencode-zen"
+  /**
+   * profile 里 llm-pi-ai 注册的 provider 路由名。
+   *
+   * **必须与 tools/dsh-phone/profile/cordis.patch.yml 里的 provider 键逐字相同** —— 对不上时
+   * dsh 报的是 `no adapter registered for provider "xxx"`，看着像运行时缺插件，其实是这里没跟着改。
+   */
+  internal const val PROVIDER = "tappet"
 
   private const val INITIALIZE_TIMEOUT_MS = 180_000L
   private const val PROMPT_TIMEOUT_MS = 30_000L
@@ -425,6 +430,14 @@ object NodeRuntime : NodeLineListener {
     Os.setenv("DSH_HOME", home.absolutePath, true)
     Os.setenv("TAPPET_WORKDIR", home.absolutePath, true)
     Os.setenv("TAPPET_LLM_KEY", config.apiKey, true)
+    // 端点、调用风格、模型三者必须成套送过去：profile 那边的 provider 就是按这三个字段
+    // 组出来的（见 tools/dsh-phone/profile/cordis.patch.yml）。缺一个就会拿 zen 的端点配
+    // OpenAI 的模型，报出来的错还像是网络问题。
+    Os.setenv("TAPPET_LLM_API", config.api, true)
+    Os.setenv("TAPPET_LLM_MODEL", config.model, true)
+    Os.setenv("TAPPET_LLM_THINKING_FORMAT", config.preset.thinkingFormat.orEmpty(), true)
+    // 只有 opencode zen 需要这个头（zen 的硬要求）；别的服务商带上它没有意义。
+    Os.setenv("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "", true)
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
     Os.setenv("TAPPET_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("TAPPET_LLM_SESSION", persistentSessionId(app), true)

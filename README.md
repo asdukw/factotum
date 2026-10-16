@@ -5,8 +5,10 @@
 
 [![CI](https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg)](https://github.com/asdukw/tappet/actions/workflows/ci.yml)
 
-> **当前版本 v0.1.0，只发布源码，不提供 APK。** 原因见「隐私红线」第 2 条：
-> 本机构建出的 APK 会把 `local.properties` 里的密钥明文编进 dex，发出去一次就等于公开。
+> **当前版本 v0.1.0，只发布源码，不提供 APK / Release。**
+> 这与密钥无关了：构建期注入已整个去掉，包里没有、也不可能有编译进去的密钥
+> （见「隐私红线」第 2 条）。纯粹是可用性还没到能发版的程度 —— 真机上只跑通过
+> OpenCode Go 这一条端点路径，跨 App 任务还需要前台服务保活。
 
 > **方向（2026-10-03 定稿）**：放弃 QQ / 微信聊天记录与知识图谱，不做 PC 客户端，
 > 不采集通知。仓库唯一运行时是 Android App；Python 侧已整体删除。
@@ -60,12 +62,15 @@ ktlint（格式）/ detekt（坏味道）/ Android Lint（API 级别、清单、
 失败）。正确流程是产包后手动 `adb install -r`，再单独跑需要的测试任务。
 完整规则与重装注意事项见 [AGENTS.md](AGENTS.md)。
 
-- **API key 由使用者自己在设置页填**（抽屉 → 设置），存进 Android Keystore 封装的
-  `SecretVault`：密文落盘、硬件封装不可导出、不进云备份、不回填界面、不进日志。
-  设置页保存后**下次启动生效**（内嵌 Node 的 env 只在启动时读一次）。
-- `android/local.properties` 里的 `tappet.agent.apiKey` 只是**开发机上的默认值**，
-  优先级低于设置页。要留意它会以明文进 dex（BuildConfig 是编译期常量），所以
-  **发布物只发源码，不发 APK**；真要对外发包先跑 `tools/check-sensitive.ps1 -ApkPath <包>`。
+- **LLM 端点与 API key 都由使用者在设置页填**（抽屉 → 设置），预选里有 OpenAI /
+  Anthropic / DeepSeek / OpenCode Go，也可以自定义。预选不只是填两个字符串：端点、
+  调用风格（`openai-responses` / `anthropic-messages` / `openai-completions`）、模型
+  三件套是一套的，选错会在第一次请求时报 404/400。
+- **密钥只有一个来源：设置页**，存进 Android Keystore 封装的 `SecretVault` —— 密文落盘、
+  硬件封装不可导出、不进云备份与设备间直传、不回填界面、不进日志，**也不会被编进 APK**
+  （构建期注入那条路已经删掉）。设置页保存后**下次启动生效**（内嵌 Node 的 env 只在启动时
+  读一次）。
+- `android/local.properties` 只剩非密钥的开发机默认值（端点 / 模型 / 代理），优先级低于设置页。
 - 会话库 `databases/tappet.db` 用 SQLCipher 加密，口令由 Android Keystore 封装：
   **卸载即永久丢失，外部不可解、不可拷。**
 - 项目原名 Memex，2026-10-12 更名为 **Tappet**（含 `applicationId`，见 [AGENTS.md](AGENTS.md)
@@ -83,9 +88,11 @@ docs/             android-accessibility.md：无障碍执行层系统探测与�
 ## 隐私红线
 
 1. **密钥永不入库**：`android/local.properties` 已在 `.gitignore` 内，不要改。
-2. **密钥不进发布物**：源码里不得出现密钥；**APK 的 dex 里一定会有**（BuildConfig 是
-   编译期常量、明文），所以发布物只发源码。真要发包先跑
-   `tools/check-sensitive.ps1 -ApkPath <包>`。
+2. **密钥不进发布物，且这件事是结构性的**：密钥只存在设备上的 Keystore 封装里，
+   构建期注入那条路已删除（`AGENT_API_KEY` 这个 BuildConfig 字段不存在了），
+   所以「包里有密钥」不可能发生 —— 而不是靠人记得别发包。
+   真要发包仍建议跑 `tools/check-sensitive.ps1 -ApkPath <包>` 兜底：
+   它现在的作用是确认这条结构性保证没被谁改回去。
 3. **默认全本地**：手机端数据是否发往云端 LLM 由用户逐次决定。
 4. **不采集他人数据**：随聊天记录管线一并移除；如需重新引入任何采集能力，
    先在设计文档里写清边界与隐私闸门，再动代码。

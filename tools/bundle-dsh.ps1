@@ -34,6 +34,13 @@ node (Join-Path $src "patch-runtime.mjs") (Join-Path $cache "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "patch-runtime.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
 Copy-Item -Force (Join-Path $src "launcher.mjs") $cache
+
+# profile 先过一遍**真解析器**再打包：overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node
+# 与宿主同进程 —— 报错就是整个 App 崩。CI 上没有 dsh 运行时跑不了这一步，所以关口放在这里。
+# js-yaml 从刚装好的运行时里借，本仓库不引入 npm 依赖。
+node (Join-Path $src "check-profile.mjs") (Join-Path $src "profile/cordis.patch.yml") (Join-Path $cache "node_modules")
+if ($LASTEXITCODE -ne 0) { throw "check-profile.mjs 失败（exit $LASTEXITCODE），已中止装配" }
+
 $profileOut = Join-Path $cache "profiles/phone"
 New-Item -ItemType Directory -Force -Path $profileOut | Out-Null
 Copy-Item -Force (Join-Path $src "profile/package.json") $profileOut

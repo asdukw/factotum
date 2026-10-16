@@ -402,6 +402,8 @@ class ChatViewModelTest {
       reasoningEffort = "low",
       proxyHost = null,
       proxyPort = 7897,
+      // 用默认那条（OpenCode Go）的预选：这里只关心「有没有 key」，端点风格无所谓。
+      preset = LlmPreset.default,
     )
 }
 

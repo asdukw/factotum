@@ -92,8 +92,8 @@ jobs:
           retention-days: 14
           path: android/app/build/reports/tests/testDebugUnitTest/
 
-  audit-selftest:
-    name: 审计回路自检（离线，不需要设备）
+  offline-checks:
+    name: 离线自检（不需要设备）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -103,3 +103,10 @@ jobs:
       # 这条是「扫描器/解码器确实会命中」的同类保障：审计回路自己先证明自己没坏，
       # 免得设备上的空结果被当成「一切正常」（见 AGENTS.md 的审计回路一节）。
       - run: node tools/audit/selftest.mjs
+      # phone profile 的 YAML：写坏时 dsh 启动即报错，而内嵌 Node 与宿主同进程 ——
+      # 报错就是整个 App 崩。本地由 bundle-dsh.ps1 把住，这里让它在 push 时也能被挡住。
+      # js-yaml 从 npm 现取（本仓库不引入 npm 依赖，只在这条 job 里装）。
+      - name: 校验 phone profile
+        run: |
+          npm install --no-save --no-audit --no-fund js-yaml
+          node tools/dsh-phone/check-profile.mjs tools/dsh-phone/profile/cordis.patch.yml node_modules

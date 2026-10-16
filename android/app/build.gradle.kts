@@ -61,13 +61,13 @@ android {
     }
 
     // 这些是**默认值**：设置页（ui/settings）存的值优先级更高，见 AgentConfigStore。
-    // 发布物装到别人手机上时，这里每一项都必须能空着跑（密钥为空 → 用户自己去设置页填）。
+    // 发布物装到别人手机上时，这里每一项都必须能空着跑。
     buildConfigField("String", "AGENT_BASE_URL", buildConfigString(agentValue("tappet.agent.baseUrl", "TAPPET_AGENT_BASE_URL", "https://opencode.ai/zen/go/v1")))
-    // 这个值会以**明文**进 dex：BuildConfig 是编译期常量，isMinifyEnabled=false 连混淆
-    // 都没有 —— 实测从 APK 的 classes*.dex 里能直接 grep 出完整密钥。所以**发布物只发
-    // 源码，不发 APK**（本机自用包留在本机即可）。万一哪天要对外发包，先跑
-    // tools/check-sensitive.ps1 -ApkPath <包> 确认包里没有密钥。
-    buildConfigField("String", "AGENT_API_KEY", buildConfigString(agentValue("tappet.agent.apiKey", "TAPPET_AGENT_API_KEY", "")))
+    // **这里没有 AGENT_API_KEY，是刻意的**：BuildConfig 是编译期常量、会以明文进 dex
+    // （isMinifyEnabled=false，连混淆都没有 —— 实测能从 classes*.dex 里直接 grep 出密钥）。
+    // 只要密钥**能**被编进包，「本机构建的包不能发出去」就永远是一条要人记住的规矩，
+    // 而不是结构性的事实。密钥现在只有一个来源：设置页 → SecretVault（Keystore 封装）。
+    // 要发包之前仍建议跑一遍 tools/check-sensitive.ps1 -ApkPath <包> 兜底。
     buildConfigField("String", "AGENT_MODEL", buildConfigString(agentValue("tappet.agent.model", "TAPPET_AGENT_MODEL", "deepseek-v4.1-flash")))
     buildConfigField("String", "AGENT_REASONING_EFFORT", buildConfigString(agentValue("tappet.agent.reasoningEffort", "TAPPET_AGENT_REASONING_EFFORT", "low")))
     buildConfigField("String", "AGENT_PROXY_HOST", buildConfigString(agentValue("tappet.agent.proxyHost", "TAPPET_AGENT_PROXY_HOST", "")))

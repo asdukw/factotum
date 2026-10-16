@@ -70,35 +70,59 @@
 - id: web-search-deepseek
   disabled: true
 
-# --- 模型：pi-ai 自定义路由指向 opencode zen（x-opencode-session 是 zen 的硬要求） ---
+# --- 模型：pi-ai 路由。端点 / 调用风格 / 模型三件套都由宿主进程按设置页的预选注入 ---
+# （设置页 → AgentConfigStore → LlmPreset → NodeRuntime 的 env → 这里）
+#
+# **三件事必须成套**：OpenAI 是 openai-responses、Anthropic 是 anthropic-messages、
+# DeepSeek 与 opencode zen 是 openai-completions。风格拿错不会在启动时报错，
+# 只会在第一次请求时以 404/400 的形式炸出来 —— 看着像网络问题，其实是配错了协议。
 - id: llm-pi-ai
   config:
     providers:
-      opencode-zen:
-        displayName: opencode zen
+      tappet:
+        displayName: Tappet 端点
         apiKeyEnv: TAPPET_LLM_KEY
-        api: openai-completions
-        # baseURL 由宿主进程启动时注入的 env 决定（设置页 → AgentConfigStore → NodeRuntime），
-        # 兜底才是这个内置端点。AgentConfig 保证它是非空串（空白值会回落到默认），
-        # 所以这里用 ?? 不会把空串放进来。
+        api: !!js process.env.TAPPET_LLM_API ?? 'openai-completions'
+        # 兜底是内置端点：本机没在设置页配过时的默认（也是真机上唯一跑通过的那条）。
         baseURL: !!js process.env.TAPPET_LLM_BASE_URL ?? 'https://opencode.ai/zen/go/v1'
-        headers:
-          x-opencode-session: !!js process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile'
+        # x-opencode-session 是 opencode zen 的硬要求；别的服务商带上它没有意义，
+        # 所以按预选给空对象而不是无条件发。
+        headers: !!js "process.env.TAPPET_LLM_ZEN === '1' ? { 'x-opencode-session': process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile' } : {}"
+
         models:
+          # 列出的都是 pi-ai 目录里**真实存在**的 id（对应 agent/LlmPreset.kt 的候选）。
+          # 不显式声明 input 时 MODALITIES 只当 text，工具结果里的图会被 pi-ai 以
+          # "does not support image input" 直接拒掉；声明了才收图。没列出的 id 也能用，
+          # 但同样只有文本模态。
           - id: deepseek-v4.1-flash
-            # 视觉输入。pi-ai 目录里 deepseek-v4.1-flash 本来就声明 input 含 image，
-            # 实测 zen 端点接受 image_url 并能正确识别图内容；但不显式声明时
-            # MODALITIES 只当 text，工具结果里的图会被 pi-ai 以
-            # "does not support image input" 直接拒掉。
-            input:
-              - text
-              - image
-        compat:
-          thinkingFormat: deepseek
+            input: [text, image]
+          - id: glm-5.3
+            input: [text]
+          - id: kimi-k3
+            input: [text, image]
+          - id: qwen3.8-max
+            input: [text, image]
+          - id: gpt-6-sol
+            input: [text, image]
+          - id: gpt-5.6-sol
+            input: [text, image]
+          - id: claude-sonnet-5
+            input: [text, image]
+          - id: claude-opus-5-5
+            input: [text, image]
+          - id: deepseek-flash
+            input: [text, image]
+          - id: deepseek-v4-pro
+            input: [text]
+        # thinkingFormat 只在对方**没有原生推理协议**时才需要（zen / DeepSeek 的 reasoning
+        # 字段靠它解析）。OpenAI 的 responses 与 Anthropic 的 messages 自带推理块，
+        # 那时宿主会注入空串，这里就是空对象。
+        compat: !!js "process.env.TAPPET_LLM_THINKING_FORMAT ? { thinkingFormat: process.env.TAPPET_LLM_THINKING_FORMAT } : {}"
+
 - id: agent-default-model
   config:
-    provider: opencode-zen
-    model: deepseek-v4.1-flash
+    provider: tappet
+    model: !!js process.env.TAPPET_LLM_MODEL ?? 'deepseek-v4.1-flash'
 
 # --- 手机 agent 的系统提示 ---
 - id: system-prompt

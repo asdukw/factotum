@@ -377,6 +377,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
 | `Task '.abis=x86_64' not found` | PowerShell 把 `-Ptappet.abis=x86_64` 拆成两个参数 → 加引号：`"-Ptappet.abis=x86_64"` |
 | 装到手机上 `dlopen libc++_shared.so` 失败（刚跑过模拟器） | jniLibs 停在 x86_64 → `tools/fetch-libnode.ps1` 切回 arm64 再出包 |
+| `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
 
 ## 深度文档

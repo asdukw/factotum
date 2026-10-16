@@ -1,12 +1,12 @@
-# Tappet AGENTS.md
+# Tappet — AGENTS.md
 
-本文件是给 coding agent 的项目记忆：**先读完再动手**。以下均为实测结论与硬规则，
-不要凭直觉推翻。深度信息在 `docs/`，本文件只放硬规则与可直接执行的命令。
+给 coding agent 的项目记忆：**先读完再动手**。这里只放硬规则与可直接执行的命令，
+都是实测结论，别凭直觉推翻；来由与实测数据在 `docs/`，本文件末尾有索引。
 
 ## 项目概览
 
-Tappet 是**运行在 Android 上的通用 mobile agent**：LLM 通过工具调用操作手机上的任意
-App 完成任务，不做单一 App 的专用适配。仓库唯一运行时是 Android App（Kotlin）。
+Tappet 是**运行在 Android 上的通用 mobile agent**：LLM 通过工具调用操作手机上的任意 App
+完成任务，不做单一 App 的专用适配。仓库唯一运行时是 Android App（Kotlin）。
 
 | 层 | 技术 |
 |---|---|
@@ -14,28 +14,225 @@ App 完成任务，不做单一 App 的专用适配。仓库唯一运行时是 A
 | 数据 | Room + SQLCipher（会话 / 消息 / 工具调用），API key 由 Android Keystore 封装 |
 | agent runtime | App 内嵌 Node 24（nodejs-mobile fork）+ dsh（DeepSeek Harness）phone profile |
 | 设备执行层 | `AccessibilityService`（控件树优先、截图兜底）+ `DeviceBridgeServer`（127.0.0.1 + token） |
-| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（9 个通用原语），独立公开仓库，经 HTTP 桥 → `DeviceAction`；旧 `chat-tools` 已从仓库整体移除（不挂载/不打包） |
+| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（9 个通用原语），独立公开仓库，经 HTTP 桥 → `DeviceAction` |
+| native | JNI（`app/src/main/cpp/native-lib.cpp`）：Kotlin ↔ `node::Start`，需要 NDK 编译 |
 
 - 开发机：Windows + PowerShell 7；设备：一加 15T（PLZ110，Android 16 / API 36，ColorOS）。
 - **方向红线（2026-10-03 定稿）**：不采集通知、不做 QQ / 微信聊天记录管线、不做知识图谱、
   无 Python 侧、无 PC / Electron 客户端。相关代码已删除，**不要重新引入**。
-  手写的 `LlmClient` 工具协议 / `AgentLoop` / 对话集成已暂停/废弃，**不要继续完善**。
-- 动手前读对应文档：
-  - 动 agent runtime → `docs/dsh-android.md`（决策、P0–P2 实测、各阶段结论）
-  - 动无障碍执行层 → `docs/android-accessibility.md`（系统探测与实测记录）
-  - 现状与路线 → `README.md`；**技术路线畅想（未验证的假设）** → `docs/roadmap.md`
+  手写的 `LlmClient` 工具协议 / `AgentLoop` / 对话集成已暂停废弃，**不要继续完善**。
+- 动手前读对应文档：动 agent runtime → `docs/dsh-android.md`；动执行层 →
+  `docs/android-accessibility.md`；路线畅想（未验证）→ `docs/roadmap.md`。
 
-## 命名（2026-10-12）
+## 快速上手
 
-项目原名 **Memex**。因定位是**通用 mobile agent**（而非记忆 / 知识库），已更名为 **Tappet**。
-这次是**彻底改名，连设备身份一起换**：源码包与 `applicationId`、环境变量（`TAPPET_*`）、
-Gradle 属性（`-Ptappet.abis`）、日志 tag（`TappetDevice` / `TappetNode`）、资源名、
-Gradle 工程名、CMake 工程名、JNI 符号全部换新，**没有遗留**。
+环境：**JDK 21**（`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`）、PC 上的 Node 24 + npm、
+Android SDK（compileSdk 36）、`ndk;29.0.14206865`、`cmake;3.31.6`（后三个用 `sdkmanager` 装）。
 
-**换 `applicationId` 的后果（必须记住）**：SQLCipher 口令由 Android Keystore 封装
-（硬件封装、不可导出、按 uid 隔离），换包等于换 uid —— 设备上旧包 `com.memex.app` 里的
-会话 / 消息 / 工具调用，新包**读不到，也没有导出通道可救**。这次是主动接受丢历史；
-以后遇到同类改动同样要想清楚。旧包不卸载就一直占着存储，`adb uninstall com.memex.app` 即可。
+```powershell
+# 首次准备：libnode（含 NDK 里的 libc++_shared.so）与 vendored dsh
+git submodule update --init --recursive   # 设备工具插件在独立仓库
+.\tools\fetch-libnode.ps1
+.\tools\bundle-dsh.ps1
+
+# 构建 + 单测（在 android/ 下执行）
+$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\'
+$env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7897'
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --console=plain
+```
+
+- **代理必须放 `GRADLE_OPTS` 环境变量** —— 行内 `-D` 会被 `gradlew.bat` 拆坏。
+  依赖下载不通时改阿里云镜像 `https://maven.aliyun.com/repository/public`（实测秒下）。
+- `tools/` 下的装配脚本只认 `HTTP_PROXY` / `HTTPS_PROXY`（默认跟随本机 127.0.0.1:7897），
+  没有就走直连（CI 如此）。代理没开时 npm 会 `ECONNREFUSED 127.0.0.1:7897` ——
+  临时绕过：当前 shell 清空这两个变量再跑。
+- 产物：`android/app/build/outputs/apk/debug/app-debug.apk`（含内嵌 Node 与 dsh 运行时，约 160MB）。
+- 模拟器（x86_64）：先取 x86_64 的 libnode，再切 ABI（默认仍是真机 arm64）：
+
+```powershell
+.\tools\fetch-libnode.ps1 -Abi x86_64
+.\gradlew.bat :app:assembleDebug -Ptappet.abis=x86_64 --console=plain
+```
+
+## 开发工作流
+
+- **改了 `tools/dsh-phone/` 下的 launcher / profile / 插件** → 必须重跑 `bundle-dsh.ps1`
+  并重装 APK 才生效（运行时打包在 assets 里；APK 更新后首次启动自动重解压）。
+  `bundle-dsh.ps1` 会先用**真解析器**验一遍 profile：overlay 的 YAML 写坏时 dsh 启动即报错，
+  而内嵌 Node 与宿主同进程 —— 报错就是整个 App 崩。
+- **改插件**（`tools/dsh-phone/plugins/`，submodule → 独立公开仓库）：先在插件仓库提交，
+  再在 tappet 更新 submodule 指针。插件发版由插件仓库的 `v*` tag workflow 完成
+  （GitHub Release 附 `npm pack` tarball；npm 发布是同一 workflow 里的 gated job）。
+- **改设置页 / 端点预选** → 下次启动 App 才生效（内嵌 Node 的 env 与 profile 只在启动时读一次）。
+- **改 Kotlin 后必跑单测**；改了行为要同步补 `src/test` 或 `src/androidTest` 的测试。
+
+## 测试
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --console=plain          # JVM 单测（快，改 Kotlin 后必跑）
+.\gradlew.bat :app:testDebugUnitTest --tests "com.tappet.app.device.ScreenSnapshotRenderTest"
+```
+
+真机测试（`androidTest/`，覆盖 Room/SQLCipher 与 Compose UI）：**先手动装包再单独跑测试任务**，
+不要用 Gradle 自动安装（ColorOS 会拦全新安装）：
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+# 重新启用无障碍（见「真机」一节），然后：
+.\gradlew.bat :app:connectedDebugAndroidTest --console=plain
+```
+
+### 任务审计回路（替代「人工跑一遍翻日志凭印象」）
+
+取证层与判断层分开：`tools/audit/` 是确定性脚本，`.claude/agents/tappet-auditor.md`
+是读产物出报告的只读子 agent。
+
+```powershell
+node tools/audit/selftest.mjs                  # 离线自检（zstd 逐帧解码，不需要设备）
+node tools/audit/run-suite.mjs                 # 跑固定任务集，每个跑完自动采集
+node tools/audit/collect.mjs --label <名字>     # 只采集最新会话
+```
+
+- 产物在 `tools/audit/runs/`（已 gitignore）：**含屏幕正文，按敏感数据对待**；
+  审计报告里不得出现正文，只能写结构（长度 / 节点数 / 类名 / 坐标）。
+- 任务集在 `tools/audit/suite.json`：**改任务文本 = 换任务，历史数据作废**，加场景请追加新 id；
+  默认只放只读 / 可逆任务。`runs/index.json` 要留着累积 —— 跨运行才看得出「工具设计问题」。
+- 包名与会话目录名**不硬编码**（现读 `build.gradle.kts` 的 applicationId）：上一轮改名时，
+  一批硬编码旧包名的脚本是**静默**失效的，报出来像设备问题。要留存的东西放 `tools/` 或 `docs/`，别放 `tmp/`。
+
+## 代码风格与门禁
+
+CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三条**：
+
+```powershell
+.\gradlew.bat spotlessCheck detekt :app:lintDebug --console=plain   # 格式 / 坏味道 / Android 专有检查
+.\gradlew.bat spotlessApply                                         # 格式能自动改的就自动改
+```
+
+| 工具 | 管什么 | 配置 | 出错怎么办 |
+|---|---|---|---|
+| ktlint（经 Spotless） | 格式 | `android/.editorconfig` | `spotlessApply` 自动改 |
+| detekt | 坏味道 / 复杂度 | `android/config/detekt/detekt.yml` | 先看规则要不要放宽（写清理由）；历史欠账进 `baseline.xml` |
+| Android Lint | API 级别 / 清单 / 资源 | `android/app/lint.xml` | 错误必须修；警告只进报告 |
+
+- **Lint 的错误挡 CI，警告不挡**：几十条警告里多数是「有新版本可用」，升成错误等于逼着
+  每次上游发版都改一遍构建脚本。
+- **detekt 的 `baseline.xml` 是历史欠账快照，不是免检区**：它只挡新增，**不许往里加**；
+  真要加，先在提交信息里说明为什么这次必须放宽。
+- 两个踩过的坑：Spotless 的 `.editorconfig` 查找根是 **Gradle 工程目录**（写仓库根它看不见）；
+  ktlint 的规则属性（`ktlint_*`）经 Spotless 传不进规则，只能在 `editorConfigOverride` 里再给一次。
+- Lint / detekt 的结果以 SARIF 传到仓库 Security 标签页，不用点进 CI 日志翻。
+
+## CI 与发版
+
+四个 workflow（`.github/workflows/`）：
+
+| workflow | 触发 | 干什么 |
+|---|---|---|
+| `ci.yml` | push master / PR | 静态检查、单测 + androidTest 编译、离线自检（审计 selftest + profile 真解析器校验） |
+| `assemble.yml` | 装配相关路径变动时 | 拉 libnode → 装配 dsh → NDK 出 debug 包 → **验产物结构**（native 库在不在、运行时资产是不是真 zip） |
+| `codeql.yml` | push / PR / 每周 | 语义级安全扫描 |
+| `release.yml` | 推 `v*` tag | **先过门禁** → 装配 → 签名出包 → 验签 + 扫包内密钥 → 发 release |
+
+- **CI 绿 ≠ 能用**：无障碍执行层、内嵌 Node 启动、真实任务只能在真机上验证。
+  日常 CI 不装 NDK（那 ~1.5GB 只有 `assemble.yml` 与 `release.yml` 需要，按版本缓存）。
+- **出包之后要验产物本身**，不能只看退出码：v0.1.0 第一次出的 APK 构建成功、装到设备上才炸
+  （Linux 的 GNU tar 写不了 zip，产物是改了后缀的 tar），第二次又缺 `libc++_shared.so`。
+  `assemble.yml` 就是为这两次教训加的。
+
+**发版**：打 `v*` tag → `release.yml` 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
+版本说明写在 `docs/releases/<tag>.md`（有就用它，没有就 `--generate-notes`）。
+
+| 签名材料 | 位置 |
+|---|---|
+| release keystore | `C:\Users\asdukw\keys\tappet-release.jks`（**仓库外**，RSA 4096 / 10000 天） |
+| 本机配置 | `android/local.properties`（gitignored）的 `tappet.release.storeFile/storePassword/keyAlias/keyPassword` |
+| CI | GitHub secrets：`TAPPET_KEYSTORE_BASE64` / `TAPPET_KEYSTORE_PASSWORD` / `TAPPET_KEY_ALIAS` / `TAPPET_KEY_PASSWORD` |
+
+- **keystore 丢了就再也发不出能覆盖安装的更新**（换签名 = 另一个 App，设备上旧包的库读不到）。
+  与 SQLCipher 口令同性质：**先备份再折腾**，别只留一份在开发机上。
+- 本机也能出签名包（读取顺序：环境变量 > local.properties）。
+- 发之前至少跑一遍：门禁三条命令 + 单测，以及 `tools/check-sensitive.ps1 -ApkPath <包>`。
+
+## 安全与隐私红线
+
+1. **密钥永不入库、不进日志、不打印，也不进构建产物**：唯一来源是设置页 →
+   `SecretVault`（Keystore 封装），运行时经 env `TAPPET_LLM_KEY` 交给 dsh。
+   构建期注入那条路已删除（`AGENT_API_KEY` 不存在了），所以「包里有密钥」在结构上不可能发生 ——
+   而不是靠人记得别发包。
+2. **屏幕与聊天正文不落日志**：只记计数 / 类名 / 坐标 / 错误码；读屏 payload 只出现在
+   给模型的工具结果里。debug 广播的 `--ez logPayload true` 仅供调试，用完不要留在脚本里。
+3. `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：**卸载即永久丢失，外部不可解、不可拷**。
+   任何卸载 / 清数据 / 重装前先确认已导出。
+4. SQLCipher 原生库不会自动加载：`TappetDatabaseProvider` 必须显式 `System.loadLibrary("sqlcipher")`
+   （删旧代码时丢过一次，表现为 `nativeOpen` 的 UnsatisfiedLinkError、界面「本地存储不可用」）。
+5. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
+   先在 `docs/` 写清边界与隐私闸门，再动代码。
+
+发布前自检：
+
+```powershell
+.\tools\check-sensitive.ps1                 # 扫工作树 + 全部 git 历史
+.\tools\check-sensitive.ps1 -ApkPath <包>   # 要对外发包时，连包一起扫
+.\tools\check-sensitive.ps1 -SelfTest       # 先证明「扫描器确实会命中」
+```
+
+- 输出**不打印密钥本体**，只报定位；`exit 1` = 有命中。
+- 它认不出「真实标识」——那组启发式只报警不判失败，判断得靠人（历史真出过这类泄漏）。
+- **`-SelfTest` 不是可选项**：不确认扫描器能命中，空结果就只是「碰巧通过」。
+
+## 架构与改动入口
+
+### 加一个设备动作 = 四处同一原子语义
+
+`device/DeviceAction.kt`（定义）+ `TappetAccessibilityService`（执行）+
+`bridge/DeviceBridgeServer`（HTTP 映射）+ `tools/dsh-phone/plugins/android-tools/index.mjs`
+（`ctx.tools` 注册，含给模型看的描述；独立公开仓库，先在插件仓库提交再更新 submodule 指针）。
+插件改完 → `bundle-dsh.ps1` → 重装 APK。
+
+现有 9 个桥动作：`read_screen` / `screenshot` / `tap_node(ref)` / `tap_point(x,y)` /
+`long_press(ref|x,y,duration_ms)` / `type_text` / `press(back|home|recents|enter)` /
+`launch_app(query)` / `swipe(direction)`。工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
+
+### 加一个服务商预选 = 四处对齐
+
+`agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 推理格式）→ `AgentConfigStore`（存预选 id）
+→ `NodeRuntime`（注入 `TAPPET_LLM_API` / `_MODEL` / `_THINKING_FORMAT` / `_ZEN`，以及 `PROVIDER` 常量）
+→ `tools/dsh-phone/profile/cordis.patch.yml`（provider 的 `api` / `baseURL` / `models`）。
+
+- **`NodeRuntime.PROVIDER` 必须与 profile 里的 provider 键逐字相同**：漏改一处时报的是
+  `no adapter registered for provider "xxx"`，看着像运行时缺插件（有单测钉住）。
+- **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
+  `anthropic-messages`，DeepSeek 与 opencode zen 是 `openai-completions`。风格拿错不会在启动时报错，
+  只会在第一次请求时以 404/400 的样子炸出来。
+- 模型 id 一律从运行时 pi-ai 目录取
+  （`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`）；
+  目录里没有的 id 会被当成未知模型（模态退化成纯文本，读图直接失败）。
+- 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK。**目前只有 OpenCode Go 在真机跑通过**，
+  其余预选是「配置对得上目录、没用真 key 发过请求」，界面里如实标着。
+
+### 几条不许碰的约束
+
+- **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile`；换 ROM 只加一个 `OemProfile`。
+  不写 App 专用逻辑 —— QQ / 微信只是试验任务的目标 App，不是适配对象。
+- **桥只监听 `127.0.0.1` + 每进程随机 token**，只暴露 `POST /action`；不在设备上安装插件。
+- **任务期触摸探索按任务开关**：部分 App（实测微信 8.0.78）只在 `isTouchExplorationEnabled()`
+  为真时暴露控件树，所以任务期间由 `DshStreamer` / `NodeDebugReceiver` 调
+  `setTouchExplorationForTask(true)`，`finally` 必须关掉（常开会让用户点击变成「双击才生效」）。
+  开启期间 `dispatchGesture` 会被系统吞掉，点击 / 长按 / 上下滚动自动改走 `performAction`。
+- **改 dsh 运行时不要用 `boot()` / CLI loader**（硬依赖无 Android 产物的
+  `node-addon-require-builtin`）：走 `launcher.mjs`；Android 上 `patch-runtime.mjs` 放行 flock、
+  把 jsonl 硬链接发布改为 rename。
+- **内嵌 Node 是进程内单实例、常驻形态**：stdout 是 JSON-RPC 协议独占（profile 不能挂 stdout logger，
+  诊断走 stderr）；可连续任务、不需要 force-stop，但**不要发 `shutdown`、不要 `process.exit()`**
+  （会 FORTIFY/SIGABRT 掉整个 App）。跨 App 任务需前台服务保活。
+
+## 命名与存储身份（改名红线）
+
+项目原名 **Memex**，2026-10-12 因定位是通用 mobile agent 更名为 **Tappet**（含 `applicationId`、
+环境变量、Gradle 属性、日志 tag、CMake 工程名、JNI 符号）。旧包 `com.memex.app` 若还在设备上，
+其数据新包读不到，`adb uninstall com.memex.app` 即可。
 
 **存储身份共四处，任何一次改名都必须一起改**，漏一处库就读不出来：
 
@@ -46,211 +243,23 @@ Gradle 工程名、CMake 工程名、JNI 符号全部换新，**没有遗留**�
 | `PassphraseVault` 的 `prefsName` | 封装口令的 SharedPreferences 文件 |
 | `PassphraseVault` 的 `keyAlias` | Keystore 里的密钥别名 |
 
-**另一组同类身份（2026-10-12 设置页引入）**：`SecretVault` 的 `prefsName` / `keyAlias`
-（"tappet_agent_secret" / "tappet-agent-llm-key-v1"）与 `AgentConfigStore.PREFS_NAME`。
-改这几个字面量的后果比上面轻（丢的是用户填的 API key，不是聊天库），但同样静默：
-表现出来只是「设置页说我配过，但用起来像没配」。改之前先想清楚要不要保留用户已填的 key。
+**另一组同类身份**：`SecretVault` 的 `prefsName` / `keyAlias` 与 `AgentConfigStore.PREFS_NAME`。
+改这几个的后果轻一些（丢的是用户填的 API key，不是聊天库），但同样静默 ——
+表现出来只是「设置页说我配过，但用起来像没配」。
 
-组件名统一是 `com.tappet.app/...`：`-n com.tappet.app/.node.NodeDebugReceiver`、
-`run-as com.tappet.app`、`dumpsys package com.tappet.app`。
-`OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读 `BuildConfig.APPLICATION_ID`，会自己跟随。
+组件名统一 `com.tappet.app/...`；`OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读
+`BuildConfig.APPLICATION_ID`，会自己跟随。
 
-## Git 历史（2026-10-12 发布前重建，看这里不要以为仓库是新的）
-
-公开发布前做过一次**历史重建**：对外历史的**根提交**是重建出来的，其树与重建前的
-HEAD 逐字节相同（比过 tree hash），**它之前的提交都不存在了**。**别把「历史很短」
-当成仓库刚建** —— 代码和文档都是有来由的，来由在被剥离的旧历史里。
-
-为什么剥离：旧历史里不只有已删除的旧管线代码，还有**第三方的真实数据** ——
-m3 试点报告里的真实群名/群号与某位群成员的真实昵称及其私人信息、schema 文档里的
-真实 NT UID 与逐会话行数；**而且多条提交信息里也写着这些标识**（所以只删文件不够）。
-
-- 完整旧历史（106 提交）在**仓库外**：`../memex-history-backup-2026-10-12.bundle`
-  （`git clone <bundle> <dir>` 可取回）。本地回顾用它，**不随发布**。
-- 因此：`docs/m3-pilot-report.md`、`src/life_graph/**`、`tools/m0_*.ps1` 这些都是
-  **历史之外**的东西，`git log -- <path>` 查不到不等于从未存在。
-- 以后若再往仓库里写任何来自真实数据的内容（调研、报告、fixture、schema 实测），
-  **先脱敏再提交** —— 标识一进 git 就跟着每个 clone 走，事后只能重写历史。
-
-## 仓库结构
-
-```
-android/                        唯一运行时（Kotlin / Compose）
-  app/src/main/java/com/tappet/app/
-    agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ 已暂停的手写 LLM 客户端
-    accessibility/              AccessibilityService（执行层实现）
-    bridge/                     DeviceBridgeServer（本地 HTTP 桥）
-    data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/ 下的 SecretVault 存用户填的 API key
-    device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
-    node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
-    ui/                         Compose 界面（聊天 / 首页 / 设置）
-  app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
-  app/src/test/                 JVM 单测
-  app/src/androidTest/          真机（instrumented）测试
-tools/                          PC 侧脚本与 dsh 适配层
-  fetch-libnode.ps1             拉取 pinned libnode + libc++_shared
-  bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip
-  check-sensitive.ps1           发布前自检：扫工作树 + 全历史 +（可选）APK 里的密钥
-  audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
-  dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
-  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
-  dsh-phone/plugins/            git submodule（独立公开仓库，源码唯一源头）
-    android-tools/                https://github.com/asdukw/dsh-plugin-android-tools（9 个通用原语）
-  dsh-phone/android-attachments/ 纯 JS 的附件存储（Android 没 sharp，替换 attachment-local）
-  dsh-phone/profile/            phone profile（cordis.patch.yml）
-docs/                           深度文档
-  roadmap.md                   技术路线畅想（方向性设想，未验证）
-```
-
-`libnode.so`、dsh 运行时（`assets/dsh-runtime.zip`、`assets/nodejs/`、`libnode/`、
-`jniLibs/`）都**不入库**，由 `tools/` 脚本按 pinned 版本装配（在 `.gitignore` 内）。
-
-插件源码在独立公开仓库，由 git submodule 钉 commit 引用（当前只引入 `android-tools`，
-旧的 `chat-tools` submodule 已移除）；克隆后先
-`git submodule update --init --recursive`。插件改动先提交到插件仓库，再在 tappet
-更新 submodule 指针；发版由插件仓库的 `v*` tag workflow 完成：GitHub Release 附
-`npm pack` tarball（安装：`dsh plugin add ./<pkg>-<ver>.tgz` 或
-`github:asdukw/<repo>#v<ver>`）；npm 发布是同一 workflow 里的 gated job，首个版本需
-本地 `npm publish` 并在 npmjs.com 配 trusted publisher 后用 repo variable
-`NPM_PUBLISH_READY=true` 启用（无需 secret）。
-
-## 环境准备
-
-- **JDK 21**（必须）：`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`
-- Android SDK：compileSdk 36；`ndk;29.0.14206865` 与 `cmake;3.31.6`（`sdkmanager` 安装）
-- PC Node 24 + npm（装配 dsh 运行时用；实测 `C:\nvm4w\nodejs\node.exe`）
-- 代理约定：本地代理 `127.0.0.1:7897`。代理以 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量全局注入，
-  `tools/` 下的装配脚本也**只认这两个变量**（不再写死）—— 没有就走直连，CI 就是这种情况。
-  代理未开时 npm 会
-  `ECONNREFUSED 127.0.0.1:7897`，临时绕过：当前 shell 清空这两个变量后再执行。
-
-```powershell
-# 首次准备：libnode（含 NDK 里的 libc++_shared.so）与 vendored dsh
-.\tools\fetch-libnode.ps1
-.\tools\bundle-dsh.ps1
-
-# API key 只有**设置页**（抽屉 → 设置）一个入口，存进 Keystore 封装的 SecretVault。
-# 构建期注入已经整个去掉（AGENT_API_KEY 这个 BuildConfig 字段不存在了）——
-# 理由见 app/build.gradle.kts：只要密钥**能**被编进包，「本机构建的包不能发出去」
-# 就永远是要人记住的规矩，而不是结构性的事实。
-# android/local.properties 只剩非密钥的开发机默认值（gitignored）：
-#   tappet.agent.baseUrl / model / reasoningEffort / proxyHost / proxyPort
-# 端点预选由 baseUrl 反推（LlmPreset.forBaseUrl），所以本机把端点写成哪家，风格就按哪家调。
-```
-
-## 构建
-
-```powershell
-$env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\'
-$env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7897'
-.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --console=plain   # 在 android/ 下执行
-```
-
-- **代理必须放 `GRADLE_OPTS` 环境变量**——行内 `-D` 会被 `gradlew.bat` 拆坏。
-- 依赖下载不通时，改阿里云镜像 `https://maven.aliyun.com/repository/public`（实测秒下）；
-  GitHub 资源（libnode）走 7897 代理。
-- 产物：`android/app/build/outputs/apk/debug/app-debug.apk`（含内嵌 Node 与 dsh 运行时，约 160MB）。
-- 模拟器（x86_64）调试：先取 x86_64 libnode，再用 Gradle 属性切 ABI（默认仍是真机 arm64）：
-
-```powershell
-.\tools\fetch-libnode.ps1 -Abi x86_64     # 产出 android/app/libnode/bin/x86_64 + jniLibs/x86_64
-.\gradlew.bat :app:assembleDebug -Ptappet.abis=x86_64 --console=plain   # 在 android/ 下执行
-```
-- 改了 `tools/dsh-phone/` 下的 launcher / profile / 插件后，必须重跑 `bundle-dsh.ps1`
-  并重装 APK 才会生效（运行时打包在 assets 里；APK 更新后首次启动自动重解压）。
-  `bundle-dsh.ps1` 会先用**真解析器**验一遍 profile（`tools/dsh-phone/check-profile.mjs`）：
-  overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node 与宿主同进程 —— 报错就是整个 App 崩。
-
-## 测试
-
-- 单测（JVM，快速，改 Kotlin 后必跑）：`.\gradlew.bat :app:testDebugUnitTest --console=plain`
-  - 单个类：`.\gradlew.bat :app:testDebugUnitTest --tests "com.tappet.app.device.ScreenSnapshotRenderTest"`
-- 真机测试（`androidTest/`，覆盖 Room/SQLCipher、Compose UI）：
-  **先手动装包再单独跑测试任务**，不要用 Gradle 自动安装（ColorOS 会拦全新安装）：
-
-```powershell
-.\gradlew.bat :app:assembleDebug
-adb install -r app\build\outputs\apk\debug\app-debug.apk
-# 按下方「真机」一节重新启用无障碍服务
-.\gradlew.bat :app:connectedDebugAndroidTest --console=plain
-```
-
-- **CI（GitHub Actions，`.github/workflows/`）**，四个 workflow 分工：
-  | workflow | 触发 | 干什么 |
-  |---|---|---|
-  | `ci.yml` | push master / PR | 静态检查（ktlint + detekt + Lint）、单测 + androidTest 编译、离线自检（审计 selftest + profile 真解析器校验） |
-  | `assemble.yml` | **只在装配相关路径变动时** | 拉 libnode → 装配 dsh → NDK 出 debug 包 → **验产物结构**（native 库在不在、运行时资产是不是真 zip） |
-  | `codeql.yml` | push / PR / 每周 | 语义级安全扫描 |
-  | `release.yml` | 推 `v*` tag | **先过门禁** → 装配 → 签名出包 → 验签 + 扫密钥 → 发 release |
-
-  **CI 绿 ≠ 能用**：无障碍执行层、内嵌 Node 启动、真实任务仍只能在真机上验证。
-  日常 CI 不装 NDK（那 ~1.5GB 只有 `assemble.yml` 与 `release.yml` 需要，且按版本缓存）。
-  `assemble.yml` 存在的理由就是 v0.1.0 那次教训：装配/打包的平台差异（Linux 的 GNU tar
-  写不了 zip）全攒到发布那一刻才炸 —— 所以它**出包之后还要验产物本身**，而不是只看退出码。
-- 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
-- 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
-
-### 代码质量门禁（CI 与本地同一套命令）
-
-```powershell
-# 一次跑完：格式 + 坏味道 + Android 专有检查（在 android/ 下执行）
-.\gradlew.bat spotlessCheck detekt :app:lintDebug --console=plain
-.\gradlew.bat spotlessApply        # 格式能自动改的就自动改
-```
-
-| 工具 | 管什么 | 配置 | 出错怎么办 |
-|---|---|---|---|
-| ktlint（经 Spotless） | 格式 | `android/.editorconfig` | `spotlessApply` 自动改 |
-| detekt | 坏味道 / 复杂度 | `android/config/detekt/detekt.yml` | 先看规则要不要放宽（写清理由）；历史欠账进 `baseline.xml` |
-| Android Lint | API 级别 / 清单 / 资源 | `android/app/lint.xml` | 错误必须修；警告只进报告 |
-
-- **Lint 的错误挡 CI，警告不挡**。几十条警告里多数是「有新版本可用」，升成错误等于逼着
-  每次上游发版都改一遍构建脚本。
-- **detekt 的 `baseline.xml` 是历史欠账快照，不是免检区**：它只挡新增。不许往里加，
-  真要加先在提交信息里说明。
-- 两个踩过的坑：Spotless 的 `.editorconfig` 查找根是 **Gradle 工程目录**（写仓库根它看不见）；
-  ktlint 的规则属性（`ktlint_*`）经 Spotless 传不进规则，只能在 `editorConfigOverride` 里再给一次。
-- CI 把 Lint / detekt 的结果传成 SARIF 到仓库的 Security 标签页（`codeql.yml` 另跑语义级扫描）。
-
-### 任务审计回路（替代「人工跑一遍翻日志凭印象」）
-
-取证层与判断层分开：`tools/audit/` 是确定性脚本，`.claude/agents/tappet-auditor.md`
-是读产物出报告的只读子 agent。
-
-```powershell
-node tools/audit/selftest.mjs      # 离线自检（zstd 逐帧解码，不需要设备）
-node tools/audit/run-suite.mjs     # 跑固定任务集，每个跑完自动采集
-node tools/audit/collect.mjs --label <名字>   # 只采集最新会话
-```
-
-- 产物在 `tools/audit/runs/`（已 gitignore）：`events.jsonl`（每步一行）、
-  `metrics.json`、以及累积的 `runs/index.json`。**含屏幕正文，按敏感数据对待**；
-  审计报告里不得出现正文，只能写结构（长度 / 节点数 / 类名 / 坐标）。
-- 任务集在 `tools/audit/suite.json`。**改任务文本 = 换任务，历史数据作废**，
-  加场景请追加新 id；默认只放只读 / 可逆任务（审计要跑很多遍）。
-- 包名与 dsh 会话目录名都**不硬编码**（现读 `build.gradle.kts` 的 applicationId）。
-  上一轮改名时有一批手工脚本因为硬编码旧包名一起失效，而且是**静默**失效 ——
-  报出来像「没有 session 目录」，看着像设备问题。要留存的东西放 `tools/` 或 `docs/`，别放 `tmp/`。
-- 跨运行才能看出「工具设计问题」这类结论，所以 `index.json` 要留着累积，别删。
-
-### 发布前敏感信息自检
-
-```powershell
-.\tools\check-sensitive.ps1          # 源码：扫工作树 + 全部 git 历史
-.\tools\check-sensitive.ps1 -ApkPath <包>   # 要对外发包时，连包一起扫
-.\tools\check-sensitive.ps1 -SelfTest       # 只验证「扫描器确实会命中」
-```
-
-- 输出**不打印密钥本体**，只报定位；`exit 1` = 有命中。
-- 它认不出「真实标识」——那组启发式只报警不判失败，判断得靠人（历史真出过这类泄漏）。
-- **`-SelfTest` 不是可选项**：不确认扫描器能命中，空结果就只是「碰巧通过」。
-- 密钥从 `android/local.properties` 读（只读长度，不打印）。
+**Git 历史（2026-10-12 发布前重建）**：对外历史的根提交是重建出来的，之前的提交都已不存在 ——
+**别把「历史很短」当成仓库刚建**。剥离的原因是旧历史里有第三方真实数据（群名/群号、真实昵称、
+NT UID），且**多条提交信息里也写着**。完整旧历史在仓库外
+（`../memex-history-backup-2026-10-12.bundle`）。**以后往仓库写任何来自真实数据的内容，
+先脱敏再提交** —— 标识一进 git 就跟着每个 clone 走。
 
 ## 真机（一加 15T / ColorOS）
 
-- **不要走 Gradle 的自动安装通道**：设备上原本没有此包时会被 ColorOS 拦，挂 ~5 分钟后
-  报 `Starting 0 tests` + `Failed to install split APK(s)`。覆盖安装实测正常。
-  正确流程：`assembleDebug` → `adb install -r`（~10 秒）。
+- **不要走 Gradle 的自动安装通道**：设备上原本没有此包时会被 ColorOS 拦，挂 ~5 分钟后报
+  `Starting 0 tests` + `Failed to install split APK(s)`。正确流程：`assembleDebug` → `adb install -r`。
 - **`adb install -r` 会摘掉已启用的无障碍服务**，每次装完重新启用：
 
 ```powershell
@@ -258,161 +267,113 @@ adb shell settings put secure enabled_accessibility_services com.tappet.app/.acc
 adb shell settings put secure accessibility_enabled 1
 ```
 
-- `pm grant` / `appops set` 会被 ColorOS 加固拦截（uid 2000 无权限），别反复试；
-  App 目前只需要 `INTERNET` 权限。
-- ColorOS 首次启用/重装后弹「保持开启」安全弹窗（3 秒倒计时），不点可能被关闭。
+- `pm grant` / `appops set` 会被 ColorOS 加固拦截（uid 2000 无权限），别反复试；App 只需要 `INTERNET`。
+- ColorOS 首次启用 / 重装后弹「保持开启」安全弹窗（3 秒倒计时），不点可能被关闭；
+  也会 defer 后台广播 —— 广播前先把 App 拉到前台（`monkey`）。
 - `uiautomator dump` 会顶掉无障碍服务约 1 秒，用 adb 自动化时避开。
-- ColorOS 会冻结后台进程：设备操作必须配前台服务（正式化见 docs P3）。
 - logcat 关键 tag：`TappetDevice`（执行层）、`TappetNode`（Node 宿主）、
-  `TappetAudit`（**审计标记**，机器读的 key=value；`tools/audit` 按它过滤，
-  改名要同步 `AUDIT_TAG`）、`NODEJS-MOBILE`（Node **stderr** 诊断；stdout 是 JSON-RPC 协议，不落日志）。
+  `TappetAudit`（**审计标记**，机器读的 key=value，`tools/audit` 按它过滤，改名要同步 `AUDIT_TAG`）、
+  `NODEJS-MOBILE`（Node **stderr**；stdout 是协议，不落日志）。
 
-**debug-only 广播入口**（release 不含）——用于不经 UI 触发、可复现的真机验证：
+**debug-only 广播入口**（release 不含）—— 不经 UI 触发、可复现的真机验证：
 
 ```powershell
 # 启动常驻运行时 + SDK initialize（只跑一次；之后可连续任务）
 adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
   -a com.tappet.app.debug.NODE --es op START
 
-# 提交一个任务（可连续多次，不需要 force-stop）；--ez logPayload true 才打印助手正文
+# 提交任务（可连续多次，不需要 force-stop）；--ez logPayload true 才打印助手正文
 adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op TASK --es task '任务文本'"
-# 需要干净会话时加 --es session <id>
 
 # 直接驱动执行层原子动作（目标 App 在前台时用）
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action READ_SCREEN
 ```
 
-- 带空格的参数（如 `--es task '...'`）必须把整条 `am broadcast` 再用 `adb shell "..."`
-  包一层引号，否则会被设备 shell 拆词。
-- ColorOS 会 defer 后台广播、`install -r` 后又会重置无障碍开关：广播前先把 App
-  拉到前台（`monkey`），装完等进程起来后再 `settings put secure` 启用无障碍。
-
-## 架构与改动入口
-
-- **加一个设备动作 = 四处同一原子语义**：`device/DeviceAction.kt`（定义）+
-  `TappetAccessibilityService`（执行）+ `bridge/DeviceBridgeServer`（HTTP 映射）+
-  `tools/dsh-phone/plugins/android-tools/index.mjs`（`ctx.tools` 注册，含给模型看的
-  描述；独立公开仓库，先在插件仓库提交再更新 submodule 指针）。
-  插件改完 → `bundle-dsh.ps1` → 重装 APK。
-- 现有 9 个桥动作：`read_screen` / `screenshot` / `tap_node(ref)` / `tap_point(x,y)` /
-  `long_press(ref|x,y,duration_ms)` / `type_text` / `press(back|home|recents|enter)` /
-  `launch_app(query)` / `swipe(direction)`（wait 已下线：等待靠模型思考与重复 read_screen）。
-  `press_back` 只保留为桥兼容别名；工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
-- **任务期触摸探索（按任务开关）**：部分 App（实测微信 8.0.78）只在
-  `isTouchExplorationEnabled()` 为真时暴露控件树，所以任务期间由 `DshStreamer` /
-  `NodeDebugReceiver` 调 `TappetAccessibilityService.setTouchExplorationForTask(true)`，`finally` 关掉。
-  开启期间 `dispatchGesture` 会被系统吞掉，点击/长按/上下滚动自动改走 `performAction`
-  语义动作；关掉后手势恢复。细节与实测见 `docs/android-accessibility.md` §9。
-- **通用原语边界**：Tappet phone profile 只挂 `dsh-plugin-android-tools`；`chat-tools` 已整体
-  移除（不挂载、不打包、无 submodule）。聊天/购物等业务语义由模型组合基础动作。
-- **加一个服务商预选 = 四处对齐**（与「加一个设备动作」同样的四处纪律）：
-  `agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 推理格式）→ `AgentConfigStore`
-  （存预选 id）→ `NodeRuntime`（注入 `TAPPET_LLM_API` / `_MODEL` / `_THINKING_FORMAT` / `_ZEN`，
-  以及 `PROVIDER` 常量）→ `tools/dsh-phone/profile/cordis.patch.yml`（provider 的
-  `api` / `baseURL` / `models`）。**`NodeRuntime.PROVIDER` 必须与 profile 里的 provider 键
-  逐字相同**，改一处漏一处时报的是 `no adapter registered for provider "xxx"`，
-  看着像运行时缺插件。
-  **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
-  `anthropic-messages`，DeepSeek 与 opencode zen 是 `openai-completions`；拿错风格不会在
-  启动时报错，只会在第一次请求时以 404/400 的样子炸出来。模型 id 一律从运行时 pi-ai 目录里
-  取（`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`），
-  目录里没有的 id 会被当成未知模型（模态退化成纯文本，读图直接失败）。
-  改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK。**目前只有 OpenCode Go 这条路径在真机上
-  跑通过**，其余预选是「配置对得上目录、没用真 key 发过请求」——界面里如实标着。
-- **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile` 两个契约；换 ROM 只加一个
-  `OemProfile`。不写 App 专用逻辑 —— QQ / 微信只是试验任务的目标 App，不是适配对象。
-- 桥只监听 `127.0.0.1` + 每进程随机 token，只暴露 `POST /action`；不在设备上安装插件。
-- **改 dsh 运行时不要用 `boot()`/CLI loader**（硬依赖无 Android 产物的
-  `node-addon-require-builtin`）：走 `launcher.mjs`（纯组合函数取 rows + Cordis 直接
-  mount）；Android 上 `patch-runtime.mjs` 放行 flock、把 jsonl 硬链接发布改为 rename。
-- 内嵌 Node 是宿主 App 进程内单实例、常驻形态：launcher 挂
-  `@deepseek-ai/dsh-sdk-jsonrpc-server`，Kotlin 经 stdin/stdout 当 SDK client
-  （`initialize` / `session/prompt`，事件走 `session.event` / `session.status`）。
-  **stdout 是协议独占**，phone profile 不能挂 stdout logger，诊断走 stderr。
-  可连续任务，不需要 force-stop；但**不要发 `shutdown`、不要 `process.exit()`**
-  （会 FORTIFY/SIGABRT 掉整个 App）。跨 App 任务需前台服务保活。
-
-## 数据与隐私红线
-
-1. **密钥永不入库、不进日志、不打印，也不进构建产物**：唯一来源是设置页 →
-   `SecretVault`（Keystore 封装），运行时经 env `TAPPET_LLM_KEY` 交给 dsh。
-   构建期那条注入路径已删除（`AGENT_API_KEY` 不存在了），所以「包里有密钥」这件事
-   在结构上不可能发生 —— 而不是靠人记得别发包。
-2. **屏幕与聊天正文不落日志**：日志只记计数 / 类名 / 坐标 / 错误码；读屏 payload 只在
-   给模型的工具结果里。debug 广播的 `--ez logPayload true` 仅供调试，用完不要留在脚本里。
-3. `tappet.db`（会话 / 消息 / 工具调用）用 SQLCipher 加密，口令由 Keystore 封装：
-   **卸载即永久丢失，外部不可解、不可拷**。任何卸载 / 清数据 / 重装前先确认已导出。
-4. SQLCipher 原生库不会自动加载：`TappetDatabaseProvider` 必须显式
-   `System.loadLibrary("sqlcipher")`（删旧代码时丢过一次，表现为 `nativeOpen` 的
-   UnsatisfiedLinkError、界面显示「本地存储不可用」）。
-5. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
-   先在 `docs/` 写清边界与隐私闸门，再动代码。
-
-## 发版
-
-打 `v*` tag 即触发 `.github/workflows/release.yml`：装 NDK/CMake → `fetch-libnode.ps1` +
-`bundle-dsh.ps1` 装配运行时 → `assembleRelease`（用 release keystore 签名）→ 验签 + 扫包内密钥
-→ 发 GitHub Release，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
-版本说明写在 `docs/releases/<tag>.md`（有就用它，没有就 `--generate-notes`）。
-
-**签名材料（只在本机与 GitHub secret 里，绝不入库）**：
-
-| 位置 | 内容 |
-|---|---|
-| `C:\Users\asdukw\keys\tappet-release.jks` | release keystore（**仓库外**，RSA 4096 / 10000 天） |
-| `android/local.properties`（gitignored） | `tappet.release.storeFile` / `storePassword` / `keyAlias` / `keyPassword` |
-| GitHub secrets | `TAPPET_KEYSTORE_BASE64` / `TAPPET_KEYSTORE_PASSWORD` / `TAPPET_KEY_ALIAS` / `TAPPET_KEY_PASSWORD` |
-
-- **keystore 丢了就再也发不出能覆盖安装的更新**（换签名 = 另一个 App，设备上旧包的库读不到）。
-  与 SQLCipher 口令同性质：先备份再折腾，别只留一份在开发机上。
-- 本机也能出同样的包：那四个键在 `android/local.properties` 里，`gradlew :app:assembleRelease`
-  出来的就是签名包（本机与 CI 走同一套读取顺序：环境变量 > local.properties）。
-- 发之前至少跑一遍：`gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest`，
-  以及 `tools/check-sensitive.ps1 -ApkPath <包>`（连包一起扫密钥）。
+带空格的参数必须把整条 `am broadcast` 再用 `adb shell "..."` 包一层引号，否则会被设备 shell 拆词。
 
 ## 提交纪律（2026-10-03 用户约定）
 
-- **完成一个可验证的里程碑时自行提交，不要攒大改动等用户开口。** 判据：构建 / 单测通过，
+- **完成一个可验证的里程碑时自行提交**，不要攒大改动等用户开口。判据：构建 / 单测通过，
   或真机验证完成，即提交一个内聚的 commit。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、
-  `fix(repo): ...`），正文写清改了什么与验证方式；不含密钥与个人数据。
+  `fix(repo): ...`），正文写清改了什么与**验证方式**；不含密钥与个人数据。
 - 未验证的半成品不提交；提交后保持工作区干净、可解释。
-- **远端与 push（2026-10-16 修订）**：发布后本仓库有公开远端（GitHub `origin`）。
-  「改完就提交」是本仓库的默认动作，**「推上去」不是** —— push 必须由用户逐次明确授权。
-  发布前的这段时间历史只有本机一份，所以**重写历史是免费的**（`--amend` / `rebase` 随便用）；
-  一旦推过，历史就跟着每个 clone 走，只剩「重写 + 强推」这条既难看又有代价的路（见「Git 历史」一节）。
+- **push 必须由用户逐次明确授权**（「改完就提交」是默认动作，「推上去」不是）。
+  历史已经公开：一旦推过，重写历史就只剩「重写 + 强推」这条既难看又有代价的路。
   推论：任何**不该公开的字面量**（真实标识、密钥、本机路径）只要在 push 前发现，就地重写，别攒着。
+
+## 仓库结构
+
+```
+android/                        唯一运行时（Kotlin / Compose）
+  app/src/main/java/com/tappet/app/
+    agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ LlmPreset（服务商预选）
+    accessibility/              AccessibilityService（执行层实现）
+    bridge/                     DeviceBridgeServer（本地 HTTP 桥）
+    data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/SecretVault 存用户填的 key
+    device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
+    node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
+    ui/                         Compose 界面（聊天 / 首页 / 设置）
+  app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
+  app/src/test/                 JVM 单测      app/src/androidTest/  真机测试
+tools/
+  fetch-libnode.ps1             拉 pinned libnode + 从 NDK sysroot 复制 libc++_shared 到 jniLibs
+  bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验）
+  check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
+  audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
+  dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
+  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
+  dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
+  dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，9 个通用原语）
+  dsh-phone/profile/            phone profile（cordis.patch.yml）
+docs/                           深度文档 + releases/<tag>.md（每个版本的发布说明）
+```
+
+`libnode.so`、dsh 运行时（`assets/dsh-runtime.zip`、`libnode/`、`jniLibs/`）都**不入库**，
+由 `tools/` 脚本按 pinned 版本装配（在 `.gitignore` 内）。
 
 ## 常见坑速查
 
 | 现象 | 原因 / 处理 |
 |---|---|
 | 全新安装 Gradle 挂 5 分钟后失败 | ColorOS 拦 `adb install` 通道 → 手动 `adb install -r` |
-| 装完读屏失效 | `install -r` 摘掉无障碍服务 → 重新 `settings put secure` 启用 |
+| 装完读屏失效 / 启用无障碍又变 null | `install -r` 摘掉无障碍服务 → 等进程起来后 `settings put secure` 重新启用 |
 | `nativeOpen` UnsatisfiedLinkError | 忘加载 SQLCipher → `TappetDatabaseProvider` 显式 `loadLibrary` |
+| `dlopen failed: libc++_shared.so not found` | 重跑 `tools/fetch-libnode.ps1`；确认文件**确实落在** `jniLibs/<abi>/`（脚本有自检，别只看它打印成功） |
+| APK 里有 libnode.so 但没有 libc++_shared.so | AGP 不会自动打包 STL，jniLibs 是唯一来源 → 同上；`assemble.yml` 会拦住 |
+| release 包里 `assets/dsh-runtime.zip` 其实是 tar | 打包工具写不了 zip（GNU tar 不支持）→ 用 .NET `ZipFile`；打完必须验头四字节是 `PK` |
 | 任务结束 App 崩溃（FORTIFY/SIGABRT） | 内嵌 Node 调了 `process.exit()`（含 SDK 的 `shutdown`）→ 只记录、不退出 |
 | 广播 TASK 后 App 被 ANR 杀 | 别用 `goAsync` 等任务完成（Broadcast Timeout 60s）→ 广播立即返回，任务异步跑 |
 | 广播 START/TASK 没反应 | ColorOS defer 后台广播 → 先 `monkey` 拉起 App 再广播 |
-| `install -r` 后启用无障碍又变 null | ColorOS 在包替换后重置 → 等 App 进程起来后再 `settings put secure` |
 | JSON-RPC 偶发不响应 | stdout 混入了日志 → phone profile 不得挂 stdout logger；诊断一律 stderr |
 | `adb shell am broadcast --es task "a b"` 丢参数 | 整条命令再包一层引号：`adb shell "am broadcast ... 'a b'"` |
 | dsh 启动报 `node-addon-require-builtin` | 用了 `boot()`/loader → 改用 `launcher.mjs` |
-| dsh 启动报 `bad indentation of a mapping entry`，**App 直接崩** | profile 里 `!!js` 表达式写了对象字面量：YAML 的 plain scalar 不能含 `": "` → 把整个表达式用双引号包起来。`check-profile.mjs`（`bundle-dsh.ps1` 与 CI 都会跑）能提前拦住 |
-| dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
-| 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
-| 读屏只返回 0–1 个节点（微信） | 该 App 隐藏控件树：微信 8.0.78 只在「触摸探索」为真时启动的进程里暴露节点 → 任务期间自动开触摸探索，目标 App 需在模式开启后启动进程；进程已在跑就只能请用户配合 |
-| 触摸探索开启时点击/滑动全部无效 | 探索模式会把 `dispatchGesture` 注入的手势当探索事件吞掉 → 走 `performAction` 语义动作（服务里已自动切换） |
-| 任务期间用户点屏幕变成「双击才生效」 | 触摸探索常开导致 → 只在任务期间开关（`TappetAccessibilityService.setTouchExplorationForTask`），`finally` 里必须关 |
-| 截图报 `Could not load the "sharp" module` | 生效的是 dsh 自带的 `attachment-local`（依赖 sharp，无 Android 产物）→ profile 里禁用它、挂 `dsh-android-attachments`；两个都挂会看谁后注册 |
-| 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败（如对象根漏写 `additionalProperties`）→ `defineTool` 抛错会**整个插件的工具全丢**；用 `npm test` 里的 `real-schema.mjs`（真实 defineTool）在 PC 侧拦住 |
-| 拉 dsh 会话文件解压失败 | `adb shell cat` 会把二进制里的 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是**一帧一条记录**的追加文件，Node 的 zstd 不跨帧，需按 RFC 8878 帧头手工切帧后逐帧解（会话在 `files/dsh-home/sessions/--data-user-0-.../`，条目录自带时间戳好定位） |
-| `dlopen failed: libc++_shared.so not found` | 重跑 `tools/fetch-libnode.ps1`（会从 NDK sysroot 复制到 jniLibs） |
-| dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘上的会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 加进程级 runtimeTag 后缀再映射回来，别去掉 |
-| 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
-| Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
+| dsh 启动报 `bad indentation of a mapping entry`，**App 直接崩** | profile 里 `!!js` 表达式写了对象字面量（YAML 的 plain scalar 不能含 `": "`）→ 整个表达式加双引号；`check-profile.mjs` 提前拦 |
+| dsh 报 `no adapter registered for provider "xxx"` | `NodeRuntime.PROVIDER` 与 profile 里的 provider 键不一致 → 两处一起改 |
+| 换服务商后第一次请求 404/400 | 端点、调用风格、模型没成套（Anthropic 是 `anthropic-messages`，不是 OpenAI 兼容层） |
 | 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置（构建期不带密钥，设计如此） |
 | 设置页保存了却没生效 | 设计如此：内嵌 Node 的 env 与 dsh profile 只在启动时读一次 → 重启 App |
-| 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配（例如端点是 Anthropic、key 是 OpenAI 的）→ 换预选或重填 key |
-| 换了服务商后第一次请求就 404/400 | 端点、调用风格（api）、模型三件套没成套：Anthropic 走 `anthropic-messages`，不是 OpenAI 兼容层 |
-| 想确认发布物里没有密钥 | `strings` 扫 APK 的 `classes*.dex`，或直接 grep 到空 |
+| 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配 → 换预选或重填 key |
+| dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
+| dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 的 runtimeTag 后缀别去掉 |
+| 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
+| 读屏只返回 0–1 个节点（微信） | 该 App 隐藏控件树，只在「触摸探索」为真时启动的进程里暴露 → 任务期间自动开探索；进程已在跑只能请用户配合 |
+| 触摸探索开启时点击/滑动全部无效 | 探索模式吞掉 `dispatchGesture` 的手势 → 走 `performAction` 语义动作（服务里已自动切换） |
+| 任务期间用户点屏幕变成「双击才生效」 | 触摸探索常开导致 → 只在任务期间开关，`finally` 里必须关 |
+| 截图报 `Could not load the "sharp" module` | 生效的是 dsh 自带的 `attachment-local`（依赖 sharp，无 Android 产物）→ profile 里禁用它、挂 `dsh-android-attachments` |
+| 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
+| 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
+| 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
+| Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
+| 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
+
+## 深度文档
+
+| 文档 | 什么时候读 |
+|---|---|
+| `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
+| `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
+| `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
+| `docs/releases/<tag>.md` | 发版说明的写法与历史 |
+| `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

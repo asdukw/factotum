@@ -63,12 +63,14 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                   finished.complete(Unit)
                 }
               }
+
               is DshEvent.ToolCall -> {
                 send(AgentStreamEvent.Status("正在调用 ${event.name}…"))
                 send(AgentStreamEvent.ToolCallStarted(event.callId, event.name, event.arguments))
                 AgentProgressCenter.toolStarted(sessionId, event.name, event.arguments)
                 event.callId?.let { toolNames[it] = event.name }
               }
+
               is DshEvent.ToolResult -> {
                 send(AgentStreamEvent.ToolCallFinished(event.callId, ok = !event.isError, result = event.text))
                 AgentProgressCenter.toolFinished(
@@ -78,6 +80,7 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                   result = event.text,
                 )
               }
+
               is DshEvent.AssistantMessage -> {
                 event.reasoning?.takeIf { it.isNotBlank() }?.let { reasoning ->
                   if (emittedReasoning) send(AgentStreamEvent.ReasoningDelta("\n\n"))
@@ -91,6 +94,7 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                   emittedText = true
                 }
               }
+
               is DshEvent.TurnEnded -> Unit
             }
           }
@@ -110,7 +114,11 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     } catch (cancelled: CancellationException) {
       AgentProgressCenter.fail(sessionId, "任务已停止")
       throw cancelled
-    } catch (error: Throwable) {
+    } catch (
+      // 刻意的兜底：任务流里任何异常都要先落进 AgentProgressCenter 再抛，
+      // 否则界面只会停在「运行中」。收窄类型等于给漏掉的异常留后门。
+      @Suppress("TooGenericExceptionCaught") error: Throwable,
+    ) {
       AgentProgressCenter.fail(sessionId, error.message ?: error.javaClass.simpleName)
       throw error
     } finally {

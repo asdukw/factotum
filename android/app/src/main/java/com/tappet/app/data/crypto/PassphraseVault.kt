@@ -72,7 +72,7 @@ internal class PassphraseVault(
         .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
         .setKeySize(256)
         .setRandomizedEncryptionRequired(true)
-        .build()
+        .build(),
     )
     return generator.generateKey()
   }
@@ -85,7 +85,7 @@ internal class PassphraseVault(
     private const val GCM_TAG_BITS = 128
     private const val PASSPHRASE_BYTES = 32
 
-    /** 主库（tappet.db）：会话 / 消息 / 工具调用。 */
+    // 主库（tappet.db）：会话 / 消息 / 工具调用。
     // prefs 名与 Keystore 别名决定用哪把密钥取口令：改名等于换一把新密钥，旧库再也解不开。
     // 与 applicationId / DATABASE_NAME 同属「存储身份」，改名时四处一起改。
     val App = PassphraseVault(prefsName = "tappet_app_keys", keyAlias = "tappet-app-db-key-v1")

@@ -72,7 +72,7 @@ class ChatViewModel(
       ChatUiState(
         configSummary = config.shortSummary(),
         configured = config.isConfigured,
-      )
+      ),
     )
   val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
@@ -154,14 +154,18 @@ class ChatViewModel(
                 // 推理按 step 整段到达，量不大；立刻落库，进程被杀也不丢思考过程。
                 flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
               }
+
               is AgentStreamEvent.Status -> {
                 statusOnly = true
                 content.clear()
                 content.append(event.text)
                 appendText(draft.id, event.text, replace = true)
               }
+
               is AgentStreamEvent.ToolCallStarted -> startToolCall(draft.id, sessionId, event)
+
               is AgentStreamEvent.ToolCallFinished -> finishToolCall(draft.id, event)
+
               is AgentStreamEvent.TextDelta -> {
                 // 第一条正文到达时用 replace 顶掉状态文案：appendText 是往消息内容上追加的，
                 // 只清本地缓冲会把「正在调用 xxx…」留在气泡里。
@@ -178,13 +182,17 @@ class ChatViewModel(
                   flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
                 }
               }
+
               AgentStreamEvent.Completed -> Unit
             }
           }
         } catch (cancellation: CancellationException) {
           stopped = true
           throw cancellation
-        } catch (throwable: Throwable) {
+        } catch (
+          // 同上：任务跑批的兜底，失败要落到 failure 交给界面，不能直接炸掉协程。
+          @Suppress("TooGenericExceptionCaught") throwable: Throwable,
+        ) {
           failure = throwable
         } finally {
           withContext(NonCancellable) {
@@ -304,7 +312,7 @@ class ChatViewModel(
         messages =
           state.messages.map { message ->
             if (message.id == messageId) message.copy(toolCalls = message.toolCalls + card) else message
-          }
+          },
       )
     }
     // 这里必须等落库完成：紧接着的 tool/result 会按 callId 去更新同一行，
@@ -332,10 +340,10 @@ class ChatViewModel(
                 toolCalls =
                   message.toolCalls.map { call ->
                     if (call.id == target.id) call.copy(result = event.result, state = state) else call
-                  }
+                  },
               )
             }
-          }
+          },
       )
     }
     runCatching {
@@ -367,10 +375,10 @@ class ChatViewModel(
                 toolCalls =
                   message.toolCalls.map { call ->
                     if (call.state == ToolCallState.Running) call.copy(state = ToolCallState.Failed) else call
-                  }
+                  },
               )
             }
-          }
+          },
       )
     }
     running.forEach { call ->
@@ -405,7 +413,7 @@ class ChatViewModel(
             } else {
               message
             }
-          }
+          },
       )
     }
   }
@@ -424,7 +432,7 @@ class ChatViewModel(
             } else {
               message
             }
-          }
+          },
       )
     }
   }

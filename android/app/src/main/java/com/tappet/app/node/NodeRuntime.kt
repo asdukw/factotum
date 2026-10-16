@@ -5,13 +5,6 @@ import android.system.Os
 import android.util.Log
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.bridge.DeviceBridgeServer
-import java.io.BufferedInputStream
-import java.io.File
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import java.util.zip.ZipInputStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +33,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.io.BufferedInputStream
+import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipInputStream
 
 /** JNI stdout 逐行回调（native 线程调用，禁止阻塞）。 */
 interface NodeLineListener {
@@ -147,6 +147,7 @@ object NodeRuntime : NodeLineListener {
   private val callerSessionIds = ConcurrentHashMap<String, String>()
   private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
   private val initMutex = Mutex()
+
   @Volatile private var initResult: JsonObject? = null
 
   init {
@@ -158,24 +159,28 @@ object NodeRuntime : NodeLineListener {
     if (!started.compareAndSet(false, true)) return
     val app = context.applicationContext
     Thread {
-        try {
-          _status.value = Status.Preparing("解压 dsh 运行时")
-          val dir = installDshRuntime(app)
-          applyEnvironment(app)
-          applyDshEnvironment(app)
-          setLineListener(this)
-          if (!prepareStdio()) throw IllegalStateException("stdio 管道创建失败")
-          Log.i(TAG, "stdio ready")
-          _status.value = Status.Running
-          Log.i(TAG, "node::Start launcher.mjs")
-          val code = startNodeWithArguments(arrayOf("node", File(dir, "launcher.mjs").path))
-          Log.i(TAG, "node exited code=$code")
-          _status.value = Status.Exited(code)
-        } catch (throwable: Throwable) {
-          Log.e(TAG, "node start failed", throwable)
-          _status.value = Status.Failed(throwable.message ?: throwable.javaClass.simpleName)
-        }
+      try {
+        _status.value = Status.Preparing("解压 dsh 运行时")
+        val dir = installDshRuntime(app)
+        applyEnvironment(app)
+        applyDshEnvironment(app)
+        setLineListener(this)
+        if (!prepareStdio()) error("stdio 管道创建失败")
+        Log.i(TAG, "stdio ready")
+        _status.value = Status.Running
+        Log.i(TAG, "node::Start launcher.mjs")
+        val code = startNodeWithArguments(arrayOf("node", File(dir, "launcher.mjs").path))
+        Log.i(TAG, "node exited code=$code")
+        _status.value = Status.Exited(code)
+      } catch (
+        // 宿主线程的兜底：这里的「太宽」是刻意的 —— 让异常逃出这个线程会带走整个 App
+        // （内嵌 Node 与宿主同进程），而这里只想把失败记进 status。
+        @Suppress("TooGenericExceptionCaught") throwable: Throwable,
+      ) {
+        Log.e(TAG, "node start failed", throwable)
+        _status.value = Status.Failed(throwable.message ?: throwable.javaClass.simpleName)
       }
+    }
       .apply { name = "tappet-node" }
       .start()
     watchWebUiUrl(app)
@@ -187,8 +192,8 @@ object NodeRuntime : NodeLineListener {
     ensureStarted(context)
     // 等 native 管道就绪（Running 在 prepareStdio 之后才置位），避免早写 stdin。
     when (val current = status.first { it !is Status.Idle && it !is Status.Preparing }) {
-      is Status.Failed -> throw IllegalStateException("Node 启动失败：${current.reason}")
-      is Status.Exited -> throw IllegalStateException("Node 已退出 code=${current.code}")
+      is Status.Failed -> error("Node 启动失败：${current.reason}")
+      is Status.Exited -> error("Node 已退出 code=${current.code}")
       else -> Unit
     }
     return initMutex.withLock {
@@ -223,7 +228,7 @@ object NodeRuntime : NodeLineListener {
               buildJsonObject {
                 put("type", "text")
                 put("text", text)
-              }
+              },
             )
           },
         )
@@ -250,14 +255,18 @@ object NodeRuntime : NodeLineListener {
             if (event.sessionId != sessionId) return@collect
             when (event) {
               is DshEvent.AssistantMessage -> assistant.append(event.text)
+
               is DshEvent.ToolCall -> toolCalls++
+
               is DshEvent.TurnEnded -> event.error?.let(turnErrors::add)
+
               is DshEvent.Status ->
                 if (event.running) {
                   sawRunning = true
                 } else if (sawRunning && !completed.isCompleted) {
                   completed.complete(TaskOutcome(assistant.toString(), toolCalls, turnErrors.toList()))
                 }
+
               is DshEvent.ToolResult -> Unit
             }
           }
@@ -282,19 +291,22 @@ object NodeRuntime : NodeLineListener {
     val file = File(File(app.filesDir, "dsh-home"), "web-url.txt")
     file.delete() // 只认本次运行时写入的新 URL
     Thread {
-        repeat(WEB_UI_URL_POLLS) {
-          val url = runCatching { if (file.isFile) file.readText().trim() else null }.getOrNull()
-          if (!url.isNullOrEmpty()) {
-            val port = url.substringAfter("127.0.0.1:").substringBefore("/")
-            Log.i(TAG, "web ui url ready (port=$port)")
-            _webUiUrl.value = url
-            return@Thread
-          }
-          Thread.sleep(500)
+      repeat(WEB_UI_URL_POLLS) {
+        val url = runCatching { if (file.isFile) file.readText().trim() else null }.getOrNull()
+        if (!url.isNullOrEmpty()) {
+          val port = url.substringAfter("127.0.0.1:").substringBefore("/")
+          Log.i(TAG, "web ui url ready (port=$port)")
+          _webUiUrl.value = url
+          return@Thread
         }
-        Log.w(TAG, "web ui url not found after ${WEB_UI_URL_POLLS / 2}s")
+        Thread.sleep(500)
       }
-      .apply { name = "tappet-web-url"; isDaemon = true }
+      Log.w(TAG, "web ui url not found after ${WEB_UI_URL_POLLS / 2}s")
+    }
+      .apply {
+        name = "tappet-web-url"
+        isDaemon = true
+      }
       .start()
   }
 
@@ -339,13 +351,13 @@ object NodeRuntime : NodeLineListener {
     val payload = (frame.toString() + "\n").toByteArray(Charsets.UTF_8)
     if (!writeStdin(payload)) {
       pending.remove(id)
-      throw IllegalStateException("Node stdin 不可写（运行时未启动？）")
+      error("Node stdin 不可写（运行时未启动？）")
     }
     Log.i(TAG, "rpc -> $method #$id")
     return try {
       val response = withTimeout(timeoutMs) { deferred.await() }
-      val error = response["error"]
-      if (error != null && error !is JsonNull) throw IllegalStateException("JSON-RPC error: $error")
+      val errorField = response["error"]
+      if (errorField != null && errorField !is JsonNull) error("JSON-RPC error: $errorField")
       response["result"]?.jsonObject ?: JsonObject(emptyMap())
     } finally {
       pending.remove(id)

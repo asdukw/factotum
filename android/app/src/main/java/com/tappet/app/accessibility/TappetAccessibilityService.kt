@@ -8,8 +8,8 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Path
@@ -25,6 +25,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.annotation.RequiresApi
 import com.tappet.app.device.CapabilityResult
 import com.tappet.app.device.CapabilityStatus
 import com.tappet.app.device.DeviceAction
@@ -40,13 +41,13 @@ import com.tappet.app.device.ScreenNode
 import com.tappet.app.device.ScreenSnapshot
 import com.tappet.app.device.SwipeDirection
 import com.tappet.app.device.renderSnapshot
-import java.io.ByteArrayOutputStream
-import java.util.ArrayDeque
-import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.util.ArrayDeque
+import kotlin.coroutines.resume
 
 /**
  * `DeviceBridge` 的 Android 无障碍实现（AOSP API，不绑 ROM）。
@@ -105,8 +106,16 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   override fun probe(capability: DeviceCapability) {
     when (capability) {
       DeviceCapability.READ_TREE -> probeReadTree()
-      DeviceCapability.SCREENSHOT -> probeScreenshot()
+
+      DeviceCapability.SCREENSHOT ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          probeScreenshot()
+        } else {
+          publish(failed(DeviceCapability.SCREENSHOT, "API < 30，系统没有 takeScreenshot"))
+        }
+
       DeviceCapability.SET_TEXT -> probeSetText()
+
       DeviceCapability.TAP -> probeTap()
     }
   }
@@ -292,6 +301,8 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     )
   }
 
+  /** 只在 [executeScreenshot] 的 API 30 分支里调用；注解是给 lint 看的不变量。 */
+  @RequiresApi(Build.VERSION_CODES.R)
   private suspend fun captureScreen(): Bitmap? =
     suspendCancellableCoroutine { cont ->
       val dispatched =
@@ -319,7 +330,8 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       if (!dispatched && cont.isActive) cont.resume(null)
     }
 
-  /** HardwareBuffer → 软件位图；句柄无论如何都要关掉。 */
+  /** HardwareBuffer → 软件位图；句柄无论如何都要关掉。只在 API 30+ 调用。 */
+  @RequiresApi(Build.VERSION_CODES.R)
   private fun bitmapFrom(screenshot: ScreenshotResult): Bitmap? {
     val hardware =
       runCatching { Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace) }
@@ -384,7 +396,9 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   private suspend fun executeLaunchApp(query: String): DeviceActionResult = withContext(Dispatchers.Default) {
     val pm = packageManager
     val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    @Suppress("DEPRECATION") val activities = pm.queryIntentActivities(launcher, 0)
+
+    @Suppress("DEPRECATION")
+    val activities = pm.queryIntentActivities(launcher, 0)
     val match =
       activities.firstOrNull { it.loadLabel(pm).toString().contains(query, ignoreCase = true) }
         ?: activities.firstOrNull { it.activityInfo.packageName.contains(query, ignoreCase = true) }
@@ -499,13 +513,13 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         add("windows=${windows.size} pkg=${windowPackages.joinToString(",")}")
         add(
           "nodes=$nodes${if (truncated) "+（截断）" else ""} text=$textNodes clickable=$clickable " +
-            "editable=$editable scrollable=$scrollable focused=$focused"
+            "editable=$editable scrollable=$scrollable focused=$focused",
         )
         add(
           "top classes=" +
             classes.entries.sortedByDescending { it.value }.take(6).joinToString {
               "${it.key.substringAfterLast('.')}×${it.value}"
-            }
+            },
         )
       }
     val readable = textNodes > 0
@@ -516,17 +530,18 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         summary = if (readable) "可读：文本节点 $textNodes 个" else "根节点非空，但没有任何文本节点",
         details = details,
         at = now(),
-      )
+      ),
     )
   }
 
   // ---------- Q2 截图 ----------
 
+  /**
+   * Q2 截图探针。**只在 API 30+ 调用** —— 守卫在 [probe] 的 dispatch 处，不在函数内：
+   * takeScreenshot 的成功回调里 lint 追不到本函数开头的守卫，写回函数内会重新报 NewApi。
+   */
+  @RequiresApi(Build.VERSION_CODES.R)
   private fun probeScreenshot() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-      publish(failed(DeviceCapability.SCREENSHOT, "API < 30，系统没有 takeScreenshot"))
-      return
-    }
     val dispatched =
       runCatching {
         takeScreenshot(
@@ -537,7 +552,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
             override fun onFailure(errorCode: Int) {
               publish(
-                failed(DeviceCapability.SCREENSHOT, "截图失败：${screenshotErrorName(errorCode)}（code=$errorCode）")
+                failed(DeviceCapability.SCREENSHOT, "截图失败：${screenshotErrorName(errorCode)}（code=$errorCode）"),
               )
             }
           },
@@ -548,13 +563,15 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
           failed(
             DeviceCapability.SCREENSHOT,
             "takeScreenshot 抛异常：${throwable.javaClass.simpleName}（能力未声明？）",
-          )
+          ),
         )
         false
       }
     if (!dispatched) return
   }
 
+  /** 只被 API 30+ 的 takeScreenshot 成功回调调用。 */
+  @RequiresApi(Build.VERSION_CODES.R)
   private fun inspectScreenshot(screenshot: ScreenshotResult) {
     val bitmap = bitmapFrom(screenshot)
     if (bitmap == null) {
@@ -587,11 +604,14 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         capability = DeviceCapability.SCREENSHOT,
         status = if (looksBlank) CapabilityStatus.FAILED else CapabilityStatus.OK,
         summary =
-          if (looksBlank) "疑似黑图（非黑像素 ${"%.1f".format(ratio * 100)}%）"
-          else "可截：${width}x$height，非黑像素 ${"%.1f".format(ratio * 100)}%",
+          if (looksBlank) {
+            "疑似黑图（非黑像素 ${"%.1f".format(ratio * 100)}%）"
+          } else {
+            "可截：${width}x$height，非黑像素 ${"%.1f".format(ratio * 100)}%"
+          },
         details = listOf("采样步长=$step", "非黑判定=RGB 和 > $BRIGHT_THRESHOLD"),
         at = now(),
-      )
+      ),
     )
   }
 
@@ -675,7 +695,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
             "测试串=「$PROBE_TEXT」；未触发发送 / 搜索" + if (matched) "，验证后已清空" else "",
           ),
         at = now(),
-      )
+      ),
     )
   }
 
@@ -695,7 +715,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     val target = findEditable(root)
     if (target == null) {
       publish(
-        failed(DeviceCapability.TAP, "没有可编辑节点；探针只点输入框（安全目标），不点其它控件")
+        failed(DeviceCapability.TAP, "没有可编辑节点；探针只点输入框（安全目标），不点其它控件"),
       )
       return
     }
@@ -742,7 +762,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
           status = CapabilityStatus.RUNNING,
           summary = "手势已下发，等待结果…",
           at = now(),
-        )
+        ),
       )
     }
   }
@@ -772,7 +792,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
             "点击后焦点=${focused?.className?.toString()?.substringAfterLast('.') ?: "null"} bounds=$rect contains=$contains",
           ),
         at = now(),
-      )
+      ),
     )
   }
 
@@ -827,9 +847,9 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   val touchExplorationActive: Boolean
     get() =
       runCatching {
-          (getSystemService(ACCESSIBILITY_SERVICE) as? AccessibilityManager)?.isTouchExplorationEnabled ==
-            true
-        }
+        (getSystemService(ACCESSIBILITY_SERVICE) as? AccessibilityManager)?.isTouchExplorationEnabled ==
+          true
+      }
         .getOrDefault(false)
 
   /**

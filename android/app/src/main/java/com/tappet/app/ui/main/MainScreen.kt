@@ -14,7 +14,9 @@ import com.tappet.app.theme.TappetTheme
 
 @Composable
 fun MainScreen(
-  onItemClick: (NavKey) -> Unit,
+  // 首页还没接进导航（真实入口是 ChatScreen，见 Navigation.kt）。这个参数留给接入时用，
+  // 先显式标注「我知道它没被用到」，而不是删掉、等想起来再加回来。
+  @Suppress("UnusedParameter") onItemClick: (NavKey) -> Unit,
   modifier: Modifier = Modifier,
   viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository()) },
 ) {
@@ -23,9 +25,11 @@ fun MainScreen(
     MainScreenUiState.Loading -> {
       // Blank
     }
+
     is MainScreenUiState.Success -> {
       MainScreen(data = (state as MainScreenUiState.Success).data, modifier = modifier)
     }
+
     is MainScreenUiState.Error -> {
       Text("Error loading data: ${(state as MainScreenUiState.Error).throwable.message}")
     }

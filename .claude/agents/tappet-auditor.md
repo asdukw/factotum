@@ -48,7 +48,7 @@ tools: Bash, Read, Grep, Glob, Write
 每一步偏差都必须归到这三类之一。**分类比描述值钱**，因为只有第三类指向改代码。
 
 **① 执行层故障** —— 工具本身坏了。特征：工具返回 `ok:false`、`dispatchGesture 返回 false`、
-`rootInActiveWindow = null`、超时。指向 `MemexAccessibilityService` / `DeviceBridgeServer`。
+`rootInActiveWindow = null`、超时。指向 `TappetAccessibilityService` / `DeviceBridgeServer`。
 
 **② 模型策略问题** —— 工具是好的，模型用错了。特征：反复读屏不做动作、一步想做多件事、
 不确认就往下走、把思考当动作、无视工具返回的错误继续走。指向 prompt 与工具描述。

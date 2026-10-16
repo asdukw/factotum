@@ -3,6 +3,9 @@
 **运行在 Android 上的通用 mobile agent**：通过工具调用操作手机上的任意 App 完成任务，
 不做单一 App 的专用适配。
 
+> **当前版本 v0.1.0，只发布源码，不提供 APK。** 原因见「隐私红线」第 2 条：
+> 本机构建出的 APK 会把 `local.properties` 里的密钥明文编进 dex，发出去一次就等于公开。
+
 > **方向（2026-10-03 定稿）**：放弃 QQ / 微信聊天记录与知识图谱，不做 PC 客户端，
 > 不采集通知。仓库唯一运行时是 Android App；Python 侧已整体删除。
 >
@@ -16,7 +19,7 @@
 | 模块 | 状态 |
 |---|---|
 | Android 会话 / 消息 / 工具调用持久化（Room + SQLCipher） | ✅ 真机验证 |
-| 流式 LLM 客户端（含 reasoning_content 与流式 tool_calls 解析） | ✅ 真机验证 |
+| 手写的流式 LLM 客户端（`LlmClient` / `AgentLoop`，含 reasoning_content 与流式 tool_calls 解析） | ⏸ **已暂停，不随发布使用**（见 AGENTS.md「方向红线」）；真正在跑的是内嵌 dsh |
 | 原生聊天界面（Compose：Markdown / 代码块 / 工具卡 / 会话列表、流式事件、停止保留半截、崩溃恢复） | ✅ 真机通过（一加 15T） |
 | Web 预览面板（dsh Web UI 嵌入，按需打开：HTML / Office / diff / 富文本） | ✅ 真机通过（P5） |
 | 无障碍四问探针（读屏 / 截图 / 输入 / 手势） | ✅ 真机通过（ColorOS + QQ） |
@@ -26,7 +29,15 @@
 ## Android
 
 ```powershell
-# 必须 JDK 21
+# 0）首次准备：仓库里没有内嵌 Node 运行时（libnode / dsh-runtime.zip 都按 pinned 版本现拉，不入库）。
+#    除 JDK 21 外还需要：PC 上的 Node 24 + npm，以及 Android SDK（compileSdk 36）、
+#    NDK 29.0.14206865、CMake 3.31.6（后三个用 sdkmanager 装）。
+git submodule update --init --recursive    # 设备工具插件在独立仓库
+.\tools\fetch-libnode.ps1                  # libnode.so + libc++_shared.so
+.\tools\bundle-dsh.ps1                     # vendored dsh → assets/dsh-runtime.zip
+#    注意：这两个脚本目前把代理写死成 http://127.0.0.1:7897；本机没有这个代理，先改脚本再跑。
+
+# 1）构建（必须 JDK 21）
 $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\'
 cd android
 
@@ -66,3 +77,7 @@ docs/             android-accessibility.md：无障碍执行层系统探测与�
 3. **默认全本地**：手机端数据是否发往云端 LLM 由用户逐次决定。
 4. **不采集他人数据**：随聊天记录管线一并移除；如需重新引入任何采集能力，
    先在设计文档里写清边界与隐私闸门，再动代码。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。

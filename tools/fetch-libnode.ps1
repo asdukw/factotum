@@ -61,8 +61,10 @@ foreach ($sdk in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, $(if ($env:LOCALAPP
   if ($sdk) { $ndkRoots += (Join-Path $sdk "ndk/$NdkVersion") }
 }
 $stl = $null
-foreach ($root in $ndkRoots) {
-  $candidate = Join-Path $root "toolchains/llvm/prebuilt/$hostTag/sysroot/usr/lib/$abiDir/libc++_shared.so"
+# 变量名别用 $root：上面那个 $root 是仓库根目录，循环里覆盖掉它，
+# 后面 $jniLibs 就会拼到 NDK 目录里去 —— 副本落在错地方，脚本还照样打印成功。
+foreach ($ndkRoot in $ndkRoots) {
+  $candidate = Join-Path $ndkRoot "toolchains/llvm/prebuilt/$hostTag/sysroot/usr/lib/$abiDir/libc++_shared.so"
   if (Test-Path -LiteralPath $candidate) { $stl = $candidate; break }
 }
 if (-not $stl) {
@@ -72,4 +74,15 @@ $jniLibs = Join-Path $root "android/app/src/main/jniLibs/$Abi"
 New-Item -ItemType Directory -Force -Path $jniLibs | Out-Null
 Copy-Item -Force $stl $jniLibs
 
-Write-Host "libnode $Version ($Abi) + libc++_shared -> $targetDir / jniLibs"
+# 复制完**当场验一遍落在哪**：这个脚本打印过「成功」而实际把文件复制进了 NDK 目录，
+# 根因就是一个循环变量覆盖了 $root。缺了这个自检，症状要到装包之后（dlopen libc++_shared 失败）
+# 才现形 —— 与 bundle-dsh 里那条「打完包验头四字节」同一个理由。
+$copied = Join-Path $jniLibs "libc++_shared.so"
+if (-not (Test-Path -LiteralPath $copied)) {
+  throw "libc++_shared.so 没落到 jniLibs：期望在 $copied（实际拷贝源 $stl）"
+}
+if ((Get-Item -LiteralPath $copied).Length -lt 100KB) {
+  throw "libc++_shared.so 太小，像是坏文件：$copied"
+}
+
+Write-Host "libnode $Version ($Abi) + libc++_shared -> $targetDir / $jniLibs"

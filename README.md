@@ -60,8 +60,13 @@ cd android
 ```
 
 ktlint（格式）/ detekt（坏味道）/ Android Lint（API 级别、清单、资源），配置与取舍理由见
-[AGENTS.md](AGENTS.md) 的「代码质量门禁」。CI 只覆盖编译、单测与静态检查 ——
-无障碍执行层与内嵌 Node 的启动**只能在真机上验证**，CI 绿不代表能用。
+[AGENTS.md](AGENTS.md) 的「代码质量门禁」。
+
+CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`assemble.yml`（装配 libnode/dsh 并出包，
+**只在装配相关路径变动时**跑，且会验产物结构 —— native 库在不在、运行时资产是不是真 zip）、
+`codeql.yml`（语义级安全扫描）、`release.yml`（推 `v*` tag 时先过门禁再出签名包并发 release）。
+
+**CI 绿 ≠ 能用**：无障碍执行层与内嵌 Node 的启动只能在真机上验证。
 
 真机安装**不要**用 Gradle 的自动安装通道：ColorOS 会拦全新安装（挂 ~5 分钟后
 失败）。正确流程是产包后手动 `adb install -r`，再单独跑需要的测试任务。

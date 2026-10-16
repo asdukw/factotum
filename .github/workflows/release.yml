@@ -34,11 +34,34 @@ jobs:
         with:
           node-version: "24" # 装配 dsh 运行时用（npm）
       - uses: android-actions/setup-android@v4
+      # ③ NDK/CMake 装一次就是几百 MB～1.5GB，按版本缓存（版本号要与 build.gradle.kts 的
+      # ndkVersion / CMakeLists 的 cmake 版本一致；改了版本 key 自然失配，会重新装）
+      - name: 缓存 NDK / CMake
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+            ${{ env.ANDROID_HOME }}/cmake/3.31.6
+          key: android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
       - name: 装 SDK 平台 / NDK / CMake
         run: |
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
       - uses: gradle/actions/setup-gradle@v6
+
+      # ① 先过门禁再出包：触发条件是「推了 tag」，不检查那个 commit 的 CI 绿不绿 ——
+      # CI 正红照样能把包装出去。这里跑一遍同样的检查，比查 API 判断「这个 commit 绿了吗」可靠，
+      # 也覆盖「tag 打在一个 CI 从没见过的 commit 上」这种情况。
+      - name: 出包前过门禁（与 ci.yml 同一套）
+        working-directory: android
+        run: ./gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest --console=plain
+
+      # ③ dsh 的 npm 暂存（~200MB）：key 跟着装配脚本与插件走，pin 的版本一变就重新装
+      - name: 缓存 dsh 装配暂存
+        uses: actions/cache@v6
+        with:
+          path: android/.dsh-cache/runtime
+          key: dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
 
       # 装配脚本是 PowerShell —— ubuntu runner 自带 pwsh。代理跟随 HTTPS_PROXY（CI 上没有 = 直连）。
       - name: 装配运行时（libnode + dsh）

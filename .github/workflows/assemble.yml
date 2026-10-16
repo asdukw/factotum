@@ -1,0 +1,90 @@
+name: Assemble
+
+# 「装配 + 出包」这条路（拉 libnode → 装配 dsh → NDK 编 JNI → 打包）以前只有发版时才走，
+# 于是平台差异全攒到发布那一刻才炸 —— v0.1.0 第一次出的包就是这么坏的（Linux 的 GNU tar
+# 写不了 zip，产物是个改了后缀的 tar，装到设备上才会发现）。
+#
+# 这个 workflow 把那条路提前到平时跑，并且**出包之后再验一次产物结构**。
+# 用 paths 过滤：只有真会影响装配的改动才触发（Kotlin 改动由 ci.yml 覆盖）。
+on:
+  push:
+    branches: [master]
+    paths: &assembly-paths
+      - "tools/**" # 装配脚本、phone profile、插件 submodule 指针
+      - "android/app/src/main/cpp/**" # JNI
+      - "android/app/CMakeLists.txt"
+      - "android/app/build.gradle.kts"
+      - "android/build.gradle.kts"
+      - "android/settings.gradle.kts"
+      - "android/gradle/**"
+      - ".gitmodules"
+      - ".github/workflows/assemble.yml"
+  pull_request:
+    paths: *assembly-paths
+  workflow_dispatch:
+
+concurrency:
+  group: assemble-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  assemble:
+    name: 装配 + 出包（不签名）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: android-actions/setup-android@v4
+      - name: 缓存 NDK / CMake
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+            ${{ env.ANDROID_HOME }}/cmake/3.31.6
+          key: android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
+      - name: 装 SDK 平台 / NDK / CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: 缓存 dsh 装配暂存
+        uses: actions/cache@v6
+        with:
+          path: android/.dsh-cache/runtime
+          key: dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
+
+      - name: 装配运行时（libnode + dsh）
+        run: |
+          pwsh -NoProfile -File tools/fetch-libnode.ps1
+          pwsh -NoProfile -File tools/bundle-dsh.ps1
+
+      - name: 出包
+        working-directory: android
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      # 出包之后**验产物本身**，而不是只看构建退出码 —— tar 冒充 zip 那次，构建是成功的。
+      - name: 验产物结构
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          ls -l "$APK"
+          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so; do
+            unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
+          done
+          MAGIC=$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 4 | od -An -tx1 | tr -d ' \n')
+          echo "assets/dsh-runtime.zip 头四字节: $MAGIC"
+          if [ "$MAGIC" != "504b0304" ]; then
+            echo "::error::运行时资产不是 zip（头四字节 $MAGIC）—— 装到设备上会解压失败"
+            exit 1
+          fi

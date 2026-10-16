@@ -175,9 +175,18 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 .\gradlew.bat :app:connectedDebugAndroidTest --console=plain
 ```
 
-- **CI（GitHub Actions，`.github/workflows/`）**：绿的是「编译 + 单测 + 静态检查」三关，
-  **不等于能用** —— 无障碍执行层、内嵌 Node 启动、dsh 装配仍只能在真机上验证。
-  CI 不装 NDK、不拉 libnode，也不打 APK（那三步是本地/发版流程）。
+- **CI（GitHub Actions，`.github/workflows/`）**，四个 workflow 分工：
+  | workflow | 触发 | 干什么 |
+  |---|---|---|
+  | `ci.yml` | push master / PR | 静态检查（ktlint + detekt + Lint）、单测 + androidTest 编译、离线自检（审计 selftest + profile 真解析器校验） |
+  | `assemble.yml` | **只在装配相关路径变动时** | 拉 libnode → 装配 dsh → NDK 出 debug 包 → **验产物结构**（native 库在不在、运行时资产是不是真 zip） |
+  | `codeql.yml` | push / PR / 每周 | 语义级安全扫描 |
+  | `release.yml` | 推 `v*` tag | **先过门禁** → 装配 → 签名出包 → 验签 + 扫密钥 → 发 release |
+
+  **CI 绿 ≠ 能用**：无障碍执行层、内嵌 Node 启动、真实任务仍只能在真机上验证。
+  日常 CI 不装 NDK（那 ~1.5GB 只有 `assemble.yml` 与 `release.yml` 需要，且按版本缓存）。
+  `assemble.yml` 存在的理由就是 v0.1.0 那次教训：装配/打包的平台差异（Linux 的 GNU tar
+  写不了 zip）全攒到发布那一刻才炸 —— 所以它**出包之后还要验产物本身**，而不是只看退出码。
 - 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
 - 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
 

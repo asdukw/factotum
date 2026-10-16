@@ -19,7 +19,9 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
 const profilePath = process.argv[2] ?? join(here, 'profile/cordis.patch.yml')
-const modulesDir = process.argv[3] ?? join(repoRoot, 'android/.dsh-cache/runtime/node_modules')
+// 必须绝对路径：createRequire 只收绝对路径 / file URL。CI 传的是相对路径（node_modules），
+// 这里统一 resolve 一次 —— 本地测试时我传的是绝对路径，于是这个坑是 CI 先踩到的。
+const modulesDir = resolve(process.argv[3] ?? join(repoRoot, 'android/.dsh-cache/runtime/node_modules'))
 
 // js-yaml 从 vendored 运行时里借（装配脚本刚装好的那份），不给本仓库引入 npm 依赖
 const require = createRequire(join(modulesDir, 'index.js'))

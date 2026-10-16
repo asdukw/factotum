@@ -69,7 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/release/app-release.apk
-          SIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          SIGNER="${BT}apksigner"
           "$SIGNER" verify --print-certs "$APK"
           # 未签名的包不该被发出去（配错 secret 时最容易出这种情况）
           "$SIGNER" verify "$APK" > /dev/null

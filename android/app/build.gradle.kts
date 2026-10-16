@@ -44,15 +44,14 @@ val agentProxyPort = agentValue("tappet.agent.proxyPort", "TAPPET_AGENT_PROXY_PO
 // 未签名包装不上，这个后果自己会说话；比起一个「必须先配签名」的构建错误，它更容易排查。
 val releaseSigning =
   mapOf(
-      "storeFile" to "TAPPET_KEYSTORE_FILE",
-      "storePassword" to "TAPPET_KEYSTORE_PASSWORD",
-      "keyAlias" to "TAPPET_KEY_ALIAS",
-      "keyPassword" to "TAPPET_KEY_PASSWORD",
-    )
-    .mapValues { (prop, env) ->
-      System.getenv(env)?.takeIf { it.isNotBlank() }
-        ?: localProperties.getProperty("tappet.release.$prop")?.takeIf { it.isNotBlank() }
-    }
+    "storeFile" to "TAPPET_KEYSTORE_FILE",
+    "storePassword" to "TAPPET_KEYSTORE_PASSWORD",
+    "keyAlias" to "TAPPET_KEY_ALIAS",
+    "keyPassword" to "TAPPET_KEY_PASSWORD",
+  ).mapValues { (prop, env) ->
+    System.getenv(env)?.takeIf { it.isNotBlank() }
+      ?: localProperties.getProperty("tappet.release.$prop")?.takeIf { it.isNotBlank() }
+  }
 val releaseStoreFile = releaseSigning["storeFile"]?.let { File(it) }?.takeIf { it.isFile }
 
 android {

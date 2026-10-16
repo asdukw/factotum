@@ -85,12 +85,22 @@ $assets = Split-Path -Parent $zipOut
 New-Item -ItemType Directory -Force -Path $assets | Out-Null
 if (Test-Path -LiteralPath $zipOut) { Remove-Item -LiteralPath $zipOut }
 Write-Host "packing $zipOut ..."
-Push-Location $cache
-try {
-  # bsdtar 按扩展名自动选 zip，比 Compress-Archive 快一个量级
-  tar -a -c -f $zipOut *
-  if ($LASTEXITCODE -ne 0) { throw "tar failed with $LASTEXITCODE" }
-} finally {
-  Pop-Location
+# 用 .NET 的 ZipFile 而不是 tar/Compress-Archive：
+#   - Windows 的 bsdtar 支持 `tar -a -c -f x.zip`，**Linux 的 GNU tar 不支持写 zip**
+#     （它要么报错、要么给你一个改成 .zip 后缀的 tar）—— 而 CI 是 Linux。
+#   - App 侧是用 ZipInputStream 解压的，包的必须是真 zip。tar 冒充 zip 会在设备上才炸。
+[System.Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem") | Out-Null
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+  $cache,
+  $zipOut,
+  [System.IO.Compression.CompressionLevel]::Optimal,
+  $false
+)
+
+# 打完立刻验一下「这确实是个 zip」：前四个字节必须是 PK。
+# 这类错误在设备上表现成「解压失败 / 运行时起不来」，不值得留到那一步才发现。
+$head = [System.IO.File]::ReadAllBytes($zipOut)[0..3]
+if ($head[0] -ne 0x50 -or $head[1] -ne 0x4B -or $head[2] -ne 0x03 -or $head[3] -ne 0x04) {
+  throw "打出来的不是 zip（头四字节不是 PK）：$zipOut"
 }
 Write-Host "done: $([math]::Round((Get-Item $zipOut).Length/1MB,1))MB"

@@ -1,8 +1,8 @@
 package com.tappet.app.ui.settings
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -122,8 +122,10 @@ private fun ProviderSection(
   onPresetChange: (LlmPreset) -> Unit,
 ) {
   SectionLabel("服务商")
-  Row(
-    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+  // 用 FlowRow 换行而不是横向滚动：真机上五个 chip 一屏放不下，滚动的话「DeepSeek / 自定义」
+  // 就藏在右边看不见 —— 看起来像没有这两家，而不是像可以滑。
+  FlowRow(
+    modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     LlmPreset.entries.forEach { preset ->

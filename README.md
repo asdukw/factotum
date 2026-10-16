@@ -3,6 +3,8 @@
 **运行在 Android 上的通用 mobile agent**：通过工具调用操作手机上的任意 App 完成任务，
 不做单一 App 的专用适配。
 
+[![CI](https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg)](https://github.com/asdukw/tappet/actions/workflows/ci.yml)
+
 > **当前版本 v0.1.0，只发布源码，不提供 APK。** 原因见「隐私红线」第 2 条：
 > 本机构建出的 APK 会把 `local.properties` 里的密钥明文编进 dex，发出去一次就等于公开。
 
@@ -43,6 +45,16 @@ cd android
 
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --console=plain
 ```
+
+### 质量门禁
+
+```powershell
+.\gradlew.bat spotlessCheck detekt :app:lintDebug --console=plain   # CI 跑的就是这三条
+```
+
+ktlint（格式）/ detekt（坏味道）/ Android Lint（API 级别、清单、资源），配置与取舍理由见
+[AGENTS.md](AGENTS.md) 的「代码质量门禁」。CI 只覆盖编译、单测与静态检查 ——
+无障碍执行层与内嵌 Node 的启动**只能在真机上验证**，CI 绿不代表能用。
 
 真机安装**不要**用 Gradle 的自动安装通道：ColorOS 会拦全新安装（挂 ~5 分钟后
 失败）。正确流程是产包后手动 `adb install -r`，再单独跑需要的测试任务。

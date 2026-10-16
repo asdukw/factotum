@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Gradle 依赖与插件。版本目录在 android/gradle/libs.versions.toml。
+  # 分组成组提 PR：否则 AndroidX 一升就是十几条，没人看得过来。
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+    groups:
+      androidx:
+        patterns: ["androidx.*"]
+      kotlin-and-ksp:
+        patterns: ["org.jetbrains.kotlin*", "com.google.devtools.ksp"]
+      quality-tools:
+        patterns: ["io.gitlab.arturbosch.detekt", "com.diffplug.spotless", "com.pinterest.ktlint*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+
+  # 设备工具插件（tools/dsh-phone/plugins/android-tools 是 git submodule，
+  # 独立仓库 + 自己的 v* tag 发版流程）。这里**故意不交给 Dependabot**：
+  # 升 submodule 指针要先确认插件仓库的 tag 与 npm 包，属于「发版」动作，
+  # 不是随手合并的依赖升级（见 AGENTS.md 的插件一节）。

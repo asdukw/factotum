@@ -1,0 +1,45 @@
+name: CodeQL
+
+# GitHub 自带的语义级扫描（公开仓库免费）。与 ktlint/detekt 的分工：那两个看风格与坏味道，
+# 这个找数据流上的安全问题（注入、路径穿越、不安全的加密用法等）。
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * 1" # 每周一 03:00 UTC：上游查询集更新后也能重扫
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL（java-kotlin）
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v4
+      - run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36"
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+      # 不能用 autobuild：它会去跑 assembleDebug，而那个需要按 pinned 版本拉来的 libnode，
+      # CI 上没有。CodeQL 靠**观察编译过程**取数，所以这里显式编译，并关掉缓存、强制重编
+      # —— 否则 Gradle 一句 UP-TO-DATE，CodeQL 什么都看不到（空结果会被当成「没问题」）。
+      - name: 编译（供 CodeQL 取数）
+        working-directory: android
+        run: ./gradlew :app:compileDebugKotlin --no-build-cache --rerun-tasks --console=plain
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:java-kotlin

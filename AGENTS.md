@@ -169,8 +169,33 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 .\gradlew.bat :app:connectedDebugAndroidTest --console=plain
 ```
 
-- 本仓库无 CI；验证 = 本地构建 / 单测通过，或真机验证。
+- **CI（GitHub Actions，`.github/workflows/`）**：绿的是「编译 + 单测 + 静态检查」三关，
+  **不等于能用** —— 无障碍执行层、内嵌 Node 启动、dsh 装配仍只能在真机上验证。
+  CI 不装 NDK、不拉 libnode，也不打 APK（那三步是本地/发版流程）。
 - 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
+- 新增/修改行为要同步补对应层的测试（`src/test` 或 `src/androidTest`）。
+
+### 代码质量门禁（CI 与本地同一套命令）
+
+```powershell
+# 一次跑完：格式 + 坏味道 + Android 专有检查（在 android/ 下执行）
+.\gradlew.bat spotlessCheck detekt :app:lintDebug --console=plain
+.\gradlew.bat spotlessApply        # 格式能自动改的就自动改
+```
+
+| 工具 | 管什么 | 配置 | 出错怎么办 |
+|---|---|---|---|
+| ktlint（经 Spotless） | 格式 | `android/.editorconfig` | `spotlessApply` 自动改 |
+| detekt | 坏味道 / 复杂度 | `android/config/detekt/detekt.yml` | 先看规则要不要放宽（写清理由）；历史欠账进 `baseline.xml` |
+| Android Lint | API 级别 / 清单 / 资源 | `android/app/lint.xml` | 错误必须修；警告只进报告 |
+
+- **Lint 的错误挡 CI，警告不挡**。几十条警告里多数是「有新版本可用」，升成错误等于逼着
+  每次上游发版都改一遍构建脚本。
+- **detekt 的 `baseline.xml` 是历史欠账快照，不是免检区**：它只挡新增。不许往里加，
+  真要加先在提交信息里说明。
+- 两个踩过的坑：Spotless 的 `.editorconfig` 查找根是 **Gradle 工程目录**（写仓库根它看不见）；
+  ktlint 的规则属性（`ktlint_*`）经 Spotless 传不进规则，只能在 `editorConfigOverride` 里再给一次。
+- CI 把 Lint / detekt 的结果传成 SARIF 到仓库的 Security 标签页（`codeql.yml` 另跑语义级扫描）。
 
 ### 任务审计回路（替代「人工跑一遍翻日志凭印象」）
 

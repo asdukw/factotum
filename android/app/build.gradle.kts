@@ -105,8 +105,11 @@ android {
     debug {
       // 本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
       // 于是 debug ↔ release 可以互相覆盖安装（Android 要求更新包签名与已装版本一致）。
-      // 没配签名材料时 findByName 返回 null，AGP 照旧用默认 debug keystore。
-      signingConfig = signingConfigs.findByName("release")
+      //
+      // **必须这样写（`?.let`）而不是直接赋值**：没有 release keystore 时 findByName 返回 null，
+      // 直接赋值等于把 debug 变体的签名显式设成 null —— AGP 就不签了，产物变成
+      // `app-debug-unsigned.apk`，装不上。贡献者机器与 CI 正是这种情况（assemble.yml 抓到过）。
+      signingConfigs.findByName("release")?.let { signingConfig = it }
     }
     release {
       isMinifyEnabled = false

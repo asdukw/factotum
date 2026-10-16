@@ -77,9 +77,24 @@ jobs:
       - name: 验产物结构
         run: |
           set -euo pipefail
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          # 按 glob 找 APK，而不是写死 app-debug.apk：签名配置一旦被设成 null，AGP 会产出
+          # `app-debug-unsigned.apk`，写死路径只会得到一句 "No such file or directory"，
+          # 看不出原因（真发生过一次）。
+          APK=$(ls android/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::出包步骤没产出任何 APK"
+            exit 1
+          fi
+          echo "APK: $APK"
           ls -l "$APK"
-          # 失败时要能自己说明白：先把 APK 里的 lib/ 与构建前的 jniLibs 都列出来
+          # 必须已签名 —— 没配签名材料时 debug 变体应回落到 AGP 的默认 debug 签名。
+          # 未签名的包装不上，而这个错误在构建输出里是「成功」。
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          if ! "${BT}apksigner" verify "$APK" > /dev/null 2>&1; then
+            echo "::error::APK 未签名（$APK）—— 装不上"
+            exit 1
+          fi
+          # 失败时要能自己说明白：把 APK 里的 lib/ 与构建前的 jniLibs 都列出来
           echo "--- APK 里的 lib/ ---"
           unzip -l "$APK" | awk '{print $4}' | grep '^lib/' || echo "(一个都没有)"
           echo "--- 构建前的 jniLibs ---"
@@ -93,7 +108,6 @@ jobs:
             exit 1
           fi
 
-      # 出问题时能把它捞下来自己看（保留 1 天，别占配额）
       - name: 上传 APK（排障用）
         if: always()
         uses: actions/upload-artifact@v7

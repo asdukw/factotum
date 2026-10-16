@@ -13,6 +13,10 @@
 > **方向（2026-10-03 定稿）**：放弃 QQ / 微信聊天记录与知识图谱，不做 PC 客户端，
 > 不采集通知。仓库唯一运行时是 Android App；Python 侧已整体删除。
 >
+> **2026-10-17 收缩**：删掉 dsh Web UI 预览面板与无障碍「四问」探针页 —— 两个都是开发期的
+> 诊断入口，不该出现在使用者面前。执行层本身的原子动作（读屏 / 截图 / 点按 / 输入 / 滑动）
+> 不受影响。
+>
 > 被删除的旧管线（QQ / 微信解密、增量同步、归一化、聊天抽取、MCP Server、
 > 通知探针、Python 图谱骨架）**不在本仓库历史里**：公开发布前做过一次历史重建，
 > 对外历史从重建出的**根提交**开始。旧历史（含上述代码）备份在仓库外的
@@ -25,8 +29,6 @@
 | Android 会话 / 消息 / 工具调用持久化（Room + SQLCipher） | ✅ 真机验证 |
 | 手写的流式 LLM 客户端（`LlmClient` / `AgentLoop`，含 reasoning_content 与流式 tool_calls 解析） | ⏸ **已暂停，不随发布使用**（见 AGENTS.md「方向红线」）；真正在跑的是内嵌 dsh |
 | 原生聊天界面（Compose：Markdown / 代码块 / 工具卡 / 会话列表、流式事件、停止保留半截、崩溃恢复） | ✅ 真机通过（一加 15T） |
-| Web 预览面板（dsh Web UI 嵌入，按需打开：HTML / Office / diff / 富文本） | ✅ 真机通过（P5） |
-| 无障碍四问探针（读屏 / 截图 / 输入 / 手势） | ✅ 真机通过（ColorOS + QQ） |
 | 无障碍执行层原子动作（读屏 / 截图 / 点按 / 长按 / 输入 / 按键 / 启动 App / 滑动） | ✅ 真机通过（一加 15T） |
 | agent runtime（内嵌 dsh + 本地桥 + android-tools 9 个通用原语，见 [docs/dsh-android.md](docs/dsh-android.md)） | ✅ 真机通过（P6 工具卡；P7 长按/按键；P8 思考折叠块；P10 截图 + 图像输入） |
 
@@ -80,7 +82,7 @@ ktlint（格式）/ detekt（坏味道）/ Android Lint（API 级别、清单、
 
 ```
 android/          Android App（唯一运行时）
-docs/             android-accessibility.md：无障碍执行层系统探测与四问指导
+docs/             android-accessibility.md：无障碍执行层系统探测与实测记录
                   dsh-android.md：agent runtime 选型（内嵌 dsh + libnode）与落地计划
                   roadmap.md：技术路线畅想（下一步能推到什么程度）
 ```

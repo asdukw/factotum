@@ -4,6 +4,14 @@
 （Tappet 控制组 + QQ 试验场，结论见 §7）。执行层走**控件树优先、截图兜底**，
 可以开始写工具；QQ 是后续两个试验任务的目标 App（选联系人聊天 / 群聊发言 @ 回复）。
 
+> **2026-10-17 变更**：探针页（`ui/probe/`）、`ProbeCommandReceiver` 广播、
+> `DeviceCapability` / `CapabilityResult` / `DeviceBridgeState` 这套探针契约
+> **已随功能一起删除** —— 它是开发期的诊断入口，不该出现在使用者面前。
+> 本文下面的实测结论与数值**保持原样**（它们是这台设备 / 这个 ROM 的记录，仍然有效），
+> 但文中的「怎么跑」部分现在只有历史意义：执行层的原子动作仍可用
+> `DeviceActionReceiver` 广播驱动（见 AGENTS.md 的 debug 广播一节），
+> 四问那套能力自检要重新做的话，得先把探针加回来。
+
 旧设计文档 `docs/mobile-agent.md` 已随旧管线一起删除，且**不在本仓库历史里**（2026-10-12 的历史重建把它连同其中的真实标识一起去掉了）。
 本文接管「执行模型」这一节，并补上系统侧与四问实测。
 
@@ -118,17 +126,17 @@ FLAG_SECURE 的系统侧旁证（样本之一）：当前微信 `LauncherUI` 窗
 FLAG_SECURE 是逐窗口属性（支付、密码类页面常设），所以 Q2 必须跑样本矩阵，
 不能用单个 App 的结论代表全部。
 
-## 5. 四问 Runbook（已实现）
+## 5. 四问 Runbook（已实现；2026-10-17 起代码已删除，本节作为方法与记录保留）
 
 ### 代码分层（ROM 无关契约 / Android 实现 / OEM 档）
 
 - `app/src/main/java/com/tappet/app/device/` —— **通用契约**：
-  `DeviceCapability`（能力清单）、`CapabilityResult`、`DeviceBridge`（操作入口）、
-  `DeviceBridgeState`（连接与结果状态）、`OemProfiles`（OemProfile：启用路径、adb 命令、已知限制）。
+  `DeviceAction` / `DeviceActionResult`（原子动作）、`DeviceBridge`（操作入口）、
+  `OemProfiles`（OemProfile：启用路径、adb 命令、已知限制）。
+  （`DeviceCapability` / `CapabilityResult` / `DeviceBridgeState` 随探针一起删除。）
 - `app/src/main/java/com/tappet/app/accessibility/` —— **AOSP 无障碍实现**：
   `TappetAccessibilityService`（`DeviceBridge` 实现，不绑 ROM）。
-- `ui/probe/` —— 探针页只依赖 `DeviceBridge` 契约，不引用具体服务类。
-- `app/src/debug/` —— debug-only 的 adb 广播入口 `ProbeCommandReceiver`（release 不含）。
+- `app/src/debug/` —— debug-only 的 adb 广播入口（`DeviceActionReceiver` / `NodeDebugReceiver`，release 不含）。
 
 换 ROM 只加一个 `OemProfile`；正式执行层只扩 `DeviceBridge`，UI 与工具不动。
 
@@ -156,7 +164,8 @@ adb shell "settings put secure enabled_accessibility_services ''"
 adb shell settings put secure accessibility_enabled 0
 ```
 
-四问可用两种方式触发：
+四问可用两种方式触发（**下面两条入口在 2026-10-17 已随探针一起删除**，
+留在这里是为了说明当时的数据是怎么采的）：
 
 1. **UI**：App 首页右上角「探针」→ 按钮带 8 秒倒计时，切到目标 App 停稳后自动执行。
 2. **adb（仅 debug 构建）**：目标 App 在前台时直接广播，无需倒计时 ——
@@ -166,7 +175,8 @@ adb shell am broadcast -n com.tappet.app/.accessibility.ProbeCommandReceiver `
   -a com.tappet.app.debug.PROBE --es capability READ_TREE   # SCREENSHOT / SET_TEXT / TAP
 ```
 
-结果同时进 `Logcat`（tag `TappetProbe`，只记计数 / 类名 / 坐标 / 错误码，不落正文）。
+结果同时进 `Logcat`（当时 tag 是 `TappetProbe`；2026-10-17 起执行层的 tag 改为 `TappetDevice`，
+只记计数 / 类名 / 坐标 / 错误码，不落正文）。
 
 四问跑在**样本矩阵**上，不绑定单一 App：目标是通用 mobile agent，QQ 是后续两个
 试验任务的目标 App，微信/浏览器只是高难度样本，不是适配对象。样本至少覆盖：

@@ -73,7 +73,6 @@ object NodeRuntime : NodeLineListener {
 
   private const val INITIALIZE_TIMEOUT_MS = 180_000L
   private const val PROMPT_TIMEOUT_MS = 30_000L
-  private const val WEB_UI_URL_POLLS = 600
 
   sealed interface Status {
     data object Idle : Status
@@ -101,13 +100,6 @@ object NodeRuntime : NodeLineListener {
 
   private val _status = MutableStateFlow<Status>(Status.Idle)
   val status: StateFlow<Status> = _status.asStateFlow()
-
-  private val _webUiUrl = MutableStateFlow<String?>(null)
-
-  /** dsh Web UI 的带 token URL（launcher 落盘 dsh-home/web-url.txt）；未就绪为 null。 */
-  val webUiUrl: StateFlow<String?> = _webUiUrl.asStateFlow()
-
-  private val webUrlWatchStarted = AtomicBoolean(false)
 
   /** JSON-RPC 通知帧（method + params），例如 session.event / session.status。 */
   private val _notifications =
@@ -188,7 +180,6 @@ object NodeRuntime : NodeLineListener {
     }
       .apply { name = "tappet-node" }
       .start()
-    watchWebUiUrl(app)
   }
 
   /** SDK 握手；成功后 status 变 Ready，之后可反复 prompt。 */
@@ -286,34 +277,6 @@ object NodeRuntime : NodeLineListener {
         collector.cancel()
       }
     }
-
-  /**
-   * 轮询 launcher 落盘的 dsh Web UI URL（webserver 绑定后才写入）。
-   * 文件在 App 私有目录，token 不进 logcat；日志只记录端口。
-   */
-  private fun watchWebUiUrl(app: Context) {
-    if (!webUrlWatchStarted.compareAndSet(false, true)) return
-    val file = File(File(app.filesDir, "dsh-home"), "web-url.txt")
-    file.delete() // 只认本次运行时写入的新 URL
-    Thread {
-      repeat(WEB_UI_URL_POLLS) {
-        val url = runCatching { if (file.isFile) file.readText().trim() else null }.getOrNull()
-        if (!url.isNullOrEmpty()) {
-          val port = url.substringAfter("127.0.0.1:").substringBefore("/")
-          Log.i(TAG, "web ui url ready (port=$port)")
-          _webUiUrl.value = url
-          return@Thread
-        }
-        Thread.sleep(500)
-      }
-      Log.w(TAG, "web ui url not found after ${WEB_UI_URL_POLLS / 2}s")
-    }
-      .apply {
-        name = "tappet-web-url"
-        isDaemon = true
-      }
-      .start()
-  }
 
   /** 给 UI/调试用的稳定会话 id（同一 App 会话复用）。 */
   fun persistentSessionId(context: Context): String {

@@ -42,7 +42,7 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- 探针期：只用于「无障碍四问」真机实测；能力声明见 res/xml/accessibility_service_config.xml -->
+        <!-- 执行层：控件树优先、截图兜底；能力声明见 res/xml/accessibility_service_config.xml -->
         <service
             android:name=".accessibility.TappetAccessibilityService"
             android:exported="true"

@@ -22,14 +22,14 @@ App 完成任务，不做单一 App 的专用适配。仓库唯一运行时是 A
   手写的 `LlmClient` 工具协议 / `AgentLoop` / 对话集成已暂停/废弃，**不要继续完善**。
 - 动手前读对应文档：
   - 动 agent runtime → `docs/dsh-android.md`（决策、P0–P2 实测、各阶段结论）
-  - 动无障碍执行层 → `docs/android-accessibility.md`（系统探测、四问 runbook）
+  - 动无障碍执行层 → `docs/android-accessibility.md`（系统探测与实测记录）
   - 现状与路线 → `README.md`；**技术路线畅想（未验证的假设）** → `docs/roadmap.md`
 
 ## 命名（2026-10-12）
 
 项目原名 **Memex**。因定位是**通用 mobile agent**（而非记忆 / 知识库），已更名为 **Tappet**。
 这次是**彻底改名，连设备身份一起换**：源码包与 `applicationId`、环境变量（`TAPPET_*`）、
-Gradle 属性（`-Ptappet.abis`）、日志 tag（`TappetProbe` / `TappetNode`）、资源名、
+Gradle 属性（`-Ptappet.abis`）、日志 tag（`TappetDevice` / `TappetNode`）、资源名、
 Gradle 工程名、CMake 工程名、JNI 符号全部换新，**没有遗留**。
 
 **换 `applicationId` 的后果（必须记住）**：SQLCipher 口令由 Android Keystore 封装
@@ -83,7 +83,7 @@ android/                        唯一运行时（Kotlin / Compose）
     data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/ 下的 SecretVault 存用户填的 API key
     device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
     node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
-    ui/                         Compose 界面（聊天 / 首页 / 四问探针 / 设置）
+    ui/                         Compose 界面（聊天 / 首页 / 设置）
   app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
   app/src/test/                 JVM 单测
   app/src/androidTest/          真机（instrumented）测试
@@ -253,7 +253,7 @@ adb shell settings put secure accessibility_enabled 1
 - ColorOS 首次启用/重装后弹「保持开启」安全弹窗（3 秒倒计时），不点可能被关闭。
 - `uiautomator dump` 会顶掉无障碍服务约 1 秒，用 adb 自动化时避开。
 - ColorOS 会冻结后台进程：设备操作必须配前台服务（正式化见 docs P3）。
-- logcat 关键 tag：`TappetProbe`（执行层）、`TappetNode`（Node 宿主）、
+- logcat 关键 tag：`TappetDevice`（执行层）、`TappetNode`（Node 宿主）、
   `TappetAudit`（**审计标记**，机器读的 key=value；`tools/audit` 按它过滤，
   改名要同步 `AUDIT_TAG`）、`NODEJS-MOBILE`（Node **stderr** 诊断；stdout 是 JSON-RPC 协议，不落日志）。
 
@@ -267,10 +267,6 @@ adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
 # 提交一个任务（可连续多次，不需要 force-stop）；--ez logPayload true 才打印助手正文
 adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op TASK --es task '任务文本'"
 # 需要干净会话时加 --es session <id>
-
-# 无障碍「四问」探针
-adb shell am broadcast -n com.tappet.app/.accessibility.ProbeCommandReceiver `
-  -a com.tappet.app.debug.PROBE --es capability READ_TREE   # SCREENSHOT / SET_TEXT / TAP
 
 # 直接驱动执行层原子动作（目标 App 在前台时用）
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
@@ -314,8 +310,8 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   目录里没有的 id 会被当成未知模型（模态退化成纯文本，读图直接失败）。
   改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK。**目前只有 OpenCode Go 这条路径在真机上
   跑通过**，其余预选是「配置对得上目录、没用真 key 发过请求」——界面里如实标着。
-- **契约与 ROM 解耦**：`ui/probe` 只依赖 `DeviceBridge`；换 ROM 只加一个 `OemProfile`。
-  不写 App 专用逻辑——QQ 只是试验任务的目标 App，不是适配对象。
+- **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile` 两个契约；换 ROM 只加一个
+  `OemProfile`。不写 App 专用逻辑 —— QQ / 微信只是试验任务的目标 App，不是适配对象。
 - 桥只监听 `127.0.0.1` + 每进程随机 token，只暴露 `POST /action`；不在设备上安装插件。
 - **改 dsh 运行时不要用 `boot()`/CLI loader**（硬依赖无 Android 产物的
   `node-addon-require-builtin`）：走 `launcher.mjs`（纯组合函数取 rows + Cordis 直接

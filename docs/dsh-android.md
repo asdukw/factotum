@@ -239,6 +239,7 @@ adb shell am broadcast --include-stopped-packages `
   需要 HTML / Office / diff / 复杂富文本时按需打开（顶栏与侧栏的 Web 入口）。
 - **导航**：`Main` = `ChatScreen`（默认），`WebPreview` = `WebAgentScreen(onBack)`，
   `Probe` = 四问探针；Web 页顶部有返回栏，不再霸占首页。
+  （2026-10-17：这两个入口连同页面一起删除，见 README 的「收缩」一条。）
 - **会话列表（原生）**：左侧抽屉列出全部会话（Recent first，来自 Room
   `observeSessions()`），支持新建 / 切换 / 删除（删除有确认弹窗，级联删消息与工具调用）。
   任务进行中禁止切会话 —— 事件流只认当前 sessionId，切走会把半截回复写到别的会话上。
@@ -267,6 +268,7 @@ adb shell am broadcast --include-stopped-packages `
   - 助手回答 `com.tappet.app`（实际经无障碍读屏拿到），整条 dsh → 桥 → 无障碍链路在真机跑通；
   - 杀进程重进（force-stop + 重启）后，工具卡仍随消息一起从库里恢复 —— 落库 / 归位正确；
   - 会话抽屉列出会话（标题 + 时间）、新建 / 删按钮与底部 Web / 探针入口都在。
+    （2026-10-17：底部那两个入口已删除，只剩「设置」。）
   - 坑：装完第一次用到无障碍时会弹 ColorOS「检测到 Tappet 获取无障碍权限」倒计时弹窗，
     要点「保持开启」；否则服务会被关掉（AGENTS.md 已记，这里再确认一次）。
   - 未覆盖：抽屉左滑手势、长按选中复制、Web 预览页的新返回栏（这几项靠 Compose 预览 / 后续真机补）。

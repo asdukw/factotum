@@ -122,7 +122,7 @@ class DeviceActionReceiver : BroadcastReceiver() {
     }
 
   companion object {
-    private const val TAG = "TappetProbe"
+    private const val TAG = "TappetDevice"
 
     const val ACTION = "com.tappet.app.debug.ACTION"
     const val EXTRA_ACTION = "action"

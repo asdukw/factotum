@@ -3,8 +3,6 @@ package com.tappet.app.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -16,8 +14,6 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import android.view.Display
@@ -26,13 +22,9 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.RequiresApi
-import com.tappet.app.device.CapabilityResult
-import com.tappet.app.device.CapabilityStatus
 import com.tappet.app.device.DeviceAction
 import com.tappet.app.device.DeviceActionResult
 import com.tappet.app.device.DeviceBridge
-import com.tappet.app.device.DeviceBridgeState
-import com.tappet.app.device.DeviceCapability
 import com.tappet.app.device.EMPTY_TREE_HINT
 import com.tappet.app.device.EMPTY_TREE_NODE_THRESHOLD
 import com.tappet.app.device.NodeBounds
@@ -64,7 +56,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     agentOverlay?.stop()
     agentOverlay = AgentOverlayController(this).also { it.start() }
     instance = this
-    DeviceBridgeState.setConnected(true)
     // 默认不带触摸探索标志：带着会让用户的手动点击变成「探索 + 双击」。
     setTouchExplorationForTask(false)
     Log.i(TAG, "service connected (touchExploration=$touchExplorationActive)")
@@ -79,7 +70,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     agentOverlay = null
     if (instance === this) {
       instance = null
-      DeviceBridgeState.setConnected(false)
     }
     Log.i(TAG, "service unbound")
     return super.onUnbind(intent)
@@ -92,7 +82,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     // 只有自己仍是当前实例时才允许把状态置为断开。
     if (instance === this) {
       instance = null
-      DeviceBridgeState.setConnected(false)
     }
     Log.i(TAG, "service destroyed")
     super.onDestroy()
@@ -101,23 +90,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
     agentOverlay?.onConfigurationChanged()
-  }
-
-  override fun probe(capability: DeviceCapability) {
-    when (capability) {
-      DeviceCapability.READ_TREE -> probeReadTree()
-
-      DeviceCapability.SCREENSHOT ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          probeScreenshot()
-        } else {
-          publish(failed(DeviceCapability.SCREENSHOT, "API < 30，系统没有 takeScreenshot"))
-        }
-
-      DeviceCapability.SET_TEXT -> probeSetText()
-
-      DeviceCapability.TAP -> probeTap()
-    }
   }
 
   // ---------- 执行层：原子动作 ----------
@@ -464,338 +436,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       if (!dispatched && cont.isActive) cont.resume(DeviceActionResult(false, "$label 下发失败"))
     }
 
-  // ---------- Q1 读屏 ----------
-
-  private fun probeReadTree() {
-    val root =
-      runCatching { rootInActiveWindow }.getOrElse {
-        publish(failed(DeviceCapability.READ_TREE, "rootInActiveWindow 抛异常：${it.javaClass.simpleName}"))
-        return
-      }
-    if (root == null) {
-      publish(failed(DeviceCapability.READ_TREE, "rootInActiveWindow = null（当前窗口未向无障碍暴露节点）"))
-      return
-    }
-
-    var nodes = 0
-    var textNodes = 0
-    var clickable = 0
-    var editable = 0
-    var scrollable = 0
-    var focused = 0
-    var truncated = false
-    val classes = mutableMapOf<String, Int>()
-
-    val stack = ArrayDeque<AccessibilityNodeInfo>()
-    stack.addLast(root)
-    while (stack.isNotEmpty()) {
-      val node = stack.removeLast()
-      nodes++
-      if (nodes > MAX_NODES) {
-        truncated = true
-        break
-      }
-      val hasText = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank()
-      if (hasText) textNodes++
-      if (node.isClickable) clickable++
-      if (node.isEditable) editable++
-      if (node.isScrollable) scrollable++
-      if (node.isFocused) focused++
-      node.className?.toString()?.let { classes[it] = (classes[it] ?: 0) + 1 }
-      for (i in 0 until node.childCount) node.getChild(i)?.let(stack::addLast)
-    }
-
-    val windows = runCatching { getWindows() }.getOrNull().orEmpty()
-    val windowPackages = windows.mapNotNull { it.root?.packageName?.toString() }.distinct()
-    val details =
-      buildList {
-        add("root pkg=${root.packageName}")
-        add("windows=${windows.size} pkg=${windowPackages.joinToString(",")}")
-        add(
-          "nodes=$nodes${if (truncated) "+（截断）" else ""} text=$textNodes clickable=$clickable " +
-            "editable=$editable scrollable=$scrollable focused=$focused",
-        )
-        add(
-          "top classes=" +
-            classes.entries.sortedByDescending { it.value }.take(6).joinToString {
-              "${it.key.substringAfterLast('.')}×${it.value}"
-            },
-        )
-      }
-    val readable = textNodes > 0
-    publish(
-      CapabilityResult(
-        capability = DeviceCapability.READ_TREE,
-        status = if (readable) CapabilityStatus.OK else CapabilityStatus.FAILED,
-        summary = if (readable) "可读：文本节点 $textNodes 个" else "根节点非空，但没有任何文本节点",
-        details = details,
-        at = now(),
-      ),
-    )
-  }
-
-  // ---------- Q2 截图 ----------
-
-  /**
-   * Q2 截图探针。**只在 API 30+ 调用** —— 守卫在 [probe] 的 dispatch 处，不在函数内：
-   * takeScreenshot 的成功回调里 lint 追不到本函数开头的守卫，写回函数内会重新报 NewApi。
-   */
-  @RequiresApi(Build.VERSION_CODES.R)
-  private fun probeScreenshot() {
-    val dispatched =
-      runCatching {
-        takeScreenshot(
-          Display.DEFAULT_DISPLAY,
-          mainExecutor,
-          object : TakeScreenshotCallback {
-            override fun onSuccess(screenshot: ScreenshotResult) = inspectScreenshot(screenshot)
-
-            override fun onFailure(errorCode: Int) {
-              publish(
-                failed(DeviceCapability.SCREENSHOT, "截图失败：${screenshotErrorName(errorCode)}（code=$errorCode）"),
-              )
-            }
-          },
-        )
-        true
-      }.getOrElse { throwable ->
-        publish(
-          failed(
-            DeviceCapability.SCREENSHOT,
-            "takeScreenshot 抛异常：${throwable.javaClass.simpleName}（能力未声明？）",
-          ),
-        )
-        false
-      }
-    if (!dispatched) return
-  }
-
-  /** 只被 API 30+ 的 takeScreenshot 成功回调调用。 */
-  @RequiresApi(Build.VERSION_CODES.R)
-  private fun inspectScreenshot(screenshot: ScreenshotResult) {
-    val bitmap = bitmapFrom(screenshot)
-    if (bitmap == null) {
-      publish(failed(DeviceCapability.SCREENSHOT, "截图成功但位图解码失败"))
-      return
-    }
-
-    val step = maxOf(1, bitmap.width / 64)
-    var total = 0
-    var bright = 0
-    var y = 0
-    while (y < bitmap.height) {
-      var x = 0
-      while (x < bitmap.width) {
-        val color = bitmap.getPixel(x, y)
-        total++
-        if (Color.red(color) + Color.green(color) + Color.blue(color) > BRIGHT_THRESHOLD) bright++
-        x += step
-      }
-      y += step
-    }
-    val ratio = if (total == 0) 0.0 else bright.toDouble() / total
-    val width = bitmap.width
-    val height = bitmap.height
-    bitmap.recycle()
-
-    val looksBlank = ratio < BLANK_RATIO
-    publish(
-      CapabilityResult(
-        capability = DeviceCapability.SCREENSHOT,
-        status = if (looksBlank) CapabilityStatus.FAILED else CapabilityStatus.OK,
-        summary =
-          if (looksBlank) {
-            "疑似黑图（非黑像素 ${"%.1f".format(ratio * 100)}%）"
-          } else {
-            "可截：${width}x$height，非黑像素 ${"%.1f".format(ratio * 100)}%"
-          },
-        details = listOf("采样步长=$step", "非黑判定=RGB 和 > $BRIGHT_THRESHOLD"),
-        at = now(),
-      ),
-    )
-  }
-
-  private fun screenshotErrorName(code: Int): String =
-    when (code) {
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> "INTERNAL_ERROR"
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS -> "NO_ACCESSIBILITY_ACCESS"
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "INTERVAL_TIME_SHORT"
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY -> "INVALID_DISPLAY"
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW -> "INVALID_WINDOW"
-      AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW -> "SECURE_WINDOW"
-      else -> "UNKNOWN"
-    }
-
-  // ---------- Q3 输入 ----------
-
-  private fun probeSetText() {
-    val root = activeRoot(DeviceCapability.SET_TEXT) ?: return
-    val target = findEditable(root)
-    if (target == null) {
-      publish(failed(DeviceCapability.SET_TEXT, "当前界面没有可见的可编辑节点（输入框可能是自绘）"))
-      return
-    }
-
-    if (!target.isFocused) target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-    val arguments =
-      Bundle().apply {
-        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, PROBE_TEXT)
-      }
-    val accepted = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-    // Compose / 自绘输入框的文本是异步刷新的：立刻读回会误判失败，等一拍再验。
-    Handler(Looper.getMainLooper()).postDelayed(
-      { verifySetText(target, accepted, "ACTION_SET_TEXT", allowPasteFallback = true) },
-      TEXT_VERIFY_DELAY_MS,
-    )
-  }
-
-  private fun verifySetText(
-    target: AccessibilityNodeInfo,
-    accepted: Boolean,
-    method: String,
-    allowPasteFallback: Boolean,
-  ) {
-    target.refresh()
-    val readBack = target.text?.toString()
-    if (readBack == PROBE_TEXT) {
-      publishSetTextResult(target, accepted, method, matched = true, readBackLength = readBack.length)
-      clearProbeText(target)
-      return
-    }
-    if (allowPasteFallback) {
-      val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-      clipboard.setPrimaryClip(ClipData.newPlainText("tappet-probe", PROBE_TEXT))
-      target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-      target.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-      Handler(Looper.getMainLooper()).postDelayed(
-        { verifySetText(target, accepted, "ACTION_FOCUS+ACTION_PASTE", allowPasteFallback = false) },
-        TEXT_VERIFY_DELAY_MS,
-      )
-      return
-    }
-    publishSetTextResult(target, accepted, method, matched = false, readBackLength = readBack?.length ?: 0)
-  }
-
-  private fun publishSetTextResult(
-    target: AccessibilityNodeInfo,
-    accepted: Boolean,
-    method: String,
-    matched: Boolean,
-    readBackLength: Int,
-  ) {
-    publish(
-      CapabilityResult(
-        capability = DeviceCapability.SET_TEXT,
-        status = if (matched) CapabilityStatus.OK else CapabilityStatus.FAILED,
-        summary = if (matched) "写入成功（$method）" else "写入未生效（accepted=$accepted，读回长度=$readBackLength）",
-        details =
-          listOf(
-            "目标=${target.className?.toString()?.substringAfterLast('.')} pkg=${target.packageName}",
-            "方法=$method，读回匹配=$matched",
-            "测试串=「$PROBE_TEXT」；未触发发送 / 搜索" + if (matched) "，验证后已清空" else "",
-          ),
-        at = now(),
-      ),
-    )
-  }
-
-  /** 验证后把测试串清掉，避免用户后续误发。 */
-  private fun clearProbeText(target: AccessibilityNodeInfo) {
-    val arguments =
-      Bundle().apply {
-        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
-      }
-    target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-  }
-
-  // ---------- Q4 手势 ----------
-
-  private fun probeTap() {
-    val root = activeRoot(DeviceCapability.TAP) ?: return
-    val target = findEditable(root)
-    if (target == null) {
-      publish(
-        failed(DeviceCapability.TAP, "没有可编辑节点；探针只点输入框（安全目标），不点其它控件"),
-      )
-      return
-    }
-    val rect = Rect()
-    target.getBoundsInScreen(rect)
-    if (rect.width() <= 0 || rect.height() <= 0) {
-      publish(failed(DeviceCapability.TAP, "目标节点 bounds 为空，无法计算坐标"))
-      return
-    }
-    val x = rect.exactCenterX()
-    val y = rect.exactCenterY()
-    val wasFocused = target.isFocused
-    val path = Path().apply {
-      moveTo(x, y)
-      lineTo(x + 1f, y)
-    }
-    val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 60)).build()
-
-    val dispatched =
-      runCatching {
-        dispatchGesture(
-          gesture,
-          object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-              Handler(Looper.getMainLooper()).postDelayed({ verifyFocusAfterTap(x, y, wasFocused) }, FOCUS_CHECK_DELAY_MS)
-            }
-
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-              publish(failed(DeviceCapability.TAP, "手势被系统取消"))
-            }
-          },
-          null,
-        )
-      }.getOrElse { throwable ->
-        publish(failed(DeviceCapability.TAP, "dispatchGesture 抛异常：${throwable.javaClass.simpleName}"))
-        false
-      }
-    if (!dispatched) {
-      publish(failed(DeviceCapability.TAP, "dispatchGesture 返回 false（能力未声明？）"))
-    } else {
-      publish(
-        CapabilityResult(
-          capability = DeviceCapability.TAP,
-          status = CapabilityStatus.RUNNING,
-          summary = "手势已下发，等待结果…",
-          at = now(),
-        ),
-      )
-    }
-  }
-
-  private fun verifyFocusAfterTap(x: Float, y: Float, wasFocused: Boolean) {
-    val focused = runCatching { rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }.getOrNull()
-    val rect = Rect()
-    focused?.getBoundsInScreen(rect)
-    val contains = rect.contains(x.toInt(), y.toInt())
-    // 有的输入框被聚焦后会因键盘/展开而位移，坐标包含判定会假阴性；
-    // 只要焦点变成了可编辑节点且此前没有焦点，就算点击生效。
-    val focusGained = focused != null && focused.isEditable && !wasFocused
-    val landed = focused != null && focused.isEditable && (contains || focusGained)
-    publish(
-      CapabilityResult(
-        capability = DeviceCapability.TAP,
-        status = if (landed) CapabilityStatus.OK else CapabilityStatus.FAILED,
-        summary =
-          when {
-            contains -> "点击生效，焦点落在目标节点"
-            focusGained -> "点击生效（输入框被聚焦后位置变化，坐标包含判定不适用）"
-            else -> "手势完成，但焦点未落在目标（该 App 可能不响应焦点）"
-          },
-        details =
-          listOf(
-            "点击坐标=(${"%.0f".format(x)}, ${"%.0f".format(y)}) 点击前已聚焦=$wasFocused",
-            "点击后焦点=${focused?.className?.toString()?.substringAfterLast('.') ?: "null"} bounds=$rect contains=$contains",
-          ),
-        at = now(),
-      ),
-    )
-  }
-
   // ---------- 审计标记 ----------
 
   /**
@@ -946,13 +586,19 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     )
   }
 
-  // ---------- 工具 ----------
+  /** takeScreenshot 的错误码 → 可读名（执行层的截图也用它记日志）。 */
+  private fun screenshotErrorName(code: Int): String =
+    when (code) {
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> "INTERNAL_ERROR"
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS -> "NO_ACCESSIBILITY_ACCESS"
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "INTERVAL_TIME_SHORT"
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY -> "INVALID_DISPLAY"
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW -> "INVALID_WINDOW"
+      AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW -> "SECURE_WINDOW"
+      else -> "UNKNOWN"
+    }
 
-  private fun activeRoot(capability: DeviceCapability): AccessibilityNodeInfo? {
-    val root = runCatching { rootInActiveWindow }.getOrNull()
-    if (root == null) publish(failed(capability, "rootInActiveWindow = null（当前窗口未暴露节点）"))
-    return root
-  }
+  // ---------- 工具 ----------
 
   /**
    * 取「应用窗口」的根节点。
@@ -984,20 +630,8 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     return null
   }
 
-  private fun failed(capability: DeviceCapability, summary: String) =
-    CapabilityResult(capability, CapabilityStatus.FAILED, summary, at = now())
-
-  private fun publish(result: CapabilityResult) {
-    // 只记结构信息：计数、包名、类名、坐标、错误码；绝不记页面正文。
-    Log.i(TAG, "${result.capability.name} ${result.status}: ${result.summary}")
-    result.details.forEach { Log.i(TAG, "  $it") }
-    DeviceBridgeState.publish(result)
-  }
-
-  private fun now() = System.currentTimeMillis()
-
   companion object {
-    private const val TAG = "TappetProbe"
+    private const val TAG = "TappetDevice"
 
     /**
      * 审计标记的 logcat tag（见 [audit]）。`tools/audit/collect.mjs` 按它过滤，
@@ -1014,16 +648,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     private const val TAP_DURATION_MS = 60L
 
     private const val SWIPE_DURATION_MS = 300L
-
-    private const val PROBE_TEXT = "tappet-probe"
-
-    /** 采样像素亮度阈值：RGB 之和低于它视为黑。 */
-    private const val BRIGHT_THRESHOLD = 30
-
-    /** 非黑采样占比低于它视为黑图。 */
-    private const val BLANK_RATIO = 0.01
-
-    private const val FOCUS_CHECK_DELAY_MS = 400L
 
     /** 语义动作后等界面反应一拍（与 FOCUS_CHECK 同量级）。 */
     private const val ACTION_SETTLE_DELAY_MS = 350L

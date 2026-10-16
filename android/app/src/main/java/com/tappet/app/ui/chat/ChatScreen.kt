@@ -93,12 +93,9 @@ import java.time.temporal.ChronoUnit
  *
  * 视觉对齐 ChatGPT / DeepSeek 手机端：白底、极简顶栏、用户消息右侧浅色气泡、
  * 助手正文全宽无气泡、底部浮动圆角输入卡。工具调用 / 思考折叠保留为次要灰卡。
- * dsh 的 Web UI 仍作为「按需打开」的预览面板（入口在会话抽屉里）。
  */
 @Composable
 fun ChatScreen(
-  onOpenProbe: () -> Unit,
-  onOpenWeb: () -> Unit,
   onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
   store: SessionStore = LocalContext.current.tappetSessionStore(),
@@ -122,8 +119,6 @@ fun ChatScreen(
     onNewSession = viewModel::newSession,
     onOpenSession = viewModel::openSession,
     onDeleteSession = viewModel::deleteSession,
-    onOpenProbe = onOpenProbe,
-    onOpenWeb = onOpenWeb,
     onOpenSettings = onOpenSettings,
     modifier = modifier,
   )
@@ -138,8 +133,6 @@ internal fun ChatScreen(
   onNewSession: () -> Unit = {},
   onOpenSession: (String) -> Unit = {},
   onDeleteSession: (String) -> Unit = {},
-  onOpenProbe: () -> Unit = {},
-  onOpenWeb: () -> Unit = {},
   onOpenSettings: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
@@ -184,14 +177,6 @@ internal fun ChatScreen(
           scope.launch { drawerState.close() }
         },
         onDeleteSession = onDeleteSession,
-        onOpenWeb = {
-          onOpenWeb()
-          scope.launch { drawerState.close() }
-        },
-        onOpenProbe = {
-          onOpenProbe()
-          scope.launch { drawerState.close() }
-        },
         onOpenSettings = {
           onOpenSettings()
           scope.launch { drawerState.close() }
@@ -274,8 +259,6 @@ private fun SessionDrawer(
   onNewSession: () -> Unit,
   onOpenSession: (String) -> Unit,
   onDeleteSession: (String) -> Unit,
-  onOpenWeb: () -> Unit,
-  onOpenProbe: () -> Unit,
   onOpenSettings: () -> Unit,
 ) {
   var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
@@ -294,41 +277,17 @@ private fun SessionDrawer(
         }
       }
 
-      LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        if (sessions.isEmpty()) {
-          item {
-            Text(
-              text = "还没有会话记录",
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.padding(start = 12.dp, top = 12.dp),
-            )
-          }
-        }
-        grouped.forEach { (label, groupSessions) ->
-          item(key = "group-$label") {
-            Text(
-              text = label,
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
-            )
-          }
-          items(items = groupSessions, key = { it.id }) { session ->
-            SessionRow(
-              session = session,
-              selected = session.id == currentId,
-              enabled = enabled,
-              onOpen = { onOpenSession(session.id) },
-              onDelete = { pendingDelete = session },
-            )
-          }
-        }
-      }
+      SessionList(
+        // weight 只有 ColumnScope 里能用，所以从调用点传进去
+        modifier = Modifier.weight(1f),
+        grouped = grouped,
+        currentId = currentId,
+        enabled = enabled,
+        onOpenSession = onOpenSession,
+        onRequestDelete = { pendingDelete = it },
+      )
 
       HorizontalDivider(Modifier.padding(vertical = 8.dp))
-      DrawerNavRow("Web 预览（HTML / Office / diff）", onClick = onOpenWeb)
-      DrawerNavRow("设备探针", onClick = onOpenProbe)
       DrawerNavRow("设置（端点 / API key）", onClick = onOpenSettings)
       if (configSummary.isNotBlank()) {
         Text(
@@ -374,6 +333,49 @@ private fun DrawerNavRow(label: String, onClick: () -> Unit) {
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Text(text = label, style = MaterialTheme.typography.bodyMedium)
+  }
+}
+
+/** 按「今天 / 更早」分组的会话列表。抽出来只是为了 SessionDrawer 别压着 detekt 的长方法阈值。 */
+@Composable
+private fun SessionList(
+  modifier: Modifier = Modifier,
+  grouped: List<Pair<String, List<ChatSession>>>,
+  currentId: String?,
+  enabled: Boolean,
+  onOpenSession: (String) -> Unit,
+  onRequestDelete: (ChatSession) -> Unit,
+) {
+  LazyColumn(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    if (grouped.isEmpty()) {
+      item {
+        Text(
+          text = "还没有会话记录",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 12.dp, top = 12.dp),
+        )
+      }
+    }
+    grouped.forEach { (label, groupSessions) ->
+      item(key = "group-$label") {
+        Text(
+          text = label,
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
+        )
+      }
+      items(items = groupSessions, key = { it.id }) { session ->
+        SessionRow(
+          session = session,
+          selected = session.id == currentId,
+          enabled = enabled,
+          onOpen = { onOpenSession(session.id) },
+          onDelete = { onRequestDelete(session) },
+        )
+      }
+    }
   }
 }
 

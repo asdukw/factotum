@@ -283,7 +283,7 @@ internal class AgentOverlayController(private val service: AccessibilityService)
   }
 
   private companion object {
-    const val TAG = "TappetProbe"
+    const val TAG = "TappetDevice"
     const val PREFS = "agent_overlay"
     const val KEY_X = "x"
     const val KEY_Y = "y"

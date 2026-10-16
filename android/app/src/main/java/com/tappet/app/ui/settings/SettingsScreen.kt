@@ -29,9 +29,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.LlmPreset
+import com.tappet.app.device.AccessibilityStatus
 
 /**
  * 设置页：选服务商、填端点与自己的 API key。
@@ -85,6 +87,7 @@ internal fun SettingsScreen(
       modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      AccessibilitySection()
       ProviderSection(state = state, onPresetChange = onPresetChange)
       EndpointSection(
         state = state,
@@ -113,6 +116,54 @@ private fun ScreenHeader(onBack: () -> Unit) {
       style = MaterialTheme.typography.titleLarge,
       modifier = Modifier.padding(start = 4.dp, top = 10.dp),
     )
+  }
+}
+
+/**
+ * 无障碍这一段：**这是使用者唯一能主动找到「怎么开」的地方**（聊天页的提示卡只在他真的撞上
+ * 之后才出现）。所以这里写全三步，包括 ColorOS 那个「保持开启」的坑。
+ *
+ * 状态每次回到前台重查 —— 用户去系统设置里开完回来，这里要立刻变成「已开启」。
+ */
+@Composable
+private fun AccessibilitySection() {
+  val context = LocalContext.current
+  var enabled by remember { mutableStateOf(AccessibilityStatus.isEnabled(context)) }
+  LifecycleResumeEffect(Unit) {
+    enabled = AccessibilityStatus.isEnabled(context)
+    onPauseOrDispose { }
+  }
+
+  SectionLabel("无障碍（执行层）")
+  Text(
+    text = if (enabled) "已开启 —— 读屏 / 点击 / 截图可用" else "未开启 —— 任务只能聊天，动不了手机",
+    style = MaterialTheme.typography.bodyMedium,
+    color =
+      if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+      } else {
+        MaterialTheme.colorScheme.error
+      },
+  )
+  if (!enabled) {
+    Text(
+      text =
+        "Android 不允许应用自行开启无障碍（否则任何 App 都能自己拿到读屏与模拟点击的权力）。" +
+          "只能你来开一次：",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+      text = AccessibilityStatus.GUIDE_STEPS,
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Button(
+      onClick = { context.startActivity(AccessibilityStatus.settingsIntent()) },
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Text("去开启")
+    }
   }
 }
 

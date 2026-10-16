@@ -6,6 +6,8 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.tappet.app.device.AccessibilityStatus
+import com.tappet.app.device.BridgeHealth
 import com.tappet.app.device.DeviceAction
 import com.tappet.app.device.PressKey
 import com.tappet.app.device.SwipeDirection
@@ -55,7 +57,11 @@ class DeviceActionReceiver : BroadcastReceiver() {
     }
     val service = TappetAccessibilityService.get()
     if (service == null) {
-      Log.w(TAG, "action=$actionName ignored: service not connected")
+      // 与桥走同一条路：无障碍没开时记下原因码 —— 界面靠 BridgeHealth 弹「去开启」提示。
+      // 这个接收器存在的意义就是「不经 UI、可复现地驱动执行层」，所以失败路径也要一致。
+      val unavailable = AccessibilityStatus.unavailableToolResult()
+      BridgeHealth.record(unavailable.code)
+      Log.w(TAG, "action=$actionName ok=false code=${unavailable.code}")
       return
     }
     val pending = goAsync()

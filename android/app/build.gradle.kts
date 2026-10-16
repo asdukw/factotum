@@ -102,6 +102,12 @@ android {
     }
   }
   buildTypes {
+    debug {
+      // 本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
+      // 于是 debug ↔ release 可以互相覆盖安装（Android 要求更新包签名与已装版本一致）。
+      // 没配签名材料时 findByName 返回 null，AGP 照旧用默认 debug keystore。
+      signingConfig = signingConfigs.findByName("release")
+    }
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

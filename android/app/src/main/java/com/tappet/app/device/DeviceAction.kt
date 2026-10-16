@@ -57,6 +57,13 @@ data class DeviceActionResult(
   val summary: String,
   /** 给 LLM 看的结构化结果（如读屏文本）；日志只打 summary，不打 payload。 */
   val payload: String? = null,
+  /**
+   * 机器可读的失败原因（如 [AccessibilityStatus.CODE_NOT_ENABLED]），成功时为 null。
+   *
+   * summary 是给人 / 给模型看的中文，**不要拿它当判断依据** —— 文案会改，码不会。
+   * 桥会把它一并放进返回的 JSON 里。
+   */
+  val code: String? = null,
 )
 
 data class NodeBounds(

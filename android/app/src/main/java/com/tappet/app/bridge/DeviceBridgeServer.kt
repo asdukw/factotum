@@ -2,6 +2,8 @@ package com.tappet.app.bridge
 
 import android.util.Log
 import com.tappet.app.accessibility.TappetAccessibilityService
+import com.tappet.app.device.AccessibilityStatus
+import com.tappet.app.device.BridgeHealth
 import com.tappet.app.device.DEFAULT_LONG_PRESS_MS
 import com.tappet.app.device.DeviceAction
 import com.tappet.app.device.DeviceActionResult
@@ -121,12 +123,13 @@ object DeviceBridgeServer {
     val service = TappetAccessibilityService.get()
     val result =
       if (service == null) {
-        DeviceActionResult(false, "无障碍服务未连接：先在探针页或系统设置里启用")
+        AccessibilityStatus.unavailableToolResult()
       } else {
         runBlocking { service.execute(deviceAction) }
       }
+    BridgeHealth.record(result.code)
     // 只记动作与结构化结果（计数），不记 payload 正文
-    Log.i(TAG, "$action ok=${result.ok} ${result.summary}")
+    Log.i(TAG, "$action ok=${result.ok} code=${result.code ?: "-"} ${result.summary}")
     return resultJson(result)
   }
 
@@ -192,6 +195,8 @@ object DeviceBridgeServer {
       put("ok", result.ok)
       put("summary", result.summary)
       result.payload?.let { put("payload", it) }
+      // 机器可读的失败原因：插件 / UI / 日志都能用，不必去匹配上面的中文
+      result.code?.let { put("code", it) }
     }
       .toString()
 

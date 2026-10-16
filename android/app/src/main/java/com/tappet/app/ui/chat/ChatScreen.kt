@@ -36,6 +36,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
@@ -79,6 +81,8 @@ import com.tappet.app.agent.ToolCallView
 import com.tappet.app.data.session.ChatSession
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
+import com.tappet.app.device.AccessibilityStatus
+import com.tappet.app.device.BridgeHealth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -191,6 +195,7 @@ internal fun ChatScreen(
         onNewSession = onNewSession,
       )
 
+      AccessibilityPrompt()
       if (!state.configured) {
         // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
         BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
@@ -237,6 +242,62 @@ private fun ChatTopBar(title: String, onOpenSessions: () -> Unit, onNewSession: 
       modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
     )
     IconButton(onClick = onNewSession) { PlusGlyph(tint = MaterialTheme.colorScheme.onSurface) }
+  }
+}
+
+/**
+ * 「无障碍没开」的提示：**状态与判定都封在这里**，ChatScreen 本体不必为此变长。
+ *
+ * 只在一个设备动作**真的因此失败**之后才出现（判据见 [AccessibilityStatus.shouldPrompt]）——
+ * 纯聊天、只是问问题，不会打扰用户。
+ */
+@Composable
+private fun AccessibilityPrompt() {
+  val context = LocalContext.current
+  val lastBridgeError by BridgeHealth.lastErrorCode.collectAsStateWithLifecycle()
+  var enabled by remember { mutableStateOf(AccessibilityStatus.isEnabled(context)) }
+  LifecycleResumeEffect(Unit) {
+    // 用户可能刚去系统设置里开过 —— 回到前台重查一次，开了就把提示收起来
+    enabled = AccessibilityStatus.isEnabled(context)
+    onPauseOrDispose { }
+  }
+  if (!AccessibilityStatus.shouldPrompt(lastBridgeError, enabled)) return
+  AccessibilityBanner(onOpenSettings = { context.startActivity(AccessibilityStatus.settingsIntent()) })
+}
+
+/**
+ * 「无障碍没开」的提示卡。
+ *
+ * 出现的条件见 [AccessibilityStatus.shouldPrompt]：必须**先有一次设备动作失败**，
+ * 所以纯聊天（模型没碰设备）不会弹这张卡。
+ *
+ * 文案里那句「保持开启」是 ColorOS / 一加的坑：不点它，系统会把服务关掉，用户会以为白开了
+ * —— 实测过，所以写进提示里而不是只写在文档里。
+ */
+@Composable
+private fun AccessibilityBanner(onOpenSettings: () -> Unit) {
+  Surface(
+    color = MaterialTheme.colorScheme.errorContainer,
+    shape = RoundedCornerShape(12.dp),
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+  ) {
+    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Text(
+        text = "无障碍服务没开，读屏 / 点击 / 截图都用不了",
+        style = MaterialTheme.typography.titleSmall,
+      )
+      Text(
+        text = "应用无法自行开启它（Android 不允许），需要你手动开一次。",
+        style = MaterialTheme.typography.bodySmall,
+      )
+      Text(
+        text =
+          "点「去开启」→ 在「已下载的应用 / 已安装的服务」里找到 Tappet 打开；" +
+            "系统随后会弹「保持开启」（3 秒倒计时），必须点它，不点会被系统关掉。",
+        style = MaterialTheme.typography.bodySmall,
+      )
+      Button(onClick = onOpenSettings, modifier = Modifier.align(Alignment.End)) { Text("去开启") }
+    }
   }
 }
 

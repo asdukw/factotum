@@ -73,18 +73,31 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleDebug --console=plain
 
-      # 出包之后**验产物本身**，而不是只看构建退出码 —— tar 冒充 zip 那次，构建是成功的。
+# 出包之后**验产物本身**，而不是只看构建退出码 —— tar 冒充 zip 那次，构建是成功的。
       - name: 验产物结构
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           ls -l "$APK"
+          # 失败时要能自己说明白：先把 APK 里的 lib/ 与构建前的 jniLibs 都列出来
+          echo "--- APK 里的 lib/ ---"
+          unzip -l "$APK" | awk '{print $4}' | grep '^lib/' || echo "(一个都没有)"
+          echo "--- 构建前的 jniLibs ---"
+          ls -l android/app/src/main/jniLibs/*/ || echo "(jniLibs 是空的)"
           for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so; do
             unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
           done
-          MAGIC=$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 4 | od -An -tx1 | tr -d ' \n')
-          echo "assets/dsh-runtime.zip 头四字节: $MAGIC"
-          if [ "$MAGIC" != "504b0304" ]; then
-            echo "::error::运行时资产不是 zip（头四字节 $MAGIC）—— 装到设备上会解压失败"
+          # 运行时资产必须是真 zip（头两个字节 PK）；v0.1.0 那次是 tar 冒充 zip，而构建是成功的
+          if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then
+            echo "::error::assets/dsh-runtime.zip 不是 zip —— 装到设备上会解压失败"
             exit 1
           fi
+
+      # 出问题时能把它捞下来自己看（保留 1 天，别占配额）
+      - name: 上传 APK（排障用）
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: assemble-debug-apk
+          retention-days: 1
+          path: android/app/build/outputs/apk/debug/app-debug.apk

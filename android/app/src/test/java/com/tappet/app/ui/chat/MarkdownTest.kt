@@ -17,7 +17,7 @@ class MarkdownTest {
         换行还在
 
         ## 二级
-        """.trimIndent()
+        """.trimIndent(),
       )
 
     assertEquals(
@@ -41,7 +41,7 @@ class MarkdownTest {
         val a = 1
         println(a)
         ```
-        """.trimIndent()
+        """.trimIndent(),
       )
 
     assertEquals(2, blocks.size)
@@ -66,7 +66,7 @@ class MarkdownTest {
 
         1. 甲
         2. 乙
-        """.trimIndent()
+        """.trimIndent(),
       )
 
     assertEquals(

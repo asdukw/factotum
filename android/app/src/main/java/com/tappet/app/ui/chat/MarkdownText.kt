@@ -155,7 +155,7 @@ private fun String.toAnnotatedString(linkColor: Color, codeBackground: Color): A
             LinkAnnotation.Url(
               url = token.url,
               styles = TextLinkStyles(style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)),
-            )
+            ),
           ) {
             append(token.text)
           }

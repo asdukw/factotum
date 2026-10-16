@@ -81,10 +81,13 @@ class DeviceActionReceiver : BroadcastReceiver() {
   private fun parse(name: String, intent: Intent): DeviceAction? =
     when (name) {
       "READ_SCREEN" -> DeviceAction.ReadScreen
+
       "TAP_NODE" -> intent.getIntExtra(EXTRA_REF, -1).takeIf { it >= 0 }?.let(DeviceAction::TapNode)
+
       "TAP_POINT" ->
         DeviceAction.TapPoint(intent.getIntExtra(EXTRA_X, -1), intent.getIntExtra(EXTRA_Y, -1))
           .takeIf { it.x >= 0 && it.y >= 0 }
+
       "LONG_PRESS" -> {
         val duration = intent.getLongExtra(EXTRA_DURATION_MS, 700L).coerceIn(300L, 2000L)
         val ref = intent.getIntExtra(EXTRA_REF, -1)
@@ -96,18 +99,25 @@ class DeviceActionReceiver : BroadcastReceiver() {
           if (x >= 0 && y >= 0) DeviceAction.LongPressPoint(x, y, duration) else null
         }
       }
+
       "TYPE_TEXT" -> intent.getStringExtra(EXTRA_TEXT)?.let(DeviceAction::TypeText)
+
       "PRESS" ->
         intent.getStringExtra(EXTRA_KEY)?.let { raw ->
           runCatching { DeviceAction.Press(PressKey.valueOf(raw.uppercase())) }.getOrNull()
         }
+
       "BACK" -> DeviceAction.Press(PressKey.BACK)
+
       "LAUNCH_APP" -> intent.getStringExtra(EXTRA_QUERY)?.let(DeviceAction::LaunchApp)
+
       "SCREENSHOT" -> DeviceAction.Screenshot
+
       "SWIPE" ->
         intent.getStringExtra(EXTRA_DIRECTION)?.let { raw ->
           runCatching { DeviceAction.Swipe(SwipeDirection.valueOf(raw.uppercase())) }.getOrNull()
         }
+
       else -> null
     }
 

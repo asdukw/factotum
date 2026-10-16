@@ -5,7 +5,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OemProfilesTest {
-
   @Test
   fun `oneplus maps to coloros profile`() {
     assertEquals("coloros", OemProfiles.detect("OnePlus", "OnePlus").id)

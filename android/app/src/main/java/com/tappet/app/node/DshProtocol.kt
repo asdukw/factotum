@@ -73,7 +73,9 @@ object DshProtocol {
           "idle" -> DshEvent.Status(sessionId, running = false)
           else -> null
         }
+
       "session.event" -> parseSessionEvent(sessionId, params["event"]?.jsonObject ?: return null)
+
       else -> null
     }
   }
@@ -106,6 +108,7 @@ object DshProtocol {
             .joinToString("\n")
         DshEvent.AssistantMessage(sessionId, text, reasoning.ifBlank { null })
       }
+
       "tool/call" ->
         DshEvent.ToolCall(
           sessionId = sessionId,
@@ -113,6 +116,7 @@ object DshProtocol {
           name = data?.string("name") ?: "tool",
           arguments = data?.string("arguments").orEmpty(),
         )
+
       "tool/result" -> {
         val message = data?.get("message")?.jsonObject
         DshEvent.ToolResult(
@@ -122,11 +126,13 @@ object DshProtocol {
           text = message?.contentText(),
         )
       }
+
       "turn/end" -> {
         val reason = data?.get("reason")?.jsonObject
         val error = if (reason?.get("kind")?.jsonPrimitive?.contentOrNull == "error") reason.toString() else null
         DshEvent.TurnEnded(sessionId, error)
       }
+
       else -> null
     }
   }

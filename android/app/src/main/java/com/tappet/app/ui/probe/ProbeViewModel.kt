@@ -26,7 +26,6 @@ import kotlinx.coroutines.launch
 class ProbeViewModel(
   private val bridgeProvider: () -> DeviceBridge? = { TappetAccessibilityService.get() },
 ) : ViewModel() {
-
   data class Countdown(
     val capability: DeviceCapability,
     val secondsLeft: Int,
@@ -64,13 +63,15 @@ class ProbeViewModel(
         current.copy(
           results =
             current.results +
-              (capability to
-                CapabilityResult(
-                  capability = capability,
-                  status = CapabilityStatus.FAILED,
-                  summary = "服务未连接：先在系统设置里启用，或用 adb 命令启用",
-                  at = System.currentTimeMillis(),
-                ))
+              (
+                capability to
+                  CapabilityResult(
+                    capability = capability,
+                    status = CapabilityStatus.FAILED,
+                    summary = "服务未连接：先在系统设置里启用，或用 adb 命令启用",
+                    at = System.currentTimeMillis(),
+                  )
+              ),
         )
       }
       return

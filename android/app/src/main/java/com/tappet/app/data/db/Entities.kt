@@ -82,7 +82,7 @@ data class SessionEntity(
         parentColumns = ["id"],
         childColumns = ["session_id"],
         onDelete = ForeignKey.CASCADE,
-      )
+      ),
     ],
   indices = [Index(value = ["session_id", "seq"], unique = true)],
 )
@@ -112,7 +112,7 @@ data class MessageEntity(
         parentColumns = ["id"],
         childColumns = ["message_id"],
         onDelete = ForeignKey.CASCADE,
-      )
+      ),
     ],
   indices = [Index("message_id"), Index("session_id")],
 )

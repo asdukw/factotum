@@ -24,7 +24,6 @@ import com.tappet.app.progress.AgentProgressCenter
 import com.tappet.app.progress.AgentProgressEntry
 import com.tappet.app.progress.AgentProgressKind
 import com.tappet.app.progress.AgentProgressState
-import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * 无障碍 overlay 上的「角色球 + 进度气泡」。
@@ -46,14 +46,14 @@ internal class AgentOverlayController(private val service: AccessibilityService)
   private val prefs = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
   private val params =
     WindowManager.LayoutParams(
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-          WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-          WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-        PixelFormat.TRANSLUCENT,
-      )
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+      PixelFormat.TRANSLUCENT,
+    )
       .apply {
         gravity = Gravity.TOP or Gravity.START
         x = prefs.getInt(KEY_X, dp(8))
@@ -222,12 +222,14 @@ internal class AgentOverlayController(private val service: AccessibilityService)
           startY = params.y
           true
         }
+
         MotionEvent.ACTION_MOVE -> {
           params.x = startX + (event.rawX - downX).toInt()
           params.y = startY + (event.rawY - downY).toInt()
           runCatching { windowManager.updateViewLayout(view, params) }
           true
         }
+
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
           val moved = abs(event.rawX - downX) > dp(5) || abs(event.rawY - downY) > dp(5)
           if (!moved) toggleExpanded(view)
@@ -235,6 +237,7 @@ internal class AgentOverlayController(private val service: AccessibilityService)
           prefs.edit().putInt(KEY_X, params.x).putInt(KEY_Y, params.y).apply()
           true
         }
+
         else -> false
       }
     }

@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.Flow
  */
 @Dao
 abstract class SessionStoreDao {
-
   // ---- session ----
 
   @Query("SELECT * FROM session WHERE kind = :kind ORDER BY updated_at DESC LIMIT 1")
@@ -58,7 +57,7 @@ abstract class SessionStoreDao {
     SET content = :content, reasoning = :reasoning, status = :status,
         error = :error, finished_at = :finishedAt
     WHERE id = :id
-    """
+    """,
   )
   abstract suspend fun updateMessage(
     id: String,
@@ -76,7 +75,7 @@ abstract class SessionStoreDao {
     """
     SELECT COUNT(*) FROM message
     WHERE session_id = :sessionId AND role = :role AND status = :status
-    """
+    """,
   )
   abstract suspend fun countByStatus(sessionId: String, role: MessageRole, status: MessageStatus): Int
 
@@ -125,7 +124,7 @@ abstract class SessionStoreDao {
     UPDATE tool_call
     SET result = :result, status = :status, finished_at = :finishedAt
     WHERE id = :id
-    """
+    """,
   )
   abstract suspend fun finishToolCall(
     id: String,

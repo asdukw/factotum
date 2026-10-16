@@ -40,7 +40,7 @@ object TappetDatabaseProvider {
             // 级联删除（删会话带走消息、删消息带走工具调用）依赖这个开关
             db.execSQL("PRAGMA foreign_keys = ON")
           }
-        }
+        },
       )
       .build()
   }

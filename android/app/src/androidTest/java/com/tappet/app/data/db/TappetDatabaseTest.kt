@@ -5,8 +5,6 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tappet.app.TappetApplication
 import com.tappet.app.data.session.RoomSessionStore
-import java.io.File
-import java.io.FileInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -14,6 +12,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileInputStream
 
 /**
  * 真机上的 tappet.db：Room 建表 + SQLCipher 加密。
@@ -96,7 +96,7 @@ class TappetDatabaseTest {
         status = ToolCallStatus.Ok,
         startedAt = 1L,
         finishedAt = 2L,
-      )
+      ),
     )
     assertEquals(1, dao.toolCalls(session.id).size)
 

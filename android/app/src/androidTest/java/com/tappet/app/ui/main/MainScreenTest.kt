@@ -9,7 +9,6 @@ import org.junit.Test
 
 /** UI tests for [com.tappet.app.ui.main.MainScreen]. */
 class MainScreenTest {
-
   @get:Rule val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
   @Before

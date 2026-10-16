@@ -6,7 +6,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScreenSnapshotRenderTest {
-
   private fun node(
     ref: Int,
     className: String = "android.widget.TextView",

@@ -8,7 +8,6 @@ import com.tappet.app.data.session.ChatSession
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.StoredMessage
 import com.tappet.app.data.session.StoredToolCall
-import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
@@ -31,6 +30,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModelTest {
@@ -265,6 +265,7 @@ class ChatViewModelTest {
     advanceUntilIdle()
     assertTrue("库坏了不该假装消息发出去了", viewModel.state.value.messages.isEmpty())
   }
+
   @Test
   fun toolCall_showsCardRunningThenOkAndPersistsIt() = runTest(dispatcher) {
     val store = FakeSessionStore()

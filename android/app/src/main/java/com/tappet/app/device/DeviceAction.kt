@@ -129,9 +129,9 @@ fun renderSnapshot(
     out.append(node.className.substringAfterLast('.'))
     val label =
       listOfNotNull(
-          node.text?.takeIf { it.isNotBlank() },
-          node.contentDescription?.takeIf { it.isNotBlank() },
-        )
+        node.text?.takeIf { it.isNotBlank() },
+        node.contentDescription?.takeIf { it.isNotBlank() },
+      )
         .joinToString(" ")
         .replace('\n', ' ')
         .trim()

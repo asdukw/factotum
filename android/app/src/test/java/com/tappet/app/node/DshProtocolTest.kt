@@ -22,7 +22,7 @@ class DshProtocolTest {
             {"type":"text","text":"你好"},
             {"type":"text","text":"！"}
           ]},"stream":[]}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.AssistantMessage("s1", "你好！", "想想"), event)
   }
@@ -35,7 +35,7 @@ class DshProtocolTest {
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"assistant/message","data":{"turn":0,"step":1,"message":{"id":"m2","role":"assistant",
             "content":[{"type":"text","text":"好的"}]},"stream":[]}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.AssistantMessage("s1", "好的", null), event)
   }
@@ -48,7 +48,7 @@ class DshProtocolTest {
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"assistant/message","data":{"turn":0,"step":2,"message":{"id":"m3","role":"assistant",
             "content":[{"type":"reasoning","text":"第一段"},{"type":"reasoning","text":"第二段"}]},"stream":[]}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.AssistantMessage("s1", "", "第一段\n第二段"), event)
   }
@@ -60,7 +60,7 @@ class DshProtocolTest {
         """
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"tool/call","data":{"turn":0,"step":0,"callId":"c1","name":"read_screen","arguments":"{\"mode\":\"tree\"}"}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.ToolCall("s1", "c1", "read_screen", """{"mode":"tree"}"""), call)
   }
@@ -74,7 +74,7 @@ class DshProtocolTest {
           "type":"tool/result","data":{"turn":0,"step":0,"message":{"id":"r1","role":"tool",
             "toolCallId":"c1","isError":true,"content":[{"type":"text","text":"点击失败"},
             {"type":"image","attachment":{}}]}}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.ToolResult("s1", "c1", isError = true, text = "点击失败"), result)
   }
@@ -86,7 +86,7 @@ class DshProtocolTest {
         """
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"tool/result","data":{"turn":0,"step":0,"message":{"id":"r1","role":"tool","isError":false}}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.ToolResult("s1", null, isError = false, text = null), result)
   }
@@ -98,7 +98,7 @@ class DshProtocolTest {
         """
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"turn/end","data":{"turn":0,"reason":{"kind":"error","error":{"message":"boom","code":"X"}}}}}}
-        """
+        """,
       )
     assertEquals(true, (error as DshEvent.TurnEnded).error?.contains("boom"))
 
@@ -107,7 +107,7 @@ class DshProtocolTest {
         """
         {"method":"session.event","params":{"sessionId":"s1","event":{
           "type":"turn/end","data":{"turn":0,"reason":{"kind":"stop"}}}}}
-        """
+        """,
       )
     assertEquals(DshEvent.TurnEnded("s1", null), stop)
   }

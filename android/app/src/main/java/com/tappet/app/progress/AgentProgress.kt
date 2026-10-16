@@ -1,6 +1,5 @@
 package com.tappet.app.progress
 
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.atomic.AtomicLong
 
 /** 悬浮球展示的一条执行进度。 */
 enum class AgentProgressKind {
@@ -136,17 +136,25 @@ internal fun describeToolCall(name: String, arguments: String): Pair<String, Str
   val args = parseArguments(arguments)
   return when (name) {
     "read_screen" -> "读取当前屏幕" to null
+
     "tap_node" -> "点击控件" to args?.int("ref")?.let { "节点 #$it" }
+
     "tap_point" -> "按坐标点击" to args?.point()
+
     "long_press" ->
       "长按屏幕" to
         listOfNotNull(args?.int("ref")?.let { "节点 #$it" }, args?.point(), args?.int("duration_ms")?.let { "${it}ms" })
           .takeIf { it.isNotEmpty() }
           ?.joinToString(" · ")
+
     "type_text" -> "输入文字" to args?.string("text")?.let { "${it.length} 个字符" }
+
     "press" -> "按下系统键" to args?.string("key")?.let(::pressLabel)
+
     "launch_app" -> "启动应用" to summarizeText(args?.string("query").orEmpty(), 24)
+
     "swipe" -> "滑动屏幕" to args?.string("direction")?.let(::swipeLabel)
+
     else -> "调用 $name" to null
   }
 }

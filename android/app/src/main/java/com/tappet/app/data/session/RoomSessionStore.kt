@@ -1,11 +1,11 @@
 package com.tappet.app.data.session
 
-import com.tappet.app.data.db.TappetDatabase
 import com.tappet.app.data.db.MessageEntity
 import com.tappet.app.data.db.MessageRole
 import com.tappet.app.data.db.MessageStatus
 import com.tappet.app.data.db.SessionEntity
 import com.tappet.app.data.db.SessionKind
+import com.tappet.app.data.db.TappetDatabase
 import com.tappet.app.data.db.ToolCallEntity
 import com.tappet.app.data.db.ToolCallStatus
 import com.tappet.app.data.db.Uuids

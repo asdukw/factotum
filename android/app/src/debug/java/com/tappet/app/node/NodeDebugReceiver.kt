@@ -41,6 +41,7 @@ class NodeDebugReceiver : BroadcastReceiver() {
           }
         }
       }
+
       "TASK" -> {
         val task = intent.getStringExtra(EXTRA_TASK)
         if (task.isNullOrBlank()) {
@@ -73,6 +74,7 @@ class NodeDebugReceiver : BroadcastReceiver() {
           }
         }
       }
+
       else -> Log.w(TAG, "unknown op=$op")
     }
   }

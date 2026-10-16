@@ -117,8 +117,11 @@ internal fun SettingsScreen(
         text = "当前：${state.keySource}",
         style = MaterialTheme.typography.bodyMedium,
         color =
-          if (state.hasAnyKey) MaterialTheme.colorScheme.onSurface
-          else MaterialTheme.colorScheme.error,
+          if (state.hasAnyKey) {
+            MaterialTheme.colorScheme.onSurface
+          } else {
+            MaterialTheme.colorScheme.error
+          },
       )
       OutlinedTextField(
         value = state.apiKeyInput,
@@ -152,6 +155,7 @@ internal fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
           )
+
         state.justSaved ->
           Text(
             text = "已保存。下次启动 App 生效（见下）。",

@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.update
  * 免得它出现在截图、录屏或无障碍读屏里。要换就整条重填。
  */
 class SettingsViewModel(private val appContext: Context) : ViewModel() {
-
   data class UiState(
     /** 当前**生效**的 base URL（已保存值 > 构建期默认），不是输入框的草稿。 */
     val baseUrl: String = "",

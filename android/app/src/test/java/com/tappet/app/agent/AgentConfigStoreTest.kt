@@ -12,7 +12,6 @@ import org.junit.Test
  * 只会让用户在设置页清空一个输入框之后端点静默失效 —— 正是本仓库吃过的那种亏。
  */
 class AgentConfigStoreTest {
-
   private val defaults =
     AgentConfig(
       baseUrl = "https://default.example/v1",

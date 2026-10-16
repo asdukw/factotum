@@ -79,14 +79,14 @@ import com.tappet.app.agent.ToolCallView
 import com.tappet.app.data.session.ChatSession
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
-import java.time.Instant
-import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 /**
  * 原生聊天页（默认入口）。
@@ -347,7 +347,7 @@ private fun SessionDrawer(
       title = { Text("删除会话？") },
       text = {
         Text(
-          "「${target.title ?: "新会话"}」的消息与工具调用会一起删除，不能撤销。本地库卸载后无法恢复，删之前请确认不再需要这段记录。"
+          "「${target.title ?: "新会话"}」的消息与工具调用会一起删除，不能撤销。本地库卸载后无法恢复，删之前请确认不再需要这段记录。",
         )
       },
       confirmButton = {
@@ -355,7 +355,7 @@ private fun SessionDrawer(
           onClick = {
             onDeleteSession(target.id)
             pendingDelete = null
-          }
+          },
         ) {
           Text("删除")
         }

@@ -1,11 +1,6 @@
 package com.tappet.app.agent
 
 import android.util.Log
-import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.util.UUID
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
@@ -28,6 +23,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** 流式响应事件。推理内容单独成一路，避免混进正文。 */
 sealed interface AgentStreamEvent {
@@ -65,34 +65,33 @@ class LlmClient(
   private val client: OkHttpClient = defaultClient(config),
   private val sessionId: String = "tappet-" + UUID.randomUUID(),
 ) {
-
   // 已暂停的手写链路：不再实现 ChatStreamer（UI 走 DshStreamer），保留作参考。
   fun stream(history: List<ChatMessage>): Flow<AgentStreamEvent> =
     callbackFlow {
-        if (!config.isConfigured) {
-          close(AgentException("Agent 未配置：缺少 API key（见 AGENT_API_KEY）"))
-          return@callbackFlow
-        }
-
-        val call = client.newCall(buildRequest(history))
-        Log.d(TAG, "stream start model=${config.model} messages=${history.size}")
-
-        call.enqueue(
-          object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-              Log.d(TAG, "stream failed: ${e.javaClass.simpleName}")
-              close(AgentException("连接失败：${e.message ?: e.javaClass.simpleName}", e))
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-              Log.d(TAG, "response code=${response.code}")
-              readStream(call, response)
-            }
-          }
-        )
-
-        awaitClose { call.cancel() }
+      if (!config.isConfigured) {
+        close(AgentException("Agent 未配置：缺少 API key（见 AGENT_API_KEY）"))
+        return@callbackFlow
       }
+
+      val call = client.newCall(buildRequest(history))
+      Log.d(TAG, "stream start model=${config.model} messages=${history.size}")
+
+      call.enqueue(
+        object : Callback {
+          override fun onFailure(call: Call, e: IOException) {
+            Log.d(TAG, "stream failed: ${e.javaClass.simpleName}")
+            close(AgentException("连接失败：${e.message ?: e.javaClass.simpleName}", e))
+          }
+
+          override fun onResponse(call: Call, response: Response) {
+            Log.d(TAG, "response code=${response.code}")
+            readStream(call, response)
+          }
+        },
+      )
+
+      awaitClose { call.cancel() }
+    }
       .buffer(Channel.UNLIMITED)
 
   /**
@@ -128,10 +127,12 @@ class LlmClient(
               textChunks++
               trySend(event)
             }
+
             is AgentStreamEvent.ReasoningDelta -> {
               reasoningChunks++
               trySend(event)
             }
+
             else -> Unit
           }
         }
@@ -146,27 +147,27 @@ class LlmClient(
   private fun buildRequest(history: List<ChatMessage>): Request {
     val body =
       buildJsonObject {
-          put("model", config.model)
-          put("stream", true)
-          config.reasoningEffort?.let { put("reasoning_effort", it) }
-          put(
-            "messages",
-            buildJsonArray {
-              addJsonObject {
-                put("role", "system")
-                put("content", SYSTEM_PROMPT)
-              }
-              history
-                .filter { it.error == null && it.content.isNotBlank() }
-                .forEach { message ->
-                  addJsonObject {
-                    put("role", if (message.role == ChatRole.User) "user" else "assistant")
-                    put("content", message.content)
-                  }
+        put("model", config.model)
+        put("stream", true)
+        config.reasoningEffort?.let { put("reasoning_effort", it) }
+        put(
+          "messages",
+          buildJsonArray {
+            addJsonObject {
+              put("role", "system")
+              put("content", SYSTEM_PROMPT)
+            }
+            history
+              .filter { it.error == null && it.content.isNotBlank() }
+              .forEach { message ->
+                addJsonObject {
+                  put("role", if (message.role == ChatRole.User) "user" else "assistant")
+                  put("content", message.content)
                 }
-            },
-          )
-        }
+              }
+          },
+        )
+      }
         .toString()
 
     return Request.Builder()
@@ -210,10 +211,10 @@ class LlmClient(
   private fun errorMessage(raw: String): String {
     val parsed =
       runCatching {
-          val root = json.parseToJsonElement(raw).jsonObject
-          root.stringOrNull("message")
-            ?: root["error"]?.let { runCatching { it.jsonObject.stringOrNull("message") }.getOrNull() }
-        }
+        val root = json.parseToJsonElement(raw).jsonObject
+        root.stringOrNull("message")
+          ?: root["error"]?.let { runCatching { it.jsonObject.stringOrNull("message") }.getOrNull() }
+      }
         .getOrNull()
     return (parsed ?: raw).trim().replace(Regex("\\s+"), " ").take(300).ifEmpty { "无响应内容" }
   }

@@ -1,19 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+  Android 12+ 的备份 / 迁移规则。
+
+  **allowBackup="false" 只关掉云备份，设备间直传（D2D）默认仍然开着** —— 要一并关掉
+  只能靠这里的 device-transfer 排除项。本仓库的红线是「库里的数据不出本机」：tappet.db 由
+  SQLCipher 加密、口令经 Keystore 封装，拷到新设备本来也解不开（Keystore 密钥不随备份走），
+  所以这里不是「防泄露」，而是别让解不开的密文白跑一趟，顺带把这件事写明。
+
+  代价：换机时设置页填的 base URL / 模型 / API key 不会跟着走，需要重填。这是有意的
+  —— 密钥不该在设备之间静默迁移。
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
     </device-transfer>
-    -->
 </data-extraction-rules>

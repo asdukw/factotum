@@ -9,13 +9,6 @@ import com.tappet.app.device.MAX_LONG_PRESS_MS
 import com.tappet.app.device.MIN_LONG_PRESS_MS
 import com.tappet.app.device.PressKey
 import com.tappet.app.device.SwipeDirection
-import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.Socket
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -25,6 +18,13 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * dsh 设备插件的本地桥：只监听 127.0.0.1，token 鉴权，把 JSON 动作转成
@@ -37,6 +37,7 @@ object DeviceBridgeServer {
 
   private val started = AtomicBoolean(false)
   private val token = UUID.randomUUID().toString()
+
   @Volatile private var port: Int = -1
 
   /** 启动（幂等），返回给 Node 的 base URL；token 通过 [authToken] 读取。 */
@@ -45,14 +46,14 @@ object DeviceBridgeServer {
       val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
       port = socket.localPort
       Thread {
-          Log.i(TAG, "bridge listening on 127.0.0.1:$port")
-          socket.use {
-            while (!it.isClosed) {
-              val client = runCatching { it.accept() }.getOrElse { break }
-              Thread { handle(client) }.start()
-            }
+        Log.i(TAG, "bridge listening on 127.0.0.1:$port")
+        socket.use {
+          while (!it.isClosed) {
+            val client = runCatching { it.accept() }.getOrElse { break }
+            Thread { handle(client) }.start()
           }
         }
+      }
         .apply { isDaemon = true }
         .start()
     }
@@ -132,12 +133,15 @@ object DeviceBridgeServer {
   private fun toDeviceAction(action: String, root: JsonObject): DeviceAction? =
     when (action) {
       "read_screen" -> DeviceAction.ReadScreen
+
       "tap_node" -> root.int("ref")?.let(DeviceAction::TapNode)
+
       "tap_point" -> {
         val x = root.int("x")
         val y = root.int("y")
         if (x == null || y == null) null else DeviceAction.TapPoint(x, y)
       }
+
       "long_press" -> {
         val duration =
           root.int("duration_ms")?.toLong()?.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS)
@@ -151,18 +155,25 @@ object DeviceBridgeServer {
           if (x == null || y == null) null else DeviceAction.LongPressPoint(x, y, duration)
         }
       }
+
       "type_text" -> root.string("text")?.let(DeviceAction::TypeText)
+
       "press" ->
         root.string("key")?.let { raw ->
           runCatching { DeviceAction.Press(PressKey.valueOf(raw.uppercase())) }.getOrNull()
         }
+
       "press_back" -> DeviceAction.Press(PressKey.BACK)
+
       "launch_app" -> root.string("query")?.let(DeviceAction::LaunchApp)
+
       "screenshot" -> DeviceAction.Screenshot
+
       "swipe" ->
         root.string("direction")?.let { raw ->
           runCatching { DeviceAction.Swipe(SwipeDirection.valueOf(raw.uppercase())) }.getOrNull()
         }
+
       else -> null
     }
 
@@ -178,17 +189,17 @@ object DeviceBridgeServer {
 
   private fun resultJson(result: DeviceActionResult): String =
     buildJsonObject {
-        put("ok", result.ok)
-        put("summary", result.summary)
-        result.payload?.let { put("payload", it) }
-      }
+      put("ok", result.ok)
+      put("summary", result.summary)
+      result.payload?.let { put("payload", it) }
+    }
       .toString()
 
   private fun errorJson(message: String): String =
     buildJsonObject {
-        put("ok", false)
-        put("summary", message)
-      }
+      put("ok", false)
+      put("summary", message)
+    }
       .toString()
 
   private fun JsonObject.string(key: String): String? =

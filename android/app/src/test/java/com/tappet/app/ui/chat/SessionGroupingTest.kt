@@ -2,10 +2,10 @@ package com.tappet.app.ui.chat
 
 import com.tappet.app.data.db.SessionKind
 import com.tappet.app.data.session.ChatSession
-import java.time.ZoneId
-import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 class SessionGroupingTest {
   private val zone = ZoneId.of("Asia/Shanghai")

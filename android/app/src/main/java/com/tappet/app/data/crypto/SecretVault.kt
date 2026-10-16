@@ -81,7 +81,7 @@ internal class SecretVault(
         .setKeySize(256)
         // GCM 必须随机 IV，否则同一把密钥下重复 IV 会直接毁掉保密性。
         .setRandomizedEncryptionRequired(true)
-        .build()
+        .build(),
     )
     return generator.generateKey()
   }

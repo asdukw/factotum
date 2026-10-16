@@ -207,7 +207,8 @@ internal fun ChatScreen(
       )
 
       if (!state.configured) {
-        BannerText("未配置 API key：测试阶段请在 android/local.properties 里填 tappet.agent.apiKey 后重新安装。")
+        // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
+        BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
       }
       state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
 

@@ -37,7 +37,16 @@ const fail = (msg) => {
   process.exit(1)
 }
 
-// !!js 是一个自定义 tag：注册成标量类型，让 YAML 按**真实标量规则**解析它的内容
+// !!js 是一个自定义 tag：注册成标量类型，让 YAML 按**真实标量规则**解析它的内容。
+// 只支持 js-yaml 4.x —— 5.x 换了一套自定义 tag 的 API（defineScalarTag / Schema），
+// 与其在这里两套都维护，不如把版本钉死并给出清楚的提示（vendored 运行时里就是 4.x）。
+if (typeof yaml.Type !== 'function' || typeof yaml.DEFAULT_SCHEMA?.extend !== 'function') {
+  fail(
+    `这份 js-yaml 是 ${require('js-yaml/package.json').version}，本脚本只支持 4.x。` +
+      `CI 里用 npm install --no-save 'js-yaml@^4'；本机可以直接从 vendored 运行时里借` +
+      `（不传第二个参数就是这条路径）。`,
+  )
+}
 const JsType = new yaml.Type('tag:yaml.org,2002:js', {
   kind: 'scalar',
   construct: (data) => ({ js: data }),

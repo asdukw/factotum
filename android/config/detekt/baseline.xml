@@ -1,0 +1,45 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:ChatViewModel.kt$content.isBlank() &amp;&amp; reasoning.isNullOrBlank() &amp;&amp; error == null &amp;&amp; toolCalls.isEmpty()</ID>
+    <ID>ComplexCondition:Uuids.kt$Uuids$index == 4 || index == 6 || index == 8 || index == 10</ID>
+    <ID>CyclomaticComplexMethod:ChatViewModel.kt$ChatViewModel$fun send()</ID>
+    <ID>CyclomaticComplexMethod:DeviceAction.kt$fun renderSnapshot( snapshot: ScreenSnapshot, maxTextChars: Int = 80, maxLines: Int = 240, ): String</ID>
+    <ID>CyclomaticComplexMethod:DeviceBridgeServer.kt$DeviceBridgeServer$private fun dispatch(input: BufferedInputStream): String</ID>
+    <ID>CyclomaticComplexMethod:DeviceBridgeServer.kt$DeviceBridgeServer$private fun toDeviceAction(action: String, root: JsonObject): DeviceAction?</ID>
+    <ID>CyclomaticComplexMethod:DshStreamer.kt$DshStreamer$override fun stream(sessionId: String, prompt: String): Flow&lt;AgentStreamEvent&gt;</ID>
+    <ID>CyclomaticComplexMethod:LlmClient.kt$LlmClient$private fun ProducerScope&lt;AgentStreamEvent&gt;.readStream(call: Call, response: Response)</ID>
+    <ID>CyclomaticComplexMethod:Markdown.kt$Markdown$fun inline(source: String): List&lt;InlineToken&gt;</ID>
+    <ID>CyclomaticComplexMethod:Markdown.kt$Markdown$fun parse(source: String): List&lt;MarkdownBlock&gt;</ID>
+    <ID>CyclomaticComplexMethod:TappetAccessibilityService.kt$TappetAccessibilityService$private fun probeReadTree()</ID>
+    <ID>LargeClass:TappetAccessibilityService.kt$TappetAccessibilityService : AccessibilityServiceDeviceBridge</ID>
+    <ID>LongMethod:ChatScreen.kt$@Composable internal fun ChatScreen( state: ChatUiState, onInputChange: (String) -&gt; Unit, onSend: () -&gt; Unit, onStop: () -&gt; Unit, onNewSession: () -&gt; Unit = {}, onOpenSession: (String) -&gt; Unit = {}, onDeleteSession: (String) -&gt; Unit = {}, onOpenProbe: () -&gt; Unit = {}, onOpenWeb: () -&gt; Unit = {}, onOpenSettings: () -&gt; Unit = {}, modifier: Modifier = Modifier, )</ID>
+    <ID>LongMethod:ChatScreen.kt$@Composable private fun SessionDrawer( sessions: List&lt;ChatSession&gt;, currentId: String?, enabled: Boolean, configSummary: String, onNewSession: () -&gt; Unit, onOpenSession: (String) -&gt; Unit, onDeleteSession: (String) -&gt; Unit, onOpenWeb: () -&gt; Unit, onOpenProbe: () -&gt; Unit, onOpenSettings: () -&gt; Unit, )</ID>
+    <ID>LongMethod:ChatViewModel.kt$ChatViewModel$fun send()</ID>
+    <ID>LongMethod:DshStreamer.kt$DshStreamer$override fun stream(sessionId: String, prompt: String): Flow&lt;AgentStreamEvent&gt;</ID>
+    <ID>LongMethod:SettingsScreen.kt$@Composable internal fun SettingsScreen( state: SettingsViewModel.UiState, onBaseUrlChange: (String) -&gt; Unit, onModelChange: (String) -&gt; Unit, onApiKeyChange: (String) -&gt; Unit, onSave: () -&gt; Unit, onClearApiKey: () -&gt; Unit, onBack: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
+    <ID>LongParameterList:ScreenSnapshotRenderTest.kt$ScreenSnapshotRenderTest$( ref: Int, className: String = "android.widget.TextView", text: String? = null, desc: String? = null, left: Int = 0, top: Int = 0, right: Int = 100, bottom: Int = 40, depth: Int = 0, clickable: Boolean = false, longClickable: Boolean = false, editable: Boolean = false, scrollable: Boolean = false, focused: Boolean = false, visible: Boolean = true, )</ID>
+    <ID>LoopWithTooManyJumpStatements:DeviceAction.kt$for</ID>
+    <ID>LoopWithTooManyJumpStatements:DeviceBridgeServer.kt$DeviceBridgeServer$while</ID>
+    <ID>LoopWithTooManyJumpStatements:LlmClient.kt$LlmClient$while</ID>
+    <ID>MaxLineLength:ChatGlyphs.kt$drawLine(tint, Offset(size.width * 0.22f, size.height * 0.55f), Offset(size.width * 0.42f, size.height * 0.74f), strokeWidth = w, cap = StrokeCap.Round)</ID>
+    <ID>MaxLineLength:ChatGlyphs.kt$drawLine(tint, Offset(size.width * 0.42f, size.height * 0.74f), Offset(size.width * 0.8f, size.height * 0.28f), strokeWidth = w, cap = StrokeCap.Round)</ID>
+    <ID>MaxLineLength:ChatViewModelTest.kt$ChatViewModelTest$assertEquals("https://example.invalid/v1/chat/completions", testConfig(baseUrl = "https://example.invalid/v1/chat/completions").chatCompletionsUrl)</ID>
+    <ID>MaxLineLength:ChatViewModelTest.kt$ChatViewModelTest$streamer = FakeStreamer(events = listOf(AgentStreamEvent.ReasoningDelta("想"), AgentStreamEvent.TextDelta("你"), AgentStreamEvent.TextDelta("好"), AgentStreamEvent.Completed))</ID>
+    <ID>MaxLineLength:ChatViewModelTest.kt$ChatViewModelTest$val unconfigured = ChatViewModel(config = testConfig(apiKey = ""), streamer = FakeStreamer(events = emptyList()), store = FakeSessionStore())</ID>
+    <ID>MaxLineLength:ChatViewModelTest.kt$ChatViewModelTest$val viewModel = ChatViewModel(config = testConfig(), streamer = FakeStreamer(events = listOf(AgentStreamEvent.TextDelta("你好"))), store = store)</ID>
+    <ID>MaxLineLength:WebAgentScreen.kt$&lt;no name provided&gt;$"(function(){function f(){var h=window.innerHeight+'px';document.documentElement.style.height=h;document.body.style.height=h;var r=document.getElementById('root');if(r)r.style.height=h;}f();window.addEventListener('resize',f);setTimeout(f,300);setTimeout(f,1500);function c(){var b=[].slice.call(document.querySelectorAll('button')).find(function(x){return /收起侧边栏|Collapse sidebar/.test(x.getAttribute('aria-label')||'');});if(b)b.click();}c();var n=0;var t=setInterval(function(){c();if(++n&gt;24)clearInterval(t);},400);})()"</ID>
+    <ID>MaxLineLength:WebAgentScreen.kt$&lt;no name provided&gt;$if (BuildConfig.DEBUG &amp;&amp; request.isForMainFrame) Log.e(TAG, "load error ${error.errorCode}: ${error.description} ${request.url}")</ID>
+    <ID>NestedBlockDepth:LlmClient.kt$LlmClient$private fun ProducerScope&lt;AgentStreamEvent&gt;.readStream(call: Call, response: Response)</ID>
+    <ID>NestedBlockDepth:Markdown.kt$Markdown$fun inline(source: String): List&lt;InlineToken&gt;</ID>
+    <ID>NestedBlockDepth:NodeRuntime.kt$NodeRuntime$private fun installDshRuntime(app: Context): File</ID>
+    <ID>ReturnCount:DeviceBridgeServer.kt$DeviceBridgeServer$private fun dispatch(input: BufferedInputStream): String</ID>
+    <ID>ReturnCount:Markdown.kt$Markdown$private fun numberedText(trimmed: String): String?</ID>
+    <ID>TooManyFunctions:AgentProgress.kt$AgentProgressCenter</ID>
+    <ID>TooManyFunctions:ChatScreen.kt$com.tappet.app.ui.chat.ChatScreen.kt</ID>
+    <ID>TooManyFunctions:NodeRuntime.kt$NodeRuntime : NodeLineListener</ID>
+    <ID>TooManyFunctions:SessionStore.kt$SessionStore</ID>
+    <ID>TooManyFunctions:TappetAccessibilityService.kt$TappetAccessibilityService : AccessibilityServiceDeviceBridge</ID>
+  </CurrentIssues>
+</SmellBaseline>

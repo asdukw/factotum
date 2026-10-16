@@ -1,0 +1,18 @@
+# ktlint（经 Spotless）读的就是这一份 —— CI 的格式门禁以它为准。
+# 放在这里而不是仓库根：Spotless 的 .editorconfig 查找根是 Gradle 工程目录，
+# 写到仓库根那份它看不见（试过，表现为缩进设置完全没生效）。
+# 继承仓库根 .editorconfig 的通用规则，所以这里不写 root = true。
+
+[*.{kt,kts}]
+# ktlint 官方风格，但缩进沿用本仓库既有代码的 2 空格。
+# 默认是 4：直接套用会把 48 个文件、约 4500 行变成纯空白 diff，
+# 且与既有代码全部相左。风格本身可以争论，但一致性不值得为它开一次全库重排。
+ktlint_code_style = ktlint_official
+indent_size = 2
+# 不设行长上限：注释是中文，字符数不等于视觉宽度。排版交给评审，不交给机器；
+# detekt 的 MaxLineLength 另配（见 config/detekt/detekt.yml）。
+max_line_length = off
+# Compose 约定 @Composable 用 PascalCase，ktlint 默认按 camelCase 判。
+# ktlint 官方给了这条开关：按注解放行，而不是把 function-naming 整条关掉
+# （关掉的话，普通函数命名就没人管了）。
+ktlint_function_naming_ignore_when_annotated_with = Composable

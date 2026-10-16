@@ -1,0 +1,51 @@
+# detekt 配置：在默认规则集（buildUponDefaultConfig = true）之上只做取舍。
+# 原则：放宽或关掉的每一条都要写清为什么 —— 不做「先关掉再说」。
+# 复杂度类规则默认保持开启：它们报的是设计信号。真嫌吵就写进 baseline（历史欠账快照，
+# 只挡新增），而不是把规则关掉 —— 关掉的规则不会自己回来。
+
+complexity:
+  LongMethod:
+    # 默认 60。执行层与运行时宿主的长方法里，大半是错误分支与日志，拆开反而更难跟。
+    threshold: 80
+  LongParameterList:
+    # Compose 组件天然多参；其余按默认（6 / 7）略放宽一档。
+    functionThreshold: 8
+    constructorThreshold: 8
+    ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    # 默认 11。服务类 / DAO / 状态机天然是「一个类一组动作」，为凑数拆类只会绕远路。
+    thresholdInFiles: 20
+    thresholdInClasses: 20
+naming:
+  FunctionNaming:
+    # Compose 约定 @Composable 用 PascalCase（与 ktlint 侧同一取舍，见 android/.editorconfig）。
+    ignoreAnnotated: ['Composable']
+
+style:
+  ReturnCount:
+    # 默认 2。本仓库大量使用提前返回（守卫子句），这是刻意的写法，不是坏味道。
+    excludeGuardClauses: true
+    max: 4
+  MagicNumber:
+    # 关掉：命中的几乎全是 Compose 尺寸 / 颜色、位运算掩码与协议字段。
+    # 给 0.09f、0xFF 这类字面量起名字不会让代码更清楚，只会多一层跳转。
+    active: false
+  MaxLineLength:
+    # 中文注释的字符数不等于视觉宽度：行长只对代码生效，注释不管。
+    excludeCommentStatements: true
+    # 默认 120 对本仓库偏紧：中文标识符与长断言（测试里居多）一挤就超。
+    # 140 与 ktlint_official 的默认一致，两边不打架。
+    maxLineLength: 140
+  DestructuringDeclarationWithTooManyEntries:
+    # 默认 3。滑动矩形 (x1, y1, x2, y2) 这类 4 元组是自然的，拆成类反而绕。
+    maxDestructuringEntries: 4
+
+# 关于 config/detekt/baseline.xml
+# ---------------------------------------------------------------------------
+# 它是当前这批「设计债」的快照：几乎全是复杂度类规则命中（CyclomaticComplexMethod /
+# LongMethod / TooManyFunctions），集中在执行层与运行时宿主的那几个大类里。
+# 现在不重构它们，理由是重构的验证成本高于收益 —— 这些类正是本项目唯一在真机上跑通过的
+# 东西，而复杂度规则报的是「读起来费劲」，不是「会出错」。
+#
+# 规矩：**不许往基线里加**。真要加，先在提交信息里写清为什么这次必须放宽。
+

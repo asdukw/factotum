@@ -19,6 +19,10 @@ sqlcipher = "4.17.0"
 androidxSqlite = "2.6.2"
 room = "2.8.5"
 ksp = "2.3.12"
+# --- 代码质量门禁（CI 与本地同一套命令）---
+detekt = "1.23.8"
+ktlint = "1.8.0"
+spotless = "8.10.4"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -55,3 +59,5 @@ android-application = { id = "com.android.application", version.ref = "androidGr
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

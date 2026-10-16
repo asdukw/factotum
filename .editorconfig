@@ -1,0 +1,9 @@
+# 通用文本规则。Kotlin 专属的取舍在 android/.editorconfig（ktlint 的查找根是
+# Gradle 工程目录，写在仓库根这里它看不见）。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true

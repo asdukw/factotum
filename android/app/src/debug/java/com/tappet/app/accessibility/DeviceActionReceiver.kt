@@ -27,6 +27,8 @@ import kotlinx.coroutines.launch
  * adb shell ... --es action PRESS --es key BACK
  * adb shell ... --es action LAUNCH_APP --es query "QQ"
  * adb shell ... --es action SWIPE --es direction DOWN
+ * adb shell ... --es action CAPTURE_FRAME
+ * adb shell ... --es action TAP_TARGET --es frame_id f1 --ei x1 .. --ei y1 .. --ei x2 .. --ei y2 ..
  * ```
  *
  * `--ez logPayload true` 会把读屏全文打进 logcat —— **仅供调试**，默认关闭（隐私红线）。
@@ -117,7 +119,16 @@ class DeviceActionReceiver : BroadcastReceiver() {
 
       "LAUNCH_APP" -> intent.getStringExtra(EXTRA_QUERY)?.let(DeviceAction::LaunchApp)
 
-      "SCREENSHOT" -> DeviceAction.Screenshot
+      "SCREENSHOT", "CAPTURE_FRAME" -> DeviceAction.Screenshot
+
+      "TAP_TARGET" ->
+        frameBox(intent)?.let { DeviceAction.TapFrame(it.frameId, it.x1, it.y1, it.x2, it.y2) }
+
+      "LONG_PRESS_TARGET" ->
+        frameBox(intent)?.let {
+          val duration = intent.getLongExtra(EXTRA_DURATION_MS, 700L).coerceIn(300L, 2000L)
+          DeviceAction.LongPressFrame(it.frameId, it.x1, it.y1, it.x2, it.y2, duration)
+        }
 
       "SWIPE" ->
         intent.getStringExtra(EXTRA_DIRECTION)?.let { raw ->
@@ -126,6 +137,19 @@ class DeviceActionReceiver : BroadcastReceiver() {
 
       else -> null
     }
+
+  /** 视觉路径的公共入参：帧 id + 图像像素 bbox。缺一个整条动作就不成立。 */
+  private class FrameBox(val frameId: String, val x1: Int, val y1: Int, val x2: Int, val y2: Int)
+
+  private fun frameBox(intent: Intent): FrameBox? {
+    val frameId = intent.getStringExtra(EXTRA_FRAME_ID)?.takeIf { it.isNotBlank() } ?: return null
+    val x1 = intent.getIntExtra(EXTRA_X1, -1)
+    val y1 = intent.getIntExtra(EXTRA_Y1, -1)
+    val x2 = intent.getIntExtra(EXTRA_X2, -1)
+    val y2 = intent.getIntExtra(EXTRA_Y2, -1)
+    if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0) return null
+    return FrameBox(frameId, x1, y1, x2, y2)
+  }
 
   companion object {
     private const val TAG = "TappetDevice"
@@ -141,6 +165,11 @@ class DeviceActionReceiver : BroadcastReceiver() {
     const val EXTRA_KEY = "key"
     const val EXTRA_DURATION_MS = "duration_ms"
     const val EXTRA_LOG_PAYLOAD = "logPayload"
+    const val EXTRA_FRAME_ID = "frame_id"
+    const val EXTRA_X1 = "x1"
+    const val EXTRA_Y1 = "y1"
+    const val EXTRA_X2 = "x2"
+    const val EXTRA_Y2 = "y2"
     const val EXTRA_ON = "on"
 
     /** 超过这个长度的 payload 不落日志（截图是 base64 大块）。 */

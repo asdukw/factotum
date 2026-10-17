@@ -5,7 +5,16 @@
 //   node tools/audit/selftest.mjs
 import assert from 'node:assert/strict'
 import zlib from 'node:zlib'
-import { EMPTY_TREE_MARKER, decodeSessionFrames, frameLength, mergeMarkers, normalize, parseAuditLog } from './lib.mjs'
+import {
+  ACTION_TOOLS,
+  EMPTY_TREE_MARKER,
+  OBSERVE_TOOLS,
+  decodeSessionFrames,
+  frameLength,
+  mergeMarkers,
+  normalize,
+  parseAuditLog,
+} from './lib.mjs'
 
 // ===========================================================================
 // 一、zstd 逐帧切分
@@ -108,6 +117,12 @@ assert.equal(metrics.observeCalls, 3, 'read_screen x2 + screenshot')
 assert.equal(metrics.actionCalls, 1)
 assert.deepEqual(metrics.unknownTools, [])
 
+// 视觉路径的新工具名必须被分类认出来 —— 漏了会让 observeCalls / actionCalls 静默偏低，
+// 而这两个数正是「模型在盲点还是在读屏」的判据。
+assert.ok(OBSERVE_TOOLS.has('capture_frame'), 'capture_frame 算观察')
+assert.ok(ACTION_TOOLS.has('tap_target'), 'tap_target 算动作')
+assert.ok(ACTION_TOOLS.has('long_press_target'), 'long_press_target 算动作')
+
 assert.equal(metrics.emptyTreeReads, 1, '应识别出一次空树')
 assert.equal(metrics.maxReadScreenStreak, 2, '连续两次读屏')
 
@@ -143,18 +158,18 @@ assert.equal(failed.metrics.endOk, false)
 // ===========================================================================
 const LOGCAT = [
   '--------- beginning of main',
-  '1750000000.123  1234  1234 I TappetAudit: ev=touch_exploration on=true changed=true',
+  '1750000000.123  1234  1234 I TappetAudit: ev=exploration_request want=true changed=true',
   '1750000000.400  1234  1234 I TappetProbe: 这是无关的行，不该被收进来',
   '1750000000.500  1234  1234 D TappetAudit: 没有 ev 字段，跳过',
-  '1750000600.000  1234  1234 I TappetAudit: ev=touch_exploration on=false changed=true',
+  '1750000600.000  1234  1234 I TappetAudit: ev=exploration_observed active=false',
   '',
 ].join('\n')
 
 const markers = parseAuditLog(LOGCAT)
 assert.equal(markers.length, 2, '只应收下带 ev 的 TappetAudit 行')
 assert.equal(markers[0].t, 1750000000123, 'epoch.msec 要换算成毫秒')
-assert.equal(markers[0].ev, 'touch_exploration')
-assert.equal(markers[0].fields.on, 'true')
+assert.equal(markers[0].ev, 'exploration_request')
+assert.equal(markers[0].fields.want, 'true')
 assert.equal(markers[0].fields.changed, 'true')
 assert.equal(markers[1].t, 1750000600000)
 
@@ -168,7 +183,7 @@ assert.equal(m.merged, 1, '近的那条应被并入')
 assert.equal(m.dropped, 1, '远的那条应被丢掉，且如实计数')
 assert.deepEqual(m.events.map((e) => e.type), ['device_marker', 'assistant', 'tool_result'])
 assert.deepEqual(m.events.map((e) => e.seq), [1, 2, 3], 'seq 要重编号')
-assert.equal(m.events[0].event, 'touch_exploration')
+assert.equal(m.events[0].event, 'exploration_request')
 
 // 没有任何时间戳时不能崩，也不能假装并进去了
 const noTs = mergeMarkers([{ seq: 1, t: null, type: 'task' }], markers)

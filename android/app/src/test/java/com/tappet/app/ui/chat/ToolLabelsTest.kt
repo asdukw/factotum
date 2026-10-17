@@ -12,9 +12,12 @@ class ToolLabelsTest {
   fun `known tools get chinese labels`() {
     assertEquals("读取屏幕", toolDisplayName("read_screen"))
     assertEquals("截屏", toolDisplayName("screenshot"))
+    assertEquals("截取画面", toolDisplayName("capture_frame"))
     assertEquals("点按控件", toolDisplayName("tap_node"))
     assertEquals("点按坐标", toolDisplayName("tap_point"))
+    assertEquals("点按目标", toolDisplayName("tap_target"))
     assertEquals("长按", toolDisplayName("long_press"))
+    assertEquals("长按目标", toolDisplayName("long_press_target"))
     assertEquals("输入文字", toolDisplayName("type_text"))
     assertEquals("按键", toolDisplayName("press"))
     assertEquals("启动应用", toolDisplayName("launch_app"))

@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.tappet.app.accessibility.TappetAccessibilityService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,7 +55,6 @@ class NodeDebugReceiver : BroadcastReceiver() {
             Log.i(TAG, "debug task start (${task.length} chars) session=$sessionId")
             NodeRuntime.initialize(app)
             NodeTaskService.start(app)
-            TappetAccessibilityService.get()?.setTouchExplorationForTask(true)
             val outcome = NodeRuntime.runTask(sessionId, task)
             Log.i(
               TAG,
@@ -69,7 +67,6 @@ class NodeDebugReceiver : BroadcastReceiver() {
           } catch (throwable: Throwable) {
             Log.e(TAG, "task failed: ${throwable.message}")
           } finally {
-            TappetAccessibilityService.get()?.setTouchExplorationForTask(false)
             NodeTaskService.stop(app)
           }
         }

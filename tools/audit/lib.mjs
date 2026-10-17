@@ -152,10 +152,14 @@ export function pullAttachment(pkg, id, storeVersion = 'android-v1') {
 /** 控件树为空时无障碍层会回这段提示（DeviceAction.EMPTY_TREE_HINT）。 */
 export const EMPTY_TREE_MARKER = '几乎没有可读节点'
 
-export const OBSERVE_TOOLS = new Set(['read_screen', 'screenshot'])
+// 旧名字（screenshot / tap_point）**留着**：runs/index.json 是累积的，历史 run 里就是这些名字，
+// 删掉会让跨运行对比冒出假的 unknownTools 跳变。新名字见插件 v0.4.0（capture_frame / tap_target）。
+export const OBSERVE_TOOLS = new Set(['read_screen', 'screenshot', 'capture_frame'])
 export const ACTION_TOOLS = new Set([
   'tap_node',
   'tap_point',
+  'tap_target',
+  'long_press_target',
   'long_press',
   'type_text',
   'press',
@@ -322,7 +326,7 @@ export function clearLogcat() {
 
 /**
  * 解析 `adb logcat -v epoch -s TappetAudit:I` 的输出。
- * 行形如：`1750000000.123  1234  1234 I TappetAudit: ev=touch_exploration on=true changed=true`
+ * 行形如：`1750000000.123  1234  1234 I TappetAudit: ev=exploration_request want=true changed=true`
  * 时间戳是 epoch 毫秒 —— 与 dsh 记录的 time（Date.now()）同一时基，可直接排序合并。
  */
 export function parseAuditLog(text) {

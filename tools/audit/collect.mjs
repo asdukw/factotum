@@ -73,8 +73,8 @@ function main() {
   const { events: rawEvents, metrics: base } = normalize(records, MAX_PAYLOAD)
 
   // ---- 设备审计标记：并进事件流 ----
-  // 触摸探索开关这类状态不在 dsh 会话里，只在 logcat。没有它，审计看到 tap_point 失败时
-  // 分不清是「预期行为」（探索开着，手势本来就该失效）还是真故障。
+  // 触摸探索的实际状态不在 dsh 会话里，只在 logcat。没有它，审计看到手势类动作失败时
+  // 分不清是「预期行为」（用户自开 TalkBack、手势本来就该被吞）还是真故障。
   const logcatText = LOGCAT_FILE
     ? existsSync(LOGCAT_FILE)
       ? readFileSync(LOGCAT_FILE, 'utf8')

@@ -15,10 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -170,7 +167,19 @@ object DeviceBridgeServer {
 
       "launch_app" -> root.string("query")?.let(DeviceAction::LaunchApp)
 
-      "screenshot" -> DeviceAction.Screenshot
+      // capture_frame 是给模型的那条路（工具名一致）；screenshot 留着给 debug 与旧脚本。
+      "screenshot", "capture_frame" -> DeviceAction.Screenshot
+
+      "tap_target" ->
+        root.frameBox()?.let { DeviceAction.TapFrame(it.frameId, it.x1, it.y1, it.x2, it.y2) }
+
+      "long_press_target" ->
+        root.frameBox()?.let {
+          val duration =
+            root.int("duration_ms")?.toLong()?.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS)
+              ?: DEFAULT_LONG_PRESS_MS
+          DeviceAction.LongPressFrame(it.frameId, it.x1, it.y1, it.x2, it.y2, duration)
+        }
 
       "swipe" ->
         root.string("direction")?.let { raw ->
@@ -197,6 +206,8 @@ object DeviceBridgeServer {
       result.payload?.let { put("payload", it) }
       // 机器可读的失败原因：插件 / UI / 日志都能用，不必去匹配上面的中文
       result.code?.let { put("code", it) }
+      // 视觉路径的验证结论（true/false）。null = 验不了，不写进 JSON，别让插件把它当 false。
+      result.changed?.let { put("changed", it) }
     }
       .toString()
 
@@ -206,10 +217,4 @@ object DeviceBridgeServer {
       put("summary", message)
     }
       .toString()
-
-  private fun JsonObject.string(key: String): String? =
-    this[key]?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
-
-  private fun JsonObject.int(key: String): Int? =
-    this[key]?.let { runCatching { it.jsonPrimitive.intOrNull }.getOrNull() }
 }

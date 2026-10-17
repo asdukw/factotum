@@ -273,42 +273,66 @@ adb shell dumpsys window windows   # 目标窗口 fl= 里有没有 SECURE
 `dispatchGesture` 注入的点击/长按/滑动**同样被吞掉**：桌面翻页滑动前后截图字节完全一致，
 设置页点击节点无任何变化（对照：shell 的 `input tap` 不受影响）。
 
-所以触摸探索开启期间（= 触摸探索）**点击/长按/上下滚动必须走 `performAction`
+所以触摸探索开启期间 **点击/长按/上下滚动必须走 `performAction`
 语义动作**（`ACTION_CLICK` / `ACTION_LONG_CLICK` / `ACTION_SCROLL_FORWARD|BACKWARD`），
 `tap_point` 退化为「点中坐标节点的语义点击」。实测微信会话行、EditText、发送按钮、
 ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表右上角搜索图标）报告
 `isClickable=true`、`performAction` 返回 true 却无任何反应** —— 语义路径不是万能的。
 
 反过来，触摸探索**常开**会让用户的手动单击变成「探索 + 双击」、单指拖动变成探索，
-手机没法正常用 —— 所以只能按任务开关。
+手机没法正常用。
 
-### 落地方案：任务期触摸探索（按任务开关）
+### 落地方案：任务期**不**开触摸探索，改走视觉路径（2026-10-17 改）
 
-- `accessibility_service_config.xml` 声明 `canRequestTouchExplorationMode="true"`，
-  `onServiceConnected` 里立刻 `setTouchExplorationForTask(false)` 复位，默认不影响用户手动操作。
-- `TappetAccessibilityService.setTouchExplorationForTask(enabled)` 用 `setServiceInfo` 改
-  `FLAG_REQUEST_TOUCH_EXPLORATION_MODE`；实测系统在 ~600ms 内切换
-  `touchExplorationEnabled`，无需重启服务。
-- 任务生命周期（`DshStreamer` / `NodeDebugReceiver`）开始时开、结束时关（`finally`）。
-- 读屏拿到 < 2 个节点时，payload 追加 `EMPTY_TREE_HINT`，让模型知道该停下来找用户，
-  而不是盲点盲滑。
-- debug 入口：`--es action AGENT_MODE --ez on true|false`。
+原先的落地是「任务期按任务开关触摸探索」：`DshStreamer` / `NodeDebugReceiver` 在任务开始时
+`setTouchExplorationForTask(true)`，`finally` 关掉。**这条路已经不走**，两个理由：
+
+1. **它和视觉路径互斥，而且死在同一个场景上**。触摸探索一开，`dispatchGesture` 注入的手势就被
+   系统当探索事件吞掉，点击/滑动只能退回 `performAction` 语义动作 —— 而那需要节点。树不可读时
+   没有节点，于是「只能看不能点」；偏偏树不可读正是要走视觉的时候。
+2. **它救不了已经在跑的 App**。那个状态是目标 App 进程启动时采样一次并缓存的，进程存活期间
+   怎么切都不恢复，而 App 内没有强杀别的应用的手段（见上）。
+
+现在的形态：
+
+- 任务生命周期**不再**调 `setTouchExplorationForTask` —— 手势始终可用，任务期间用户手动点击也不受影响。
+- 机制本身**保留**（`setTouchExplorationForTask` + debug 广播 `AGENT_MODE` + `accessibility_service_config.xml`
+  里的 `canRequestTouchExplorationMode`），供实验用；`onServiceConnected` 仍复位成 false。
+- **`touchExplorationActive` 的语义兜底分支一个字都不能删**：用户自己开着 TalkBack 时全局触摸探索
+  恒为真（系统取所有已启用服务的**或**），`dispatchGesture` 一样被吞，那些 `performAction` 分支是
+  读屏用户唯一可用的路径。
+- 读屏**没有任何可读节点**时（判据是 `ScreenSnapshot.hasNoReadableNode()` —— 可见且有内容/可交互的
+  节点一个都没有，不是按节点总数），payload 追加 `EMPTY_TREE_HINT` 引导模型走视觉路径。
+- debug 入口不变：`--es action AGENT_MODE --ez on true|false`。
+
+### 视觉路径：帧契约
+
+树不可读时模型改走 `capture_frame` → `tap_target`。这里有一个**必须**先修的硬伤：
+
+- 交给模型的截图被缩到最长边 2048，1080×2344 的屏得到 **943×2047**；而 `tap_point` 收的是屏幕像素。
+  两者之间以前没有任何声明的换算，模型连屏幕尺寸都看不到（插件只把 `summary` 文本交给模型，
+  payload 里的尺寸它读不到）—— 按图给坐标会系统性偏约 **12.6%**，而且不报错。
+- 现在坐标一律是**最近一次 `capture_frame` 那张图的图像像素**，换算在设备侧的纯函数
+  `ScreenFrame.toScreen`（`round(offset + x*screenW/imageW)`，夹到 `screenW-1`）。
+  屏幕尺寸取**缩放前的捕获位图**而不是 `displayMetrics`；两者不一致时打 `ev=frame_mismatch`。
+- 帧是**有状态的**：界面变了旧帧作废（`STALE_FRAME`）；bbox 越界直接拒（`OUT_OF_FRAME`），不 clamp。
+- 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔不回图。`changed=false` 时 `ok` 仍为 true
+  （`NO_VISIBLE_CHANGE`）—— 它是提示不是失败，插件把 `ok=false` 当异常抛。
 
 ### 已知限制
 
-目标 App **必须**在 触摸探索开启之后才启动进程。若微信本来就在后台运行，
-本次就读不到节点。现在的处置分两种（都写进了 `EMPTY_TREE_HINT`）：
+- **视觉路径不解决输入**：`type_text` / `press(enter)` 都走控件树找输入框，树不可读时没有通道，
+  只能如实告诉用户做不到。要补的是 roadmap §2.5 的自建 IME（`InputConnection.commitText`），还没做。
+- **视觉路径不新增定位能力**。它消掉的是**确定性**的换算错误（12.6% 的系统性偏移），消不掉
+  「模型能不能在图上找到目标」这个能力问题。首点命中率要靠真机实测，不能靠契约保证。
+- 图会占请求预算（20MiB、每轮重发历史图）：profile 里已启用 `image-offload`，把「超预算整轮硬失败」
+  降级成「丢最老的图重试」；代价是**永久丢帧**，模型之后拿不到那张图。
+- `changed` 是 8×8 指纹的启发式：整屏级变化（翻页、弹窗）看得见，小面积变化（勾选框、行高亮）
+  看不见 —— 所以它只能报「似乎没变」，不能报「点击失败」。
 
-- **只读任务**：模型改用 `screenshot` 从图上读界面。实测（2026-10-11）微信进程早于
-  触摸探索启动、读屏只有 1 个节点时，模型照提示切到截图，完整读出了会话列表的
-  标题、每个会话与摘要、底部导航。图像链路见 [docs/dsh-android.md](dsh-android.md) P10。
-- **要点击/输入**：触摸探索开着时注入手势被吞、语义动作又必须有节点，所以点不动；
-  模型会停下请用户在系统设置 → 应用管理里「强行停止」该 App 再重来。
+### 真机验证
 
-彻底解决「已经在跑的 App」还差一条不依赖控件树的**输入**通道
-（例如剪贴板 + 长按粘贴，手势在 触摸探索关掉时是可用的），目前没做。
-
-### 真机验证（2026-10-11，不含联系人与聊天内容）
+**2026-10-11（触摸探索时代，已不是当前路径，留作对照）**：
 
 - 任务「打开微信，在聊天列表里找到指定联系人，读出最近消息说明上下文」：
   **10 次工具调用、0 错误**。产品路径（任务自动开关 触摸探索）下微信读屏 319 节点，
@@ -316,6 +340,10 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
   任务结束 `touchExploration` 回到 false。
 - 任务「给该联系人发一条符合上下文的消息」：**11 次工具调用、0 错误**，
   语义路径完成 `tap_node(EditText)` → `type_text` → `tap_node(发送)`，消息确认送达。
-- 微信已在运行（进程早于 触摸探索）：模型按 `EMPTY_TREE_HINT` 停下，说明原因并给出
-  「强行停止」这一步，全程没有盲点盲滑。
+
+**2026-10-17（帧契约）—— 尚未真机验证**，只有 PC 侧证据：JVM 单测（`ScreenFrameTest` 钉住
+943×2047 → 1080×2344 的换算与那条 12.6% 偏差）、插件 `npm test`（10 个工具 + 真实 `defineTool` 校验）、
+`check-profile.mjs`。**待验**：模型在图上估的绝对像素 bbox 准不准（仓库从没测过坐标回归）、
+`takeScreenshot` 的限流窗口与验证截图是否打架、`image-offload` 与自定义附件实现是否配合、
+ColorOS 下捕获位图尺寸是否等于 `displayMetrics`。验证步骤见 `AGENTS.md` 的真机一节。
 

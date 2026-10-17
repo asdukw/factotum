@@ -6,8 +6,6 @@
 # 注：typert 三件套（registry / loader / api-gateway）是 Web 表层 RPC 的必需行，不能禁。
 - id: plugin-manager
   disabled: true
-- id: image-offload
-  disabled: true
 # 会话标题是纯展示能力，headless 用不上，且它的 LLM provider 对 mount 顺序有假设
 - id: session-title
   disabled: true
@@ -41,6 +39,11 @@
   disabled: true
 - id: fs-observation-policy
   disabled: true
+
+# image-offload **不**禁用（2026-10-17）：它是纯 JS、无原生依赖（peerDeps 在 runtime 里齐），
+# 而视觉路径每步都可能截图、图会被每轮请求重发 —— 超 20MiB 预算时它是「丢最老的图重试」
+# 与「整轮硬失败（IMAGE_OFFLOAD_REQUIRED）」的区别。代价如实记着：offload = **永久丢帧**，
+# 模型之后拿不到那张图（占位文本里的路径读不了，tool-fs 是禁用的），只保证请求不炸。
 
 # --- 附件存储：换成纯 JS 实现（Android 没有 sharp） ---
 # dsh-base 默认挂 @deepseek-ai/dsh-attachment-local，它用 sharp 做归一化与质量阶梯
@@ -128,10 +131,13 @@
 - id: system-prompt
   config:
     personaPrefix: |-
-      你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面
-      （读屏、点按、长按、输入、按键、启动应用、滑动），帮用户完成任务。
-      每次只做一个原子动作；动作前先读屏，动作后重新读屏确认结果；同一动作失败两次就换策略；
-      只做用户明确要求的事。
+      你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
+      帮用户完成任务。
+      **有控件树时**用 read_screen 读屏、tap_node 点击 —— 那条路最稳，优先走它。
+      **读屏没有任何可读节点时**（该 App 对无障碍隐藏了控件树）改用视觉路径：capture_frame 取一帧，
+      在图上找到目标后用 tap_target 给出该帧的**图像像素**外框；坐标不要自己换算，执行层会做。
+      每次只做一个原子动作；动作后确认结果（tap_target 会回界面有没有变化），没变就重新取帧再给坐标；
+      同一动作失败两次就换策略；只做用户明确要求的事。
     personaSuffix: ''
 
 - id: agent-preset-registry
@@ -150,10 +156,13 @@
             config:
               complete: true
               prefix: |-
-                你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面
-                （读屏、点按、长按、输入、按键、启动应用、滑动），帮用户完成任务。
-                每次只做一个原子动作；动作前先读屏，动作后重新读屏确认结果；同一动作失败两次就换策略；
-                只做用户明确要求的事。
+                你是 Tappet，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
+                帮用户完成任务。
+                **有控件树时**用 read_screen 读屏、tap_node 点击 —— 那条路最稳，优先走它。
+                **读屏没有任何可读节点时**（该 App 对无障碍隐藏了控件树）改用视觉路径：capture_frame 取一帧，
+                在图上找到目标后用 tap_target 给出该帧的**图像像素**外框；坐标不要自己换算，执行层会做。
+                每次只做一个原子动作；动作后确认结果（tap_target 会回界面有没有变化），没变就重新取帧再给坐标；
+                同一动作失败两次就换策略；只做用户明确要求的事。
           - id: android-tools
             name: dsh-plugin-android-tools
 # --- 文件系统：Android 没有 bwrap/node-addon-system，改用本地 FS provider ---

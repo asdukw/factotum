@@ -373,13 +373,21 @@ adb shell am broadcast --include-stopped-packages `
 - 设备层新增 `screenshot` 原子动作：`takeScreenshot` → 缩到最长边 2048（对齐 dsh 的
   2048px / 2048² 像素预算）→ PNG，超 900KB 转 JPEG q80 → payload 为
   `{mediaType,width,height,base64}` 的 JSON。
-- 插件新增 `screenshot` 工具：取桥的 base64 → `ctx.attachments.saveImage` →
-  `render` 出 `[text, image]`。没有附件服务或桥没回契约形状时退回纯文字，不抛错。
+- 设备层新增 `screenshot` 原子动作（2026-10-17 起同时产出**帧**，工具名 `capture_frame`）：
+  `takeScreenshot` → 缩到最长边 2048（对齐 dsh 的 2048px / 2048² 像素预算）→ PNG，超 900KB 转
+  JPEG q80 → payload 为 `{mediaType,width,height,frameId,screenWidth,screenHeight,offsetX,offsetY,base64}`
+  的 JSON。后六个字段是**帧契约**：模型只说图像像素，屏幕像素由执行层 `ScreenFrame.toScreen` 换算
+  （见 `docs/android-accessibility.md` §9）。
+- 插件新增 `capture_frame` 工具：取桥的 base64 → `ctx.attachments.saveImage` → `render` 出
+  `[text, image]`，其中文本是**帧图例**（图像尺寸 / 屏幕尺寸 / frame_id）—— 模型只看得见文本，
+  尺寸不写进文本它就拿不到。没有附件服务或桥没回契约形状时退回纯文字，不抛错。
 
 **预算与代价**：pi-ai 默认请求图像上限 20MiB（base64 计），每轮请求都会重发历史图；
 单图原始字节软目标 1MiB。`image-offload`（`@deepseek-ai/dsh-compaction-image-offload`）
-在 phone profile 里仍是禁用状态，所以**超预算时请求会直接失败**（`IMAGE_OFFLOAD_REQUIRED`）
-而不是自动降级 —— 长任务里截图多到吃穿预算时要么开这个插件，要么靠模型少截图。
+**已在 phone profile 里启用**（2026-10-17，它是纯 JS、无原生依赖）：超预算时把最老的图换成占位符
+再重试，而不是整轮硬失败（`IMAGE_OFFLOAD_REQUIRED`）。代价要如实记着：**offload = 永久丢帧**，
+模型之后拿不到那张图（占位文本里的路径读不了 —— `tool-fs` 在 phone profile 里是禁用的）。
+长视觉任务仍应尽量少截图。
 
 **已知限制**：不重编码 ⇒ 路由的 `maxBytes` 只是软目标，图不会按质量阶梯缩小；
 只认 PNG/JPEG（WebP 会被 `UNSUPPORTED_IMAGE_TYPE` 拒）；`screenshot` 的 payload

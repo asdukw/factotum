@@ -2,7 +2,6 @@ package com.tappet.app.agent
 
 import android.content.Context
 import android.util.Log
-import com.tappet.app.accessibility.TappetAccessibilityService
 import com.tappet.app.node.DshEvent
 import com.tappet.app.node.NodeRuntime
 import com.tappet.app.node.NodeTaskService
@@ -36,10 +35,12 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     AgentProgressCenter.step(sessionId, "启动 dsh 运行时")
     // 保活要在 initialize 之前：ColorOS 会在后台冻结进程，mount 到一半被冻就白等了。
     NodeTaskService.start(app)
-    // 任务期触摸探索：隐藏控件树的 App（实测微信）只在探索开启时
-    // 暴露节点；代价是这期间注入手势失效，点击/长按/滚动改走 performAction 语义动作。
-    // 任务结束必须关掉，否则用户手动点击会变成「先探索再双击」。
-    TappetAccessibilityService.get()?.setTouchExplorationForTask(true)
+    // 任务期**不**开触摸探索。理由见 docs/android-accessibility.md §9：
+    // ① 它一开，dispatchGesture 注入的手势就被系统当探索事件吞掉 —— 树不可读时
+    //    没有节点可走 performAction，等于「只能看不能点」，而树不可读正是要走视觉的时候；
+    // ② 它也救不了已经在跑的 App：那个状态是目标 App 进程启动时采样一次并缓存的。
+    // 机制与 debug 广播仍留着（TappetAccessibilityService.setTouchExplorationForTask），
+    // 但任务路径不再自动开 —— 手势始终可用，用户手动点击也不受影响。
     try {
       NodeRuntime.initialize(app)
       var sawRunning = false
@@ -164,7 +165,6 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       AgentProgressCenter.fail(sessionId, error.message ?: error.javaClass.simpleName)
       throw error
     } finally {
-      TappetAccessibilityService.get()?.setTouchExplorationForTask(false)
       NodeTaskService.stop(app)
     }
   }

@@ -10,13 +10,40 @@ sealed interface DeviceAction {
   /** 点最近一次 [ReadScreen] 快照里的节点，ref 对应渲染行首的 [n]。 */
   data class TapNode(val ref: Int) : DeviceAction
 
+  /** 按屏幕像素点击。**模型可见的工具面里没有它**（那是视觉路径的坐标陷阱），桥与 debug 广播仍可用。 */
   data class TapPoint(val x: Int, val y: Int) : DeviceAction
+
+  /**
+   * 按最近一次 [Screenshot]（工具名 `capture_frame`）的**图像像素** bbox 点击 —— 视觉路径的主入口。
+   *
+   * 模型给的坐标是它实际看到的那张图的像素；屏幕像素由执行层用 [ScreenFrame.toScreen] 换算，
+   * 模型不参与换算。树可读时优先用 [TapNode]，那条路不需要换算。
+   *
+   * （将来接专用 grounding 模型时，这里再加 source / confidence 字段 —— 现在加了也只是没人读。）
+   */
+  data class TapFrame(
+    val frameId: String,
+    val x1: Int,
+    val y1: Int,
+    val x2: Int,
+    val y2: Int,
+  ) : DeviceAction
 
   /** 长按最近一次 [ReadScreen] 快照里的节点。 */
   data class LongPressNode(val ref: Int, val durationMs: Long = DEFAULT_LONG_PRESS_MS) : DeviceAction
 
   data class LongPressPoint(val x: Int, val y: Int, val durationMs: Long = DEFAULT_LONG_PRESS_MS) :
     DeviceAction
+
+  /** [TapFrame] 的长按版本，坐标同样是最近一次截图的图像像素。 */
+  data class LongPressFrame(
+    val frameId: String,
+    val x1: Int,
+    val y1: Int,
+    val x2: Int,
+    val y2: Int,
+    val durationMs: Long = DEFAULT_LONG_PRESS_MS,
+  ) : DeviceAction
 
   data class TypeText(val text: String) : DeviceAction
 
@@ -28,8 +55,9 @@ sealed interface DeviceAction {
   data class Swipe(val direction: SwipeDirection) : DeviceAction
 
   /**
-   * 截当前屏幕。payload 不是给模型看的文本，而是传输用的 JSON
-   * （mediaType / width / height / base64），由 dsh 侧存成附件再交给模型。
+   * 截当前屏幕并产出一**帧**（工具名 `capture_frame`）。payload 不是给模型看的文本，而是传输用的
+   * JSON（mediaType / width / height / frameId / screenWidth / screenHeight / offset / base64）：
+   * 图由 dsh 侧存成附件交给模型，帧字段由插件渲染成模型可见的图例（见 [ScreenFrame]）。
    */
   data object Screenshot : DeviceAction
 }
@@ -64,7 +92,35 @@ data class DeviceActionResult(
    * 桥会把它一并放进返回的 JSON 里。
    */
   val code: String? = null,
+  /**
+   * 动作下发后界面**看起来**有没有变化（视觉路径的验证闭环）。
+   *
+   * 三态：true 变了 / false 没观察到变化 / null 验不了（截图被节流或窗口禁截）。
+   * 它是**启发式**：`false` 只能说「似乎没变」，不能说「点击失败」—— 小面积变化（勾选框、
+   * 行高亮）在 8×8 指纹上看不出来。所以它只进 summary 与这个字段，**不影响 [ok]**。
+   */
+  val changed: Boolean? = null,
 )
+
+/**
+ * 视觉路径的机器可读失败原因。
+ *
+ * 与 [DeviceActionResult.summary] 分开的理由和 [AccessibilityStatus.CODE_NOT_ENABLED] 一样：
+ * 文案会改，码不会 —— 插件、界面与审计都按码判断。
+ */
+object VisionCode {
+  /** 帧 id 与当前帧不符：界面已经变了，旧坐标作废，必须重新取帧。 */
+  const val STALE_FRAME = "STALE_FRAME"
+
+  /** 还没取过帧（或服务重启过），没有坐标系可用。 */
+  const val FRAME_UNKNOWN = "FRAME_UNKNOWN"
+
+  /** bbox 越出图像范围。直接拒、不 clamp —— clamp 会让模型以为点对了。 */
+  const val OUT_OF_FRAME = "OUT_OF_FRAME"
+
+  /** 手势下发成功但界面看起来没变。这是**提示**不是失败，`ok` 仍为 true。 */
+  const val NO_VISIBLE_CHANGE = "NO_VISIBLE_CHANGE"
+}
 
 data class NodeBounds(
   val left: Int,
@@ -169,11 +225,17 @@ fun renderSnapshot(
  * 不起作用）。所以只能请用户彻底结束该 App 的进程后再来一遍。提示进 LLM，不落日志。
  */
 const val EMPTY_TREE_HINT =
-  "（当前界面几乎没有可读节点：该 App 对无障碍隐藏了控件树。它只在「触摸探索」开启后" +
-    "启动的进程里才暴露节点，本进程启动得更早，无法自动恢复；App 内也没有强杀别的应用的" +
-    "手段。如果任务只是要看清界面，可以改用 screenshot 从图上读；要点击/输入就别硬试，" +
-    "停下来把原因和下面这一步告诉用户：在系统设置 → 应用管理里找到该 App、点「强行停止」" +
-    "把它彻底结束，然后重新发起任务。）"
+  "（当前界面几乎没有可读节点：该 App 对无障碍隐藏了控件树，且这个状态在进程存活期间不会" +
+    "恢复，App 内也没有强杀别的应用的手段。改用视觉路径：capture_frame 取一帧（图 + 帧信息），" +
+    "从图上找到目标后用 tap_target 给出**该帧的图像像素** bbox 点击，动作后再取一帧确认；" +
+    "tap_node 这类按控件编号的工具在这里没有节点可用。文字输入目前做不到（没有控件树就没有" +
+    "输入框可写）—— 需要输入就停下来，如实告诉用户这一步做不到。）"
 
-/** 判定「树基本为空」的阈值：正常界面至少有几十个节点。 */
-const val EMPTY_TREE_NODE_THRESHOLD = 2
+/**
+ * 判定「树基本为空」：**没有任何一个**节点是可见且有内容 / 可交互的。
+ *
+ * 不用节点总数判定 —— 有的 App 只暴露一层没有标签的容器：节点数不少、可读的行为零。
+ * 按总数判会把这种「假阴性」漏掉，模型于是以为树是可用的，一直读到空行却不知道
+ * 该换视觉路径。正常界面至少有一个带文字或可点的节点。
+ */
+fun ScreenSnapshot.hasNoReadableNode(): Boolean = nodes.none { it.interesting }

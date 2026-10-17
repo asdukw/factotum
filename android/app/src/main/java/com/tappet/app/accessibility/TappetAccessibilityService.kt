@@ -26,16 +26,20 @@ import com.tappet.app.device.DeviceAction
 import com.tappet.app.device.DeviceActionResult
 import com.tappet.app.device.DeviceBridge
 import com.tappet.app.device.EMPTY_TREE_HINT
-import com.tappet.app.device.EMPTY_TREE_NODE_THRESHOLD
 import com.tappet.app.device.NodeBounds
 import com.tappet.app.device.PressKey
+import com.tappet.app.device.ScreenFrame
 import com.tappet.app.device.ScreenNode
 import com.tappet.app.device.ScreenSnapshot
 import com.tappet.app.device.SwipeDirection
+import com.tappet.app.device.VisionCode
+import com.tappet.app.device.hasNoReadableNode
 import com.tappet.app.device.renderSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
@@ -103,8 +107,10 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       DeviceAction.ReadScreen -> executeReadScreen()
       is DeviceAction.TapNode -> executeTapNode(action.ref)
       is DeviceAction.TapPoint -> executeTapPoint(action.x, action.y)
+      is DeviceAction.TapFrame -> executeTapFrame(action)
       is DeviceAction.LongPressNode -> executeLongPressNode(action.ref, action.durationMs)
       is DeviceAction.LongPressPoint -> executeLongPressPoint(action.x, action.y, action.durationMs)
+      is DeviceAction.LongPressFrame -> executeLongPressFrame(action)
       is DeviceAction.TypeText -> executeTypeText(action.text)
       is DeviceAction.Press -> executePress(action.key)
       is DeviceAction.LaunchApp -> executeLaunchApp(action.query)
@@ -150,7 +156,6 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     val snapshot = ScreenSnapshot(root.packageName?.toString(), nodes, truncated)
     lastSnapshot = snapshot
     lastNodeHandles = handles
-    lastNodeHandles = handles
     val labeled = nodes.count { it.hasLabel }
     val editable = nodes.count { it.editable }
     DeviceActionResult(
@@ -158,7 +163,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       summary = "读到 ${nodes.size} 个节点（有文字 $labeled，可编辑 $editable）",
       payload =
         renderSnapshot(snapshot) +
-          if (nodes.size < EMPTY_TREE_NODE_THRESHOLD) "\n" + EMPTY_TREE_HINT else "",
+          if (snapshot.hasNoReadableNode()) "\n" + EMPTY_TREE_HINT else "",
     )
   }
 
@@ -167,10 +172,20 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       lastSnapshot?.nodes?.firstOrNull { it.ref == ref }
         ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_screen 再按行首编号点")
     if (touchExplorationActive) return semanticClick(ref, long = false)
-    return executeTapPoint(node.bounds.centerX, node.bounds.centerY)
+    return tapPixel(node.bounds.centerX, node.bounds.centerY)
   }
 
-  private suspend fun executeTapPoint(x: Int, y: Int): DeviceActionResult {
+  /** 桥与 debug 广播用的屏幕像素入口。**模型可见的工具面里没有它**（见 [DeviceAction.TapPoint]）。 */
+  private suspend fun executeTapPoint(x: Int, y: Int): DeviceActionResult = tapPixel(x, y)
+
+  /**
+   * 屏幕像素点击的**唯一**落地点。
+   *
+   * 换算只在它的上游发生一次：控件树路径传 `getBoundsInScreen` 的中心（本来就是屏幕像素），
+   * 视觉路径传 [ScreenFrame.toScreen] 换算后的结果。两个入口共用一个函数，
+   * 免得「哪条路用哪个坐标系」变成要靠人记住的事。
+   */
+  private suspend fun tapPixel(x: Int, y: Int): DeviceActionResult {
     if (touchExplorationActive) {
       // 触摸探索下注入手势会被系统转成探索事件吞掉，只能退化成「点中坐标的语义点击」。
       val hit = nodeAt(x, y, long = false)
@@ -193,10 +208,15 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       lastSnapshot?.nodes?.firstOrNull { it.ref == ref }
         ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_screen 再按行首编号长按")
     if (touchExplorationActive) return semanticClick(ref, long = true)
-    return executeLongPressPoint(node.bounds.centerX, node.bounds.centerY, durationMs)
+    return longPressPixel(node.bounds.centerX, node.bounds.centerY, durationMs)
   }
 
-  private suspend fun executeLongPressPoint(x: Int, y: Int, durationMs: Long): DeviceActionResult {
+  /** 桥与 debug 广播用的屏幕像素入口（同 [executeTapPoint]）。 */
+  private suspend fun executeLongPressPoint(x: Int, y: Int, durationMs: Long): DeviceActionResult =
+    longPressPixel(x, y, durationMs)
+
+  /** 屏幕像素长按的唯一落地点，与 [tapPixel] 对称。 */
+  private suspend fun longPressPixel(x: Int, y: Int, durationMs: Long): DeviceActionResult {
     if (touchExplorationActive) {
       val hit = nodeAt(x, y, long = true)
       if (hit != null && hit.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
@@ -211,6 +231,77 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         lineTo(x + 1f, y.toFloat())
       }
     return dispatchPath(path, durationMs, "长按 @($x,$y)")
+  }
+
+  // ---------- 视觉路径：按帧坐标操作 ----------
+
+  private suspend fun executeTapFrame(action: DeviceAction.TapFrame): DeviceActionResult =
+    actOnFrame(action.frameId, action.x1, action.y1, action.x2, action.y2, long = false, durationMs = 0L)
+
+  private suspend fun executeLongPressFrame(action: DeviceAction.LongPressFrame): DeviceActionResult =
+    actOnFrame(
+      action.frameId,
+      action.x1,
+      action.y1,
+      action.x2,
+      action.y2,
+      long = true,
+      durationMs = action.durationMs,
+    )
+
+  /**
+   * 视觉路径的落地点：把**图像像素 bbox** 换算成屏幕像素下发，然后验证界面变没变。
+   *
+   * 三道校验都回**机器可读的码**（模型、界面、审计都不去匹配中文）：没取过帧 / 帧作废 / bbox 越界。
+   * 越界直接拒、不 clamp —— clamp 会把「模型给错了坐标」变成「点了个别的地方」，更难查。
+   */
+  private suspend fun actOnFrame(
+    frameId: String,
+    x1: Int,
+    y1: Int,
+    x2: Int,
+    y2: Int,
+    long: Boolean,
+    durationMs: Long,
+  ): DeviceActionResult {
+    val frame = currentFrame
+      ?: return DeviceActionResult(false, "还没有取过帧：先 capture_frame", code = VisionCode.FRAME_UNKNOWN)
+    if (frame.id != frameId || frameStale) {
+      val why = if (frameStale) "，界面已变化" else ""
+      return DeviceActionResult(
+        false,
+        "帧 $frameId 已作废（当前 ${frame.id}$why）：重新 capture_frame 再给坐标",
+        code = VisionCode.STALE_FRAME,
+      )
+    }
+    if (!frame.containsBox(x1, y1, x2, y2)) {
+      return DeviceActionResult(
+        false,
+        "bbox ($x1,$y1)-($x2,$y2) 越出图像 ${frame.imageWidth}×${frame.imageHeight}",
+        code = VisionCode.OUT_OF_FRAME,
+      )
+    }
+    val centerX = (x1 + x2) / 2
+    val centerY = (y1 + y2) / 2
+    val (screenX, screenY) = frame.toScreen(centerX, centerY)
+    val baseline = currentFrameHash
+    val gesture = if (long) longPressPixel(screenX, screenY, durationMs) else tapPixel(screenX, screenY)
+    if (!gesture.ok) return gesture
+    val changed = verifyChanged(baseline)
+    // 界面变了 ⇒ 这一帧的坐标作废：模型必须重新取帧，不能拿着旧坐标接着点。
+    if (changed == true) frameStale = true
+    val verdict =
+      when (changed) {
+        true -> "界面已变化"
+        false -> "界面似乎没有变化（可能没点中）"
+        null -> "无法验证界面是否变化"
+      }
+    return DeviceActionResult(
+      ok = true,
+      summary = "${gesture.summary}；图像 ($centerX,$centerY) → 屏幕 ($screenX,$screenY)；$verdict",
+      code = if (changed == false) VisionCode.NO_VISIBLE_CHANGE else null,
+      changed = changed,
+    )
   }
 
   private suspend fun executeTypeText(text: String): DeviceActionResult = withContext(Dispatchers.Default) {
@@ -236,16 +327,25 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     }
 
   /**
-   * 截屏 → 缩到最长边 [MAX_SCREENSHOT_EDGE] → PNG（超预算转 JPEG）→ base64。
+   * 截屏 → 缩到最长边 [MAX_SCREENSHOT_EDGE] → PNG（超预算转 JPEG）→ base64，并产出**一帧**。
    *
    * 缩图与转码都在设备侧做：请求图像预算按 base64 长度算（pi-ai 默认 20MiB，
    * 且每轮请求都会重发历史图），原图直传会把预算吃穿。
+   *
+   * 帧是感知与执行之间的坐标系（见 [ScreenFrame]）：**图像尺寸**给模型看图，**屏幕尺寸**给
+   * 执行层换算。屏幕尺寸取缩放**前**的捕获位图，不用 displayMetrics —— 分屏与系统栏会让后者对不上。
    */
   private suspend fun executeScreenshot(): DeviceActionResult {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
       return DeviceActionResult(false, "截图需要 Android 11+")
     }
-    val captured = captureScreen() ?: return DeviceActionResult(false, "截图失败（窗口可能禁止截屏）")
+    val captured = captureBitmap() ?: return DeviceActionResult(false, "截图失败（窗口可能禁止截屏）")
+    val screenWidth = captured.width
+    val screenHeight = captured.height
+    // 指纹取**缩放前**的位图：验证时也走同一条路（全分辨率 → 8×8）。
+    // 两边处理方式不同的话（一边先缩 2048 再缩 8），同一屏也会算出不同的指纹，自己造出「变化」。
+    val hash = aHash(captured)
+    auditFrameSizeMismatch(screenWidth, screenHeight)
     val scaled = scaleToLongEdge(captured, MAX_SCREENSHOT_EDGE)
     val bytes: ByteArray
     val mediaType: String
@@ -261,19 +361,138 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       if (scaled !== captured) captured.recycle()
       scaled.recycle()
     }
+    val frame =
+      ScreenFrame(
+        id = "f${++frameSeq}",
+        imageWidth = width,
+        imageHeight = height,
+        screenWidth = screenWidth,
+        screenHeight = screenHeight,
+      )
+    currentFrame = frame
+    currentFrameHash = hash
+    frameStale = false
     val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-    // 手拼 JSON：三个字段都是受控值（固定字面量 / 整数 / base64 字母表），
+    // 手拼 JSON：字段都是受控值（固定字面量 / 整数 / base64 字母表），
     // 不值得为它给服务层引入序列化依赖。
     val payload =
-      "{\"mediaType\":\"$mediaType\",\"width\":$width,\"height\":$height,\"base64\":\"$base64\"}"
+      "{\"mediaType\":\"$mediaType\",\"width\":$width,\"height\":$height," +
+        "\"frameId\":\"${frame.id}\",\"screenWidth\":$screenWidth,\"screenHeight\":$screenHeight," +
+        "\"offsetX\":0,\"offsetY\":0,\"base64\":\"$base64\"}"
     return DeviceActionResult(
       ok = true,
-      summary = "截图 ${width}x$height ${mediaType.substringAfter('/')} ${bytes.size / 1024}KB",
+      summary = "${frame.legend()}｜${mediaType.substringAfter('/')} ${bytes.size / 1024}KB",
       payload = payload,
     )
   }
 
-  /** 只在 [executeScreenshot] 的 API 30 分支里调用；注解是给 lint 看的不变量。 */
+  // ---------- 视觉路径：帧与验证 ----------
+
+  /** 当前帧。**只有一帧**：坐标只对最近一次截图有效，界面变了旧坐标就作废。 */
+  private var currentFrame: ScreenFrame? = null
+
+  /** 当前帧的 8×8 指纹，动作后拿它比「界面变了没有」。 */
+  private var currentFrameHash: Long? = null
+
+  /** 动作后观察到界面变化 ⇒ 当前帧作废（旧坐标不再可信）。 */
+  private var frameStale = false
+
+  /** 帧序号，单调递增（`f1`、`f2`…）。 */
+  private var frameSeq = 0
+
+  /** 截图串行化：动作后的验证截图与前一次截图背靠背会撞平台的频率限制。 */
+  private val captureLock = Mutex()
+
+  /** 上一次截图失败的原始错误码，用来判断「值不值得退避重试」。 */
+  private var lastCaptureErrorCode: Int? = null
+
+  /**
+   * 截图，撞上最小间隔限制就退避重试一次。
+   *
+   * `takeScreenshot` 有频率限制（`ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT`），而视觉路径是
+   * 「动作 → 立刻截图验证」的节奏，必然会撞上。串行化 + 退避一次；再失败就把 null 交给调用方 ——
+   * 验证环节会如实回「无法验证」，不会因此把动作判成失败。
+   */
+  private suspend fun captureBitmap(): Bitmap? {
+    // 截图要 Android 11+（`AccessibilityService.takeScreenshot`）。低版本直接回 null：
+    // 调用方一律按「截不到 / 验不了」处理，不会因此把动作判成失败。
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+    return captureLock.withLock {
+      lastCaptureErrorCode = null
+      captureScreen()?.let { return@withLock it }
+      if (lastCaptureErrorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) return@withLock null
+      delay(SCREENSHOT_RETRY_DELAY_MS)
+      lastCaptureErrorCode = null
+      captureScreen()
+    }
+  }
+
+  /**
+   * 动作之后界面变了没有：再截一张、比 8×8 指纹。**只回布尔，不回图** ——
+   * 图会进会话历史并被每轮重发，把请求图像预算吃穿（见 docs/dsh-android.md P10）。
+   *
+   * null = 验不了（截图被限流或窗口禁截）。**不要把 null 当 false**：前者是「不知道」，
+   * 后者是「看着没变」。
+   */
+  private suspend fun verifyChanged(baseline: Long?): Boolean? {
+    if (baseline == null) return null
+    delay(ACTION_SETTLE_DELAY_MS)
+    val after = captureBitmap() ?: return null
+    val hash =
+      try {
+        aHash(after)
+      } finally {
+        after.recycle()
+      }
+    return hash != baseline
+  }
+
+  /**
+   * 8×8 均值哈希 —— 回答「界面变了没有」，**不是**精确比对。
+   *
+   * 缩到 8×8 灰度、按均值取 64 位。整屏级变化（翻页、弹窗、换界面）它看得见；
+   * 小面积变化（勾选框、行高亮）看不见 —— 所以 false 只能读成「似乎没变」，不能读成「点击失败」。
+   */
+  private fun aHash(bitmap: Bitmap): Long {
+    val small = Bitmap.createScaledBitmap(bitmap, HASH_EDGE, HASH_EDGE, true)
+    val pixels = IntArray(HASH_EDGE * HASH_EDGE)
+    small.getPixels(pixels, 0, HASH_EDGE, 0, 0, HASH_EDGE, HASH_EDGE)
+    if (small !== bitmap) small.recycle()
+    var total = 0
+    for (pixel in pixels) total += luma(pixel)
+    val mean = total / pixels.size
+    var hash = 0L
+    for (index in pixels.indices) {
+      if (luma(pixels[index]) > mean) hash = hash or (1L shl index)
+    }
+    return hash
+  }
+
+  private fun luma(pixel: Int): Int {
+    val red = (pixel shr 16) and 0xFF
+    val green = (pixel shr 8) and 0xFF
+    val blue = pixel and 0xFF
+    return (red * 299 + green * 587 + blue * 114) / 1000
+  }
+
+  /**
+   * 捕获位图尺寸与 displayMetrics 不一致时记一条（**只记两个尺寸，不记内容**）。
+   *
+   * 换算用的是捕获尺寸，而别处（swipe 的半屏、悬浮层定位）用的是 displayMetrics。
+   * ColorOS 的显示缩放 / 异形屏下两者可能不同，那时坐标会「差一点」—— 有这条标记，
+   * 这类偏差在审计里看得见，而不是靠人猜。
+   */
+  private fun auditFrameSizeMismatch(width: Int, height: Int) {
+    val metrics = resources.displayMetrics
+    if (metrics.widthPixels == width && metrics.heightPixels == height) return
+    audit(
+      "frame_mismatch",
+      "capture" to "${width}x$height",
+      "metrics" to "${metrics.widthPixels}x${metrics.heightPixels}",
+    )
+  }
+
+  /** 只在 [captureBitmap] 里调用（它负责串行化与退避）；注解是给 lint 看的不变量。 */
   @RequiresApi(Build.VERSION_CODES.R)
   private suspend fun captureScreen(): Bitmap? =
     suspendCancellableCoroutine { cont ->
@@ -289,6 +508,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
               }
 
               override fun onFailure(errorCode: Int) {
+                lastCaptureErrorCode = errorCode
                 Log.w(TAG, "takeScreenshot failed: ${screenshotErrorName(errorCode)}")
                 if (cont.isActive) cont.resume(null)
               }
@@ -390,8 +610,13 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   }
 
   private suspend fun executeSwipe(direction: SwipeDirection): DeviceActionResult {
-    // 上下滑动有语义动作（可滚动节点），触摸探索下必须走它；左右滑动没有，仍靠手势。
-    if (touchExplorationActive) semanticScroll(direction)?.let { return it }
+    if (touchExplorationActive) {
+      // 探索态下注入的手势会被系统吞掉，所以有语义动作（可滚动节点）就先走它。
+      semanticScroll(direction)?.let { return it }
+      // 没有可滚动节点时以前会落到 dispatchPath：手势被吞、onCompleted 照样回调，
+      // 于是回一句 ok=true 的「已滑动」—— 模型以为滑了。这里如实报失败。
+      return DeviceActionResult(false, "触摸探索开启：没有可语义滚动的节点，注入手势也会被系统吞掉")
+    }
     val dm = resources.displayMetrics
     val w = dm.widthPixels
     val h = dm.heightPixels
@@ -666,6 +891,12 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
     /** PNG 超过它就转 JPEG（界面截图多为大片纯色，PNG 通常远低于此）。 */
     private const val SCREENSHOT_PNG_BUDGET_BYTES = 900 * 1024
+
+    /** 界面指纹的边长：8×8 = 64 位，够分辨整屏级变化，成本可忽略。 */
+    private const val HASH_EDGE = 8
+
+    /** 截图撞上最小间隔限制后的退避时长（限流窗口是秒级，退避一次就够）。 */
+    private const val SCREENSHOT_RETRY_DELAY_MS = 400L
 
     private const val SCREENSHOT_JPEG_QUALITY = 80
 

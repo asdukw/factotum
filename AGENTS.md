@@ -168,11 +168,14 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
    而不是靠人记得别发包。
 2. **屏幕与聊天正文不落日志**：只记计数 / 类名 / 坐标 / 错误码；读屏 payload 只出现在
    给模型的工具结果里。debug 广播的 `--ez logPayload true` 仅供调试，用完不要留在脚本里。
-3. `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：**卸载即永久丢失，外部不可解、不可拷**。
+3. **视觉路径的感知面更大**：树不可读时改走截图，交给模型的是**整屏图像**（含屏幕上的一切正文），
+   比结构化读屏大得多 —— 这一步就是把屏幕内容发给模型服务商。它和读屏 payload 同级：只进给模型的
+   工具结果，不落日志、不落盘（附件落在 App 私有目录、内容寻址）；但**别把它写成「只记结构」**。
+4. `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：**卸载即永久丢失，外部不可解、不可拷**。
    任何卸载 / 清数据 / 重装前先确认已导出。
-4. SQLCipher 原生库不会自动加载：`TappetDatabaseProvider` 必须显式 `System.loadLibrary("sqlcipher")`
+5. SQLCipher 原生库不会自动加载：`TappetDatabaseProvider` 必须显式 `System.loadLibrary("sqlcipher")`
    （删旧代码时丢过一次，表现为 `nativeOpen` 的 UnsatisfiedLinkError、界面「本地存储不可用」）。
-5. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
+6. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
    先在 `docs/` 写清边界与隐私闸门，再动代码。
 
 发布前自检：
@@ -196,9 +199,34 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 （`ctx.tools` 注册，含给模型看的描述；独立公开仓库，先在插件仓库提交再更新 submodule 指针）。
 插件改完 → `bundle-dsh.ps1` → 重装 APK。
 
-现有 9 个桥动作：`read_screen` / `screenshot` / `tap_node(ref)` / `tap_point(x,y)` /
-`long_press(ref|x,y,duration_ms)` / `type_text` / `press(back|home|recents|enter)` /
-`launch_app(query)` / `swipe(direction)`。工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
+**模型可见的 10 个工具**（插件 v0.4.0）：`read_screen` / `tap_node(ref)` / `long_press(ref,duration_ms)` /
+`capture_frame()` / `tap_target(frame_id,x1,y1,x2,y2)` / `long_press_target(同前+duration_ms)` /
+`type_text` / `press(back|home|recents|enter)` / `launch_app(query)` / `swipe(direction)`。
+工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
+
+桥里另有 `screenshot` 与 `tap_point` 两个**屏幕像素**动作，只给 debug 广播与旧脚本用 ——
+**不在模型工具面里**：模型看到的坐标一律是帧的图像像素（见下），混进屏幕像素就是系统性点偏。
+
+### 坐标契约：模型只说「帧的图像像素」（2026-10-17）
+
+交给模型的截图会被缩到最长边 2048（1080×2344 的屏 → **943×2047**），而手势要的是屏幕像素。
+两者以前没有任何声明的换算，模型连屏幕尺寸都看不到（工具结果只交 `summary` 文本）——
+按图给的坐标会系统性偏约 12.6%，**而且不报错**。
+
+现在把换算钉在一处：`device/ScreenFrame.kt` 的纯函数 `toScreen(x,y)`
+（`round(offset + x*screenW/imageW)`，再夹到 `screenW-1`）。规则：
+
+- **模型侧唯一坐标系** = 最近一次 `capture_frame` 那张图的图像像素；模型永不换算、永不碰屏幕像素。
+- `capture_frame` 的 payload 带 `frameId / width / height / screenWidth / screenHeight / offsetX / offsetY`，
+  插件把它渲染成**模型可见的图例文本**（模型只看得见文本，尺寸不写进文本它就拿不到）。
+- 屏幕尺寸取**缩放前的捕获位图**，不是 `displayMetrics`（分屏 / 系统栏会让后者对不上）；
+  两者不一致时打 `ev=frame_mismatch` 审计标记。
+- 帧是**有状态的**：界面变了旧帧作废（`STALE_FRAME`），必须重新取帧；bbox 越界直接拒（`OUT_OF_FRAME`），
+  **不 clamp** —— clamp 会把「给错坐标」变成「点了个别的地方」。
+- 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔**不回图**（图会进历史并被每轮重发）。
+  `changed=false` 时 `ok` 仍是 true（`NO_VISIBLE_CHANGE`）—— 它是提示，不是失败。
+- **视觉路径不解决「输入文字」**：`type_text` / `press(enter)` 都走控件树找输入框，树不可读时没有通道，
+  只能如实告知用户做不到（自建 IME 是 roadmap §2.5 的事，还没做）。
 
 ### 加一个服务商预选 = 四处对齐
 
@@ -222,10 +250,17 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile`；换 ROM 只加一个 `OemProfile`。
   不写 App 专用逻辑 —— QQ / 微信只是试验任务的目标 App，不是适配对象。
 - **桥只监听 `127.0.0.1` + 每进程随机 token**，只暴露 `POST /action`；不在设备上安装插件。
-- **任务期触摸探索按任务开关**：部分 App（实测微信 8.0.78）只在 `isTouchExplorationEnabled()`
-  为真时暴露控件树，所以任务期间由 `DshStreamer` / `NodeDebugReceiver` 调
-  `setTouchExplorationForTask(true)`，`finally` 必须关掉（常开会让用户点击变成「双击才生效」）。
-  开启期间 `dispatchGesture` 会被系统吞掉，点击 / 长按 / 上下滚动自动改走 `performAction`。
+- **任务期不开触摸探索**（2026-10-17 改，原先按任务开关）：部分 App（实测微信 8.0.78）
+  只在 `isTouchExplorationEnabled()` 为真时暴露控件树，但这条路已经不走 ——
+  ① 探索一开，`dispatchGesture` 注入的手势就被系统当探索事件吞掉，而树不可读时没有节点
+  可走 `performAction`，等于「只能看不能点」，偏偏树不可读正是要走视觉的时候；
+  ② 它救不了已经在跑的 App：那个状态是目标 App 进程启动时采样一次并缓存的。
+  所以 `DshStreamer` / `NodeDebugReceiver` **不再**调 `setTouchExplorationForTask`，
+  树不可读时走视觉路径（`docs/android-accessibility.md` §9）。
+  机制本身保留（`setTouchExplorationForTask` + debug 广播 `AGENT_MODE`）供实验用；
+  **`touchExplorationActive` 的语义兜底分支一个字都不能删** —— 用户自己开着 TalkBack 时
+  全局触摸探索恒为真、`dispatchGesture` 一样被吞，那些 `performAction` 分支是读屏用户
+  唯一可用的路径。
 - **改 dsh 运行时不要用 `boot()` / CLI loader**（硬依赖无 Android 产物的
   `node-addon-require-builtin`）：走 `launcher.mjs`；Android 上 `patch-runtime.mjs` 放行 flock、
   把 jsonl 硬链接发布改为 rename，**并把进程内的 `agent/assistant-stream` 转成 `session.stream`
@@ -299,7 +334,27 @@ adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.
 # 直接驱动执行层原子动作（目标 App 在前台时用）
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action READ_SCREEN
+
+# 视觉路径：取一帧，再按帧的图像像素点 —— 这一对是坐标换算的确定性判据
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
+  -a com.tappet.app.debug.ACTION --es action CAPTURE_FRAME
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
+  -a com.tappet.app.debug.ACTION --es action TAP_TARGET `
+  --es frame_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
 ```
+
+**帧契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
+`docs/android-accessibility.md` §9）：
+
+1. **换算**（确定性，不依赖模型）：`CAPTURE_FRAME` 的 summary 应报「图像 943×2047｜屏幕 1080×2344」；
+   对某个已知元素 `TAP_TARGET`，logcat 里换算出的屏幕坐标要落在该元素的 `getBoundsInScreen` 内
+   （用 `READ_SCREEN` 复核）。建议先开「开发者选项 → 指针位置」，点击坐标肉眼可见。
+   再故意用过期 `frame_id` → 应报 `STALE_FRAME`；`x2` 超出图像宽 → 应报 `OUT_OF_FRAME`。
+2. **动作生效**：对会翻页/开新页的按钮 `TAP_TARGET`，要求 `changed=true` 且页面确实变了；
+   `NO_VISIBLE_CHANGE` 只说明「看着没变」，不判失败。
+3. **空树端到端**：微信已在后台运行时提交「打开微信，点开第一个会话」，工具序列应是
+   `capture_frame → tap_target`（不再是「读屏 1 个节点后停下请用户强停」）。
+4. **回归**：系统设置这类可读树的 App 仍应走 `read_screen + tap_node`，不该掉进视觉路径。
 
 带空格的参数必须把整条 `am broadcast` 再用 `adb shell "..."` 包一层引号，否则会被设备 shell 拆词。
 
@@ -336,7 +391,7 @@ tools/
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
-  dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，9 个通用原语）
+  dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
   dsh-phone/profile/            phone profile（cordis.patch.yml）
 docs/                           深度文档 + releases/<tag>.md（每个版本的发布说明）
 ```
@@ -369,9 +424,15 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
 | dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 的 runtimeTag 后缀别去掉 |
 | 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
-| 读屏只返回 0–1 个节点（微信） | 该 App 隐藏控件树，只在「触摸探索」为真时启动的进程里暴露 → 任务期间自动开探索；进程已在跑只能请用户配合 |
-| 触摸探索开启时点击/滑动全部无效 | 探索模式吞掉 `dispatchGesture` 的手势 → 走 `performAction` 语义动作（服务里已自动切换） |
-| 任务期间用户点屏幕变成「双击才生效」 | 触摸探索常开导致 → 只在任务期间开关，`finally` 里必须关 |
+| 读屏没有一个可读节点（微信） | 该 App 对无障碍隐藏控件树（只在「触摸探索」为真时启动的进程里暴露，而任务期不再开探索）→ 走视觉路径，由 `EMPTY_TREE_HINT` 引导 |
+| 用户开着 TalkBack 时点击/滑动全部无效 | 全局触摸探索恒为真，探索模式吞掉 `dispatchGesture` 的手势 → 走 `performAction` 语义动作（服务里已自动切换，这些分支不能删） |
+| 任务期间用户点屏幕变成「双击才生效」 | 触摸探索被开着才会 → 任务路径不再自动开；只有 debug 广播手动开了才可能出现 |
+| 按图点击总是偏左偏上约 12.6% | 截图缩到 2048 长边、`tap_point` 收屏幕像素，两套坐标系没换算 → 模型侧一律用帧的图像像素（`tap_target`），换算在 `ScreenFrame.toScreen` |
+| `tap_target` 报 `STALE_FRAME` | 帧是有状态的：界面变了旧帧作废 → 重新 `capture_frame` 再给坐标（不是 bug） |
+| `tap_target` 报 `OUT_OF_FRAME` | bbox 越出图像范围，**故意不 clamp** → 让模型重给坐标，别改成夹取 |
+| `tap_target` 回「界面似乎没有变化」 | 8×8 指纹的启发式：小面积变化（勾选框、行高亮）它看不出来 → 只能读成「可能没点中」，不是「点击失败」 |
+| 长视觉任务请求报 `IMAGE_OFFLOAD_REQUIRED` | 请求图像预算 20MiB 吃穿 → profile 里 `image-offload` 已启用（丢最老的图重试）；它**永久丢帧**，模型之后拿不到那张图 |
+| 树不可读时 `type_text` 失败 | 没有控件树就没有输入框可写 —— 视觉路径**不解决输入**（自建 IME 见 roadmap §2.5），如实告知用户 |
 | 截图报 `Could not load the "sharp" module` | 生效的是 dsh 自带的 `attachment-local`（依赖 sharp，无 Android 产物）→ profile 里禁用它、挂 `dsh-android-attachments` |
 | 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
 | 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |

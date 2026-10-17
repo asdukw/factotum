@@ -13,9 +13,12 @@ private val TOOL_LABELS =
   mapOf(
     "read_screen" to "读取屏幕",
     "screenshot" to "截屏",
+    "capture_frame" to "截取画面",
     "tap_node" to "点按控件",
     "tap_point" to "点按坐标",
+    "tap_target" to "点按目标",
     "long_press" to "长按",
+    "long_press_target" to "长按目标",
     "type_text" to "输入文字",
     "press" to "按键",
     "launch_app" to "启动应用",

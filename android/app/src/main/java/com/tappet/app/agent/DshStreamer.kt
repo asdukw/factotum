@@ -141,7 +141,8 @@ class DshStreamer(private val context: Context) : ChatStreamer {
           }
         }
 
-      send(AgentStreamEvent.Status("已提交，等待模型…"))
+      // 不在气泡里塞「已提交，等待模型…」：等待期间留空（界面显示省略号）比一句会立刻被顶掉的
+      // 状态文案安静；进度在系统悬浮层（AgentProgressCenter）里看。
       AgentProgressCenter.step(sessionId, "正在思考", "等待模型返回下一步")
       NodeRuntime.awaitEventSubscribers()
       NodeRuntime.prompt(sessionId, prompt)

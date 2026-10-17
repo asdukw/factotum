@@ -68,7 +68,6 @@ internal fun SettingsScreen(
 ) {
   val context = LocalContext.current
   var accessibilityEnabled by remember { mutableStateOf(AccessibilityStatus.isEnabled(context)) }
-  var showKeyInfo by remember { mutableStateOf(false) }
 
   // 用户去系统设置里开完无障碍回来，这里要立刻变成「已开启」。
   LifecycleResumeEffect(Unit) {
@@ -94,14 +93,10 @@ internal fun SettingsScreen(
           accessibilityEnabled = accessibilityEnabled,
           onOpenAccessibility = { context.startActivity(AccessibilityStatus.settingsIntent()) },
         )
-        SectionLabel("存储与关于")
-        StorageSection(onShowKeyInfo = { showKeyInfo = true })
+        SectionLabel("关于")
+        AboutSection()
       }
     }
-  }
-
-  if (showKeyInfo) {
-    KeyStorageDialog(onDismiss = { showKeyInfo = false })
   }
 }
 
@@ -192,17 +187,8 @@ private fun ExecutionSection(accessibilityEnabled: Boolean, onOpenAccessibility:
 }
 
 @Composable
-private fun StorageSection(onShowKeyInfo: () -> Unit) {
+private fun AboutSection() {
   SettingsGroup {
-    SettingsRow(
-      glyph = GlyphKind.Key,
-      title = "密钥与存储",
-      subtitle = "Keystore 封装 · 不进日志 · 卸载即丢失",
-      onClick = onShowKeyInfo,
-    ) {
-      ChevronRight()
-    }
-    SettingsDivider()
     SettingsRow(
       glyph = GlyphKind.Info,
       title = "关于",
@@ -210,28 +196,6 @@ private fun StorageSection(onShowKeyInfo: () -> Unit) {
       enabled = false,
     )
   }
-}
-
-@Composable
-private fun KeyStorageDialog(onDismiss: () -> Unit) {
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("密钥怎么存") },
-    text = {
-      Text(
-        text =
-          "每个提供商的 API Key 都用 Android Keystore 里的 AES 密钥封装后再落盘。" +
-            "那把密钥是硬件封装、不可导出的，所以密文换台手机就解不开，卸载重装也会丢 —— " +
-            "都需要重新填一次。它不进云备份，不进日志，也不回填到界面上。\n\n" +
-            "配置只在下次启动 App 时生效：内嵌 Node 的环境变量与 dsh profile 只在启动时读一次，" +
-            "这里不做热重载（重拉 Node 进程会把整个 App 带崩）。",
-        style = MaterialTheme.typography.bodySmall,
-      )
-    },
-    confirmButton = {
-      TextButton(onClick = onDismiss) { Text("知道了") }
-    },
-  )
 }
 
 private fun providerSubtitle(state: SettingsViewModel.UiState): String {

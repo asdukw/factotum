@@ -21,8 +21,12 @@ jobs:
     permissions:
       contents: write # 创建 release
     steps:
+      # 补发（workflow_dispatch）时**必须显式取 tag 指向的 commit**：checkout 默认拿
+      # github.sha = 触发分支的 HEAD，于是「补发一个旧 tag」会静默地出成当前 master 的包 ——
+      # 版本号与 tag 对不上，而且只有真去比对才会发现。tag push 时 ref_name 就是 tag，等价。
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
           fetch-depth: 0 # release notes / tag 信息要完整历史
           submodules: recursive # 设备工具插件在独立仓库
 

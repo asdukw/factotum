@@ -144,15 +144,29 @@ class ChatViewModel(
         var stopped = false
         var statusOnly = false
         var lastFlush = clock()
+        // 增量合并：UI 最多每 UI_FLUSH_INTERVAL_MS 刷一次 —— token 级帧很多，
+        // 逐帧重算 Markdown 太贵；DB 那边另有 flushIntervalMs 的节流。
+        var lastUiFlush = clock()
+        // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
+        var stepStart = 0
+        var reasoningStepStart = 0
 
         try {
           streamer.stream(sessionId, prompt).collect { event ->
             when (event) {
               is AgentStreamEvent.ReasoningDelta -> {
+                if (event.startsStep) reasoningStepStart = reasoning.length
                 reasoning.append(event.text)
-                markReasoning(draft.id, reasoning.toString())
-                // 推理按 step 整段到达，量不大；立刻落库，进程被杀也不丢思考过程。
-                flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
+                val now = clock()
+                if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
+                  lastUiFlush = now
+                  markReasoning(draft.id, reasoning.toString())
+                }
+                if (now - lastFlush >= flushIntervalMs) {
+                  lastFlush = now
+                  // 节流落库：增量可能每帧都来，200ms 一次已足够「进程被杀也不丢太多」
+                  flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
+                }
               }
 
               is AgentStreamEvent.Status -> {
@@ -167,20 +181,40 @@ class ChatViewModel(
               is AgentStreamEvent.ToolCallFinished -> finishToolCall(draft.id, event)
 
               is AgentStreamEvent.TextDelta -> {
-                // 第一条正文到达时用 replace 顶掉状态文案：appendText 是往消息内容上追加的，
-                // 只清本地缓冲会把「正在调用 xxx…」留在气泡里。
-                val replacingStatus = statusOnly
-                if (replacingStatus) {
+                // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
+                if (statusOnly) {
                   statusOnly = false
                   content.clear()
                 }
+                if (event.startsStep) stepStart = content.length
                 content.append(event.text)
-                appendText(draft.id, event.text, replace = replacingStatus)
                 val now = clock()
+                if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
+                  lastUiFlush = now
+                  // UI 镜像直接取缓冲快照：坐标与缓冲永远一致，不必推理增量拼接的边界。
+                  appendText(draft.id, content.toString(), replace = true)
+                }
                 if (now - lastFlush >= flushIntervalMs) {
                   lastFlush = now
                   flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
                 }
+              }
+
+              is AgentStreamEvent.StepFinal -> {
+                // 增量只是先给眼睛看的；这一步的成品到了就**只替换本步**追加的部分。
+                event.reasoning?.let { full ->
+                  reasoning.setLength(reasoningStepStart.coerceAtMost(reasoning.length))
+                  reasoning.append(full)
+                  markReasoning(draft.id, reasoning.toString())
+                }
+                event.text?.let { full ->
+                  content.setLength(stepStart.coerceAtMost(content.length))
+                  content.append(full)
+                  appendText(draft.id, content.toString(), replace = true)
+                }
+                lastUiFlush = clock()
+                lastFlush = lastUiFlush
+                flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
               }
 
               AgentStreamEvent.Completed -> Unit
@@ -203,6 +237,9 @@ class ChatViewModel(
                 else -> MessageStatus.Complete
               }
             val error = failure?.let { it.message ?: it.javaClass.simpleName }
+            // 收尾前把 UI 与本地缓冲对齐：增量是合并刷新的（≤50ms），最后几个字可能还没上屏
+            if (content.isNotEmpty()) appendText(draft.id, content.toString(), replace = true)
+            if (reasoning.isNotEmpty()) markReasoning(draft.id, reasoning.toString())
             flush(draft.id, content, reasoning, status, error)
             // 这一轮没跑完就被停/出错时，把还挂在「执行中」的工具卡落成中断态。
             if (stopped || failure != null) finishRunningToolCalls(draft.id)
@@ -455,6 +492,9 @@ class ChatViewModel(
 
   private companion object {
     const val FLUSH_INTERVAL_MS = 200L
+
+    /** 增量刷新界面的最小间隔：token 级帧可能每秒几十条，逐帧重算 Markdown 不划算。 */
+    const val UI_FLUSH_INTERVAL_MS = 50L
 
     /** 会话标题取第一条用户消息的前若干字。 */
     const val TITLE_MAX_CHARS = 24

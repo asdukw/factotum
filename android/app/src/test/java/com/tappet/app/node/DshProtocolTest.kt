@@ -131,4 +131,41 @@ class DshProtocolTest {
     assertNull(frame("""{"method":"initialize","params":{}}"""))
     assertNull(frame("""{"jsonrpc":"2.0","id":1,"result":{}}"""))
   }
+
+  @Test
+  fun `stream frame carries text delta`() {
+    val event =
+      frame(
+        """
+        {"jsonrpc":"2.0","method":"session.stream","params":{"sessionId":"s1","attemptId":"a1",
+          "revision":1,"index":3,"chunk":{"type":"text-delta","index":0,"text":"你好"}}}
+        """,
+      )
+    assertEquals(DshEvent.StreamDelta("s1", text = "你好"), event)
+  }
+
+  @Test
+  fun `stream frame carries reasoning delta`() {
+    val event =
+      frame(
+        """
+        {"jsonrpc":"2.0","method":"session.stream","params":{"sessionId":"s1",
+          "chunk":{"type":"reasoning-delta","text":"想"}}}
+        """,
+      )
+    assertEquals(DshEvent.StreamDelta("s1", reasoning = "想"), event)
+  }
+
+  /** 只转发正文与推理；别的 chunk（工具参数增量、block 边界）对 UI 没有意义。 */
+  @Test
+  fun `stream frame ignores chunk types the ui does not need`() {
+    val event =
+      frame(
+        """
+        {"jsonrpc":"2.0","method":"session.stream","params":{"sessionId":"s1",
+          "chunk":{"type":"block-start"}}}
+        """,
+      )
+    assertNull(event)
+  }
 }

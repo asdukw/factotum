@@ -250,6 +250,9 @@ object NodeRuntime : NodeLineListener {
           dshEvents.collect { event ->
             if (event.sessionId != sessionId) return@collect
             when (event) {
+              // 增量只给界面看；调试任务的字符数统计以步进成品为准，免得重复计数
+              is DshEvent.StreamDelta -> Unit
+
               is DshEvent.AssistantMessage -> assistant.append(event.text)
 
               is DshEvent.ToolCall -> toolCalls++

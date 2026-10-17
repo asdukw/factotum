@@ -47,6 +47,9 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       // dsh 每个 step 各发一条完整助手消息；第二次起补空行，避免多步回答粘成一句。
       var emittedText = false
       var emittedReasoning = false
+      // 本步是否收到过增量：收到了说明运行时补丁在生效，这一步的成品要用替换语义交给界面。
+      var streamedTextThisStep = false
+      var streamedReasoningThisStep = false
       val finished = CompletableDeferred<Unit>()
       val started = CompletableDeferred<Unit>()
       val collector =
@@ -81,7 +84,45 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                 )
               }
 
+              // token 级增量：先给眼睛看。每一步的第一个增量前补空行（与成品路径一致）。
+              is DshEvent.StreamDelta -> {
+                event.reasoning?.let { delta ->
+                  if (!streamedReasoningThisStep) {
+                    if (emittedReasoning) send(AgentStreamEvent.ReasoningDelta("\n\n"))
+                    streamedReasoningThisStep = true
+                    emittedReasoning = true
+                    send(AgentStreamEvent.ReasoningDelta(delta, startsStep = true))
+                  } else {
+                    send(AgentStreamEvent.ReasoningDelta(delta))
+                  }
+                }
+                event.text?.let { delta ->
+                  if (!streamedTextThisStep) {
+                    if (emittedText) send(AgentStreamEvent.TextDelta("\n\n"))
+                    streamedTextThisStep = true
+                    emittedText = true
+                    AgentProgressCenter.step(sessionId, "模型正在输出")
+                    send(AgentStreamEvent.TextDelta(delta, startsStep = true))
+                  } else {
+                    send(AgentStreamEvent.TextDelta(delta))
+                  }
+                }
+              }
+
               is DshEvent.AssistantMessage -> {
+                if (streamedTextThisStep || streamedReasoningThisStep) {
+                  // 增量已经显示过：用成品**替换本步**（只替换本步追加的部分，见 ChatViewModel）
+                  AgentProgressCenter.modelOutput(sessionId, event.text)
+                  send(
+                    AgentStreamEvent.StepFinal(
+                      text = event.text.takeIf { it.isNotBlank() },
+                      reasoning = event.reasoning?.takeIf { it.isNotBlank() },
+                    ),
+                  )
+                  streamedTextThisStep = false
+                  streamedReasoningThisStep = false
+                  return@collect
+                }
                 event.reasoning?.takeIf { it.isNotBlank() }?.let { reasoning ->
                   if (emittedReasoning) send(AgentStreamEvent.ReasoningDelta("\n\n"))
                   send(AgentStreamEvent.ReasoningDelta(reasoning))

@@ -405,6 +405,62 @@ class ChatViewModelTest {
       // 用默认那条（OpenCode Go）的预选：这里只关心「有没有 key」，端点风格无所谓。
       preset = LlmPreset.default,
     )
+
+  /** 增量先显示、成品后替换：内容只能出现一次（增量与成品不一致时以成品为准）。 */
+  @Test
+  fun `streamed deltas are replaced by the step final without duplication`() = runTest(dispatcher) {
+    val viewModel =
+      ChatViewModel(
+        config = testConfig(),
+        streamer =
+          FakeStreamer(
+            events =
+              listOf(
+                AgentStreamEvent.TextDelta("你", startsStep = true),
+                AgentStreamEvent.TextDelta("好呀"),
+                AgentStreamEvent.StepFinal(text = "你好", reasoning = null),
+                AgentStreamEvent.Completed,
+              ),
+          ),
+        store = FakeSessionStore(),
+      )
+    advanceUntilIdle()
+
+    viewModel.onInputChange("在吗")
+    viewModel.send()
+    advanceUntilIdle()
+
+    assertEquals("你好", viewModel.state.value.messages.last().content)
+  }
+
+  /** 多步回答：第二步的成品只替换第二步追加的部分，第一步的正文不能被吃掉。 */
+  @Test
+  fun `step final only replaces the current step, keeping earlier steps`() = runTest(dispatcher) {
+    val viewModel =
+      ChatViewModel(
+        config = testConfig(),
+        streamer =
+          FakeStreamer(
+            events =
+              listOf(
+                AgentStreamEvent.TextDelta("A", startsStep = true),
+                AgentStreamEvent.StepFinal(text = "A", reasoning = null),
+                AgentStreamEvent.TextDelta("\n\n"),
+                AgentStreamEvent.TextDelta("B", startsStep = true),
+                AgentStreamEvent.StepFinal(text = "B", reasoning = null),
+                AgentStreamEvent.Completed,
+              ),
+          ),
+        store = FakeSessionStore(),
+      )
+    advanceUntilIdle()
+
+    viewModel.onInputChange("在吗")
+    viewModel.send()
+    advanceUntilIdle()
+
+    assertEquals("A" + "\n\n" + "B", viewModel.state.value.messages.last().content)
+  }
 }
 
 private class FakeStreamer(
@@ -432,7 +488,8 @@ private class PacedStreamer : ChatStreamer {
 /** 吐一片就永远挂住，用来验证“停止”。 */
 private class BlockingStreamer : ChatStreamer {
   override fun stream(sessionId: String, prompt: String): Flow<AgentStreamEvent> = flow {
-    emit(AgentStreamEvent.TextDelta("半"))
+    // 与真实 Streamer 一致：每步第一条增量带 startsStep（界面据此立刻上屏）
+    emit(AgentStreamEvent.TextDelta("半", startsStep = true))
     awaitCancellation()
   }
 }

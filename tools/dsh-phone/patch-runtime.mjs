@@ -75,6 +75,56 @@ if (jsonl.includes(renameCall)) {
   console.log(`patched: ${jsonlPath}`)
 }
 
+// 补丁 4：把进程内的 token 级增量（agent/assistant-stream）转发给宿主。
+//
+// SDK 原本只把「每一步组装完成的 assistant/message」经 session.event 发给宿主 —— 一次模型回复
+// 只对应一条消息，所以手机上看起来是整段蹦出来。进程内其实一直有 delta 级事件
+// （text-delta / reasoning-delta / tool-call-delta…），只是 JSON-RPC server 没有转发它。
+// 这里补一段同样的 ctx.on(...) → transport.notify("session.stream", ...)。
+//
+// 诊断只打**结构**（帧数与字符数），不打正文 —— 与「屏幕与聊天正文不落日志」那条红线一致。
+const streamMarker = 'Tappet patch: forward assistant stream'
+const streamPath = join(modulesDir, '@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js')
+const streamSrc = readFileSync(streamPath, 'utf8')
+const streamAnchor = '\t\tthis.disposers.push(ctx.on("session/created", (session) => {'
+if (streamSrc.includes(streamMarker)) {
+  console.log('assistant stream patch already applied')
+} else {
+  if (!streamSrc.includes(streamAnchor)) {
+    throw new Error(`assistant stream 结构变了，找不到锚点：${streamPath}`)
+  }
+  const injected = [
+    '\t\t// ' + streamMarker,
+    '\t\tconst tappetStreamStats = new Map();',
+    '\t\tthis.disposers.push(ctx.on("agent/assistant-stream", ({ agent, frame }) => {',
+    '\t\t\tif (!frame || frame.type !== "chunk" || !agent) return;',
+    '\t\t\tconst sid = String(agent.session.id);',
+    '\t\t\tconst stats = tappetStreamStats.get(sid) ?? { frames: 0, text: 0 };',
+    '\t\t\tstats.frames += 1;',
+    '\t\t\tconst chunk = frame.chunk ?? {};',
+    '\t\t\tif (chunk.type === "text-delta") stats.text += String(chunk.text ?? "").length;',
+    '\t\t\ttappetStreamStats.set(sid, stats);',
+    '\t\t\tthis.transport.notify("session.stream", {',
+    '\t\t\t\tsessionId: sid,',
+    '\t\t\t\tattemptId: String(frame.attemptId),',
+    '\t\t\t\trevision: frame.revision,',
+    '\t\t\t\tindex: frame.index,',
+    '\t\t\t\tchunk',
+    '\t\t\t});',
+    '\t\t}));',
+    '\t\tthis.disposers.push(ctx.on("agent/assistant-stream", ({ agent, frame }) => {',
+    '\t\t\tif (!frame || frame.type !== "end" || !agent) return;',
+    '\t\t\tconst sid = String(agent.session.id);',
+    '\t\t\tconst stats = tappetStreamStats.get(sid) ?? { frames: 0, text: 0 };',
+    '\t\t\ttappetStreamStats.delete(sid);',
+    '\t\t\tconsole.error(`[tappet] assistant stream end: frames=${stats.frames} textChars=${stats.text}`);',
+    '\t\t}));',
+    '',
+  ].join('\n')
+  writeFileSync(streamPath, streamSrc.replace(streamAnchor, injected + streamAnchor))
+  console.log(`patched: ${streamPath}`)
+}
+
 // 补丁 3：隐藏 dsh Web 前端的 Preview Notice 引导弹窗。
 // 它的确认状态写入 ui-settings-general 设置命名空间，而 settings.write 需要
 // file-backed include 树里的 config-editor 条目（我们目前把 rows 直接挂在 loader.root，

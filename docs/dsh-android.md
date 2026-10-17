@@ -273,7 +273,8 @@ adb shell am broadcast --include-stopped-packages `
     要点「保持开启」；否则服务会被关掉（AGENTS.md 已记，这里再确认一次）。
   - 未覆盖：抽屉左滑手势、长按选中复制、Web 预览页的新返回栏（这几项靠 Compose 预览 / 后续真机补）。
 - **仍缺**：Web 面板里的会话不进 Room（两套会话各自独立，暂不合并）；工具卡的 `meta`
-  （dsh-tool-fs 的 diff 预览）没接；dsh 仍只有 step 级 assistant/message，没有 token 级增量；
+  （dsh-tool-fs 的 diff 预览）没接；dsh 仍只有 step 级 assistant/message，token 级增量见下条更新；
+  的；**2026-10-17 起 token 级增量已接上**（见下方「已知差异」那条的更新说明）。
   ColorOS 上「停止」只停 UI 收集，dsh 那一轮仍会跑完（SDK 无取消方法）。
 
 ### P7 通用原语收敛：chat-tools 下线（2026-10-04）
@@ -310,6 +311,12 @@ adb shell am broadcast --include-stopped-packages `
 - **已知差异**：Web 端逐 token 实时思考来自 web adapter 的 `assistant/live-chunk` 瞬态帧，
   SDK stdio 服务器不转发 `agent/assistant-stream`，所以原生块是 **step 级**（模型一步结束、
   工具调用/正文之前整段到达）；要逐 token 需另开通道，暂不做。
+
+> **2026-10-17 更新**：已经另开通道了。`tools/dsh-phone/patch-runtime.mjs` 的补丁 4 让 SDK stdio
+> 服务器把进程内的 `agent/assistant-stream` 转成 `session.stream` 通知；Kotlin 侧
+> （`DshProtocol` / `DshStreamer` / `ChatViewModel`）逐字上屏、UI 50ms 合并刷新，步进成品
+> （`assistant/message`）到达时**只替换本步**追加的文本（多步回答的前几步不会被吃掉）。
+> 实测：一条 795 字的回复 = 128 个增量帧（`[tappet] assistant stream end: frames=128 textChars=795`）。
 - **验证（JVM）**：插件 `npm test`（8 个工具 + bridge contract）；Android
   `:app:testDebugUnitTest`（DshProtocol reasoning block、ChatViewModel reasoning 落库/恢复、
   ReasoningSummary）、`:app:assembleDebug` 全绿。

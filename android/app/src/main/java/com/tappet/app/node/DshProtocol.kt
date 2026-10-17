@@ -19,8 +19,11 @@ sealed interface DshEvent {
   fun withSessionId(sessionId: String): DshEvent
 
   /**
-   * 一个 step 组装完成的助手消息（dsh 不发 token 级增量）。
-   * [reasoning] 是同一 step 的推理原文（content 里 type=reasoning 的 block），无推理时为 null。
+   * 一个 step 组装完成的助手消息。
+   *
+   * dsh 自己只发这个粒度；token 级增量由 Tappet 的运行时补丁转发（见 [StreamDelta] 与
+   * `tools/dsh-phone/patch-runtime.mjs` 补丁 4）。[reasoning] 是同一 step 的推理原文
+   * （content 里 type=reasoning 的 block），无推理时为 null。
    */
   data class AssistantMessage(override val sessionId: String, val text: String, val reasoning: String? = null) : DshEvent {
     override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
@@ -54,6 +57,19 @@ sealed interface DshEvent {
     override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
   }
 
+  /**
+   * token 级增量（Tappet 运行时补丁转发，`session.stream`）。[text] 与 [reasoning] 只会有一个非空。
+   *
+   * 只转发正文与推理两类 chunk；`tool-call-delta` 之类对 UI 没有意义，直接丢。
+   */
+  data class StreamDelta(
+    override val sessionId: String,
+    val text: String? = null,
+    val reasoning: String? = null,
+  ) : DshEvent {
+    override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
+  }
+
   /** 整个会话的 running / idle 流转。 */
   data class Status(override val sessionId: String, val running: Boolean) : DshEvent {
     override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
@@ -76,6 +92,19 @@ object DshProtocol {
 
       "session.event" -> parseSessionEvent(sessionId, params["event"]?.jsonObject ?: return null)
 
+      // Tappet 运行时补丁转发（tools/dsh-phone/patch-runtime.mjs 补丁 4）：token 级增量
+      "session.stream" -> parseStreamFrame(sessionId, params["chunk"]?.jsonObject ?: return null)
+
+      else -> null
+    }
+  }
+
+  /** token 级增量帧。只认正文与推理；其它 chunk（工具参数增量、block 边界）对 UI 没有意义。 */
+  private fun parseStreamFrame(sessionId: String, chunk: JsonObject): DshEvent? {
+    val text = chunk["text"]?.jsonPrimitive?.contentOrNull ?: return null
+    return when (chunk["type"]?.jsonPrimitive?.contentOrNull) {
+      "text-delta" -> DshEvent.StreamDelta(sessionId, text = text)
+      "reasoning-delta" -> DshEvent.StreamDelta(sessionId, reasoning = text)
       else -> null
     }
   }

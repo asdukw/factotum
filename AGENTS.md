@@ -228,7 +228,9 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   开启期间 `dispatchGesture` 会被系统吞掉，点击 / 长按 / 上下滚动自动改走 `performAction`。
 - **改 dsh 运行时不要用 `boot()` / CLI loader**（硬依赖无 Android 产物的
   `node-addon-require-builtin`）：走 `launcher.mjs`；Android 上 `patch-runtime.mjs` 放行 flock、
-  把 jsonl 硬链接发布改为 rename。
+  把 jsonl 硬链接发布改为 rename，**并把进程内的 `agent/assistant-stream` 转成 `session.stream`
+  通知**（补丁 4：dsh 自己只发 step 级 `assistant/message`；没有这条，回复只能整段出现）。
+  补丁是幂等的、锚点失配会直接报错，别静默跳过。
 - **内嵌 Node 是进程内单实例、常驻形态**：stdout 是 JSON-RPC 协议独占（profile 不能挂 stdout logger，
   诊断走 stderr）；可连续任务、不需要 force-stop，但**不要发 `shutdown`、不要 `process.exit()`**
   （会 FORTIFY/SIGABRT 掉整个 App）。跨 App 任务需前台服务保活。
@@ -378,6 +380,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `Task '.abis=x86_64' not found` | PowerShell 把 `-Ptappet.abis=x86_64` 拆成两个参数 → 加引号：`"-Ptappet.abis=x86_64"` |
 | 装到手机上 `dlopen libc++_shared.so` 失败（刚跑过模拟器） | jniLibs 停在 x86_64 → `tools/fetch-libnode.ps1` 切回 arm64 再出包 |
 | `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
+| 助手回复整段蹦出来、没有逐字效果 | 运行时补丁 4 没生效（stdout 上没有 `session.stream` 帧）→ 重跑 `tools/bundle-dsh.ps1` 并重装 APK；Kotlin 侧另有 50ms 合并，纯聊天不涉及无障碍 |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
 
 ## 深度文档

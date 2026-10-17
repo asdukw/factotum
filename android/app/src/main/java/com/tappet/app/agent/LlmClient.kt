@@ -31,9 +31,23 @@ import java.util.concurrent.TimeUnit
 
 /** 流式响应事件。推理内容单独成一路，避免混进正文。 */
 sealed interface AgentStreamEvent {
-  data class TextDelta(val text: String) : AgentStreamEvent
+  /**
+   * 正文增量。[startsStep] 为真表示这是某一步的第一个增量 —— 界面据此记下「本步起点」，
+   * 好在 [StepFinal] 到达时只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
+   */
+  data class TextDelta(val text: String, val startsStep: Boolean = false) : AgentStreamEvent
 
-  data class ReasoningDelta(val text: String) : AgentStreamEvent
+  /** 推理增量；[startsStep] 含义同 [TextDelta]。 */
+  data class ReasoningDelta(val text: String, val startsStep: Boolean = false) : AgentStreamEvent
+
+  /**
+   * 一步的最终成品（dsh 的 `assistant/message`）。
+   *
+   * 若这一步之前收到过增量，界面用它**替换本步**追加的文本：增量只是为了让人看见过程，
+   * 落库与最终展示以这条为准（两边的差可能来自流式分片边界与最终组装）。没收到过增量时
+   * 不会发这条 —— 走老的 [TextDelta] 追加路径，于是「运行时没打补丁」时行为与从前一致。
+   */
+  data class StepFinal(val text: String?, val reasoning: String?) : AgentStreamEvent
 
   /** 阶段性状态（dsh 事件映射用）；会替换正文显示，直到下一个 [TextDelta]。 */
   data class Status(val text: String) : AgentStreamEvent

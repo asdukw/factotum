@@ -62,4 +62,18 @@ class ProviderFilterTest {
     val renamed = listOf(settings(LlmPreset.Custom, name = "公司网关", model = "gpt-5.5"))
     assertEquals(1, filterProviders(renamed, "公司").size)
   }
+
+  @Test
+  fun `providers are sorted by display name`() {
+    val names = sortProviders(all).map { it.name }
+
+    assertEquals(
+      listOf("Anthropic", "DeepSeek", "OpenAI", "OpenCode Go", "OpenRouter", "自定义"),
+      names,
+    )
+    // 改名后跟着新名字排（而不是钉死在目录顺序上）。
+    val renamed =
+      all.map { if (it.preset == LlmPreset.Custom) it.copy(name = "AAA 网关") else it }
+    assertEquals("AAA 网关", sortProviders(renamed).first().name)
+  }
 }

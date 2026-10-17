@@ -32,7 +32,9 @@ internal class ProvidersViewModel(private val appContext: Context) : ViewModel()
   }
 
   fun reload() {
-    _state.update { it.copy(providers = AgentConfigStore.providers(appContext), error = null) }
+    _state.update {
+      it.copy(providers = sortProviders(AgentConfigStore.providers(appContext)), error = null)
+    }
   }
 
   fun onQueryChange(value: String) {

@@ -7,12 +7,14 @@ release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版�
 
 ## [未发布]
 
+## [0.3.0] - 2026-10-17
+
 ### 新增
 
 - **视觉路径（帧契约）**：控件树读不到时不再请用户「强行停止」目标 App，改走
   `capture_frame`（图 + 帧信息）→ `tap_target`（按该帧的图像像素外框点击）。执行层负责
   图像像素 → 屏幕像素的换算，动作后比对 8×8 指纹回 `changed`。工具面：新增 `capture_frame` /
-  `tap_target` / `long_press_target`，移除 `tap_point`（屏幕像素陷阱）。
+  `tap_target` / `long_press_target`，移除 `tap_point`（屏幕像素陷阱）与 `screenshot`（由 `capture_frame` 取代）。
 
 ### 变更
 
@@ -29,6 +31,8 @@ release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版�
 - **树不可读时无法输入文字**（`type_text` / `press(enter)` 都要控件树找输入框）——
   「给某人发一条消息」这类任务仍做不到，需要 roadmap §2.5 的自建 IME。
 - 帧契约的换算有单测钉住，但**模型在图上估坐标准不准尚未真机验证**。
+
+完整说明见 [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md)。
 
 ## [0.2.0] - 2026-10-17
 

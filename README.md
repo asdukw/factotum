@@ -25,11 +25,11 @@ agent 运行时是内嵌在 App 里的 Node 24 + dsh（DeepSeek Harness）phone 
 [Releases](https://github.com/asdukw/tappet/releases) 里有签名 APK 与 `.sha256`：
 
 ```bash
-adb install -r tappet-v0.2.0-arm64-v8a.apk
+adb install -r tappet-v0.3.0-arm64-v8a.apk
 
 # 可选：确认包没被换过（证书指纹应与这里一致）
-apksigner verify --print-certs tappet-v0.2.0-arm64-v8a.apk
-# SHA-256: 5522b33e1010feab0ab0778c4e304c9571289879dcf0429ffc6a4dee1c9375f6
+apksigner verify --print-certs tappet-v0.3.0-arm64-v8a.apk
+# SHA-256: 746ed551c2b70a6957bf43c4aa8ecba0308f62556390f38045a5ba1b54f504dd
 ```
 
 APK 由 CI 在 `v*` tag 上用 release keystore 签名；密钥不参与构建，

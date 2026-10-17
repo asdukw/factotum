@@ -416,7 +416,9 @@ private fun SessionDrawer(
       )
 
       HorizontalDivider(Modifier.padding(vertical = 8.dp))
-      DrawerNavRow("设置（端点 / API key）", onClick = onOpenSettings)
+      DrawerNavRow(label = "设置", onClick = onOpenSettings) {
+        CogGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
       if (configSummary.isNotBlank()) {
         Text(
           text = configSummary,
@@ -454,12 +456,21 @@ private fun SessionDrawer(
 }
 
 @Composable
-private fun DrawerNavRow(label: String, onClick: () -> Unit) {
+private fun DrawerNavRow(
+  label: String,
+  onClick: () -> Unit,
+  leading: @Composable () -> Unit,
+) {
   Row(
     modifier =
-      Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 12.dp),
+      Modifier.fillMaxWidth()
+        .clip(RoundedCornerShape(10.dp))
+        .clickable(onClick = onClick)
+        .padding(horizontal = 12.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
+    leading()
+    Spacer(Modifier.width(10.dp))
     Text(text = label, style = MaterialTheme.typography.bodyMedium)
   }
 }

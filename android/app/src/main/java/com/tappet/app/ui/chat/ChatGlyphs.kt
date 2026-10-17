@@ -158,3 +158,29 @@ internal fun BulbGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)) {
     )
   }
 }
+
+/** 设置：齿轮（细线条，与抽屉其它图标同一套线宽）。 */
+@Composable
+internal fun CogGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val core = size.minDimension * 0.24f
+    drawCircle(tint, core, Offset(cx, cy), style = Stroke(w))
+    repeat(8) { index ->
+      val angle = Math.PI / 4 * index
+      val cosA = kotlin.math.cos(angle).toFloat()
+      val sinA = kotlin.math.sin(angle).toFloat()
+      val inner = size.minDimension * 0.33f
+      val outer = size.minDimension * 0.46f
+      drawLine(
+        tint,
+        Offset(cx + cosA * inner, cy + sinA * inner),
+        Offset(cx + cosA * outer, cy + sinA * outer),
+        strokeWidth = w,
+        cap = StrokeCap.Round,
+      )
+    }
+  }
+}

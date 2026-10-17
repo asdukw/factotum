@@ -11,6 +11,8 @@ import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.StoredMessage
 import com.tappet.app.data.session.StoredToolCall
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +38,13 @@ data class ChatUiState(
   val isStreaming: Boolean = false,
   val configSummary: String = "",
   val configured: Boolean = true,
+  /** 当前提供商 / 模型（聊天页切换器用）。 */
+  val providerId: String = "",
+  val providerName: String = "",
+  val model: String = "",
+  /** 正在重载运行时；期间禁止再次切换或发消息。 */
+  val switchingModel: Boolean = false,
+  val switchError: String? = null,
   /** 历史消息是否已从库里读完。读完之前不允许发送，否则会插到错误的位置。 */
   val ready: Boolean = false,
   /** 本地库打不开时的原因；不为空说明这次启动读不了也写不了。 */
@@ -68,15 +77,34 @@ class ChatViewModel(
   private val store: SessionStore,
   private val clock: () -> Long = System::currentTimeMillis,
   private val flushIntervalMs: Long = FLUSH_INTERVAL_MS,
+  /** 聊天页的提供商 / 模型切换（保存 + 重载运行时）；null 时界面不显示切换入口。 */
+  private val switcher: ModelSwitcher? = null,
+  private val switchDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
+  private val reasoningLabel = config.reasoningEffort ?: "默认"
+
   private val _state =
     MutableStateFlow(
       ChatUiState(
         configSummary = config.shortSummary(),
         configured = config.isConfigured,
+        providerId = config.preset.id,
+        providerName = config.preset.label,
+        model = config.model,
       ),
     )
   val state: StateFlow<ChatUiState> = _state.asStateFlow()
+
+  /** 聊天页的模型切换状态机（读候选 / 落盘 / 重载运行时）。 */
+  val modelSwitch =
+    ChatModelSwitchController(
+      switcher = switcher,
+      scope = viewModelScope,
+      reasoningLabel = reasoningLabel,
+      snapshot = { _state.value },
+      update = { transform -> _state.update(transform) },
+      ioDispatcher = switchDispatcher,
+    )
 
   private var streamJob: Job? = null
 

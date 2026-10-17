@@ -461,6 +461,73 @@ class ChatViewModelTest {
 
     assertEquals("A" + "\n\n" + "B", viewModel.state.value.messages.last().content)
   }
+
+  @Test
+  fun switchModel_updatesStateAfterTheRuntimeReloads() = runTest(dispatcher) {
+    val switcher =
+      FakeModelSwitcher(
+        choices = listOf(ModelChoice("openai", "OpenAI", "gpt-6-sol", current = true)),
+      )
+    val viewModel =
+      ChatViewModel(
+        config = testConfig(),
+        streamer = FakeStreamer(events = emptyList()),
+        store = FakeSessionStore(),
+        switcher = switcher,
+        switchDispatcher = dispatcher,
+      )
+    advanceUntilIdle()
+
+    assertEquals(1, viewModel.modelSwitch.prepare().size)
+    viewModel.modelSwitch.switch(ModelChoice("openai", "OpenAI", "gpt-6-sol", current = false))
+    advanceUntilIdle()
+
+    assertEquals(listOf("openai" to "gpt-6-sol"), switcher.calls)
+    val state = viewModel.state.value
+    assertEquals("openai", state.providerId)
+    assertEquals("OpenAI", state.providerName)
+    assertEquals("gpt-6-sol", state.model)
+    assertFalse(state.switchingModel)
+    assertNull(state.switchError)
+    assertTrue(state.configSummary.contains("gpt-6-sol"))
+  }
+
+  @Test
+  fun switchModel_surfacesFailureAndKeepsTheOldSelection() = runTest(dispatcher) {
+    val switcher = FakeModelSwitcher(failure = IllegalStateException("重载超时"))
+    val viewModel =
+      ChatViewModel(
+        config = testConfig(),
+        streamer = FakeStreamer(events = emptyList()),
+        store = FakeSessionStore(),
+        switcher = switcher,
+        switchDispatcher = dispatcher,
+      )
+    advanceUntilIdle()
+    val before = viewModel.state.value.model
+
+    viewModel.modelSwitch.switch(ModelChoice("openai", "OpenAI", "gpt-6-sol", current = false))
+    advanceUntilIdle()
+
+    val state = viewModel.state.value
+    assertEquals("重载超时", state.switchError)
+    assertFalse(state.switchingModel)
+    assertEquals(before, state.model)
+  }
+}
+
+private class FakeModelSwitcher(
+  private val choices: List<ModelChoice> = emptyList(),
+  private val failure: Throwable? = null,
+) : ModelSwitcher {
+  val calls = mutableListOf<Pair<String, String>>()
+
+  override fun choices(): List<ModelChoice> = choices
+
+  override suspend fun switch(providerId: String, model: String) {
+    calls += providerId to model
+    failure?.let { throw it }
+  }
 }
 
 private class FakeStreamer(

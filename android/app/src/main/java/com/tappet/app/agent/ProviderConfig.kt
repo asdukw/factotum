@@ -23,6 +23,8 @@ internal data class ProviderSettings(
   val enabled: Boolean,
   /** 从端点 `GET /models` 拉回来并落盘的 id（可能很多）；只用来挑选，不改变模态声明。 */
   val remoteModels: List<String> = emptyList(),
+  /** 用户选进「可用模型」的 id（来自端点列表或手填）；聊天页从这里挑。 */
+  val selectedModels: List<String> = emptyList(),
 ) {
   /** 端点与模型都齐全 —— 运行时至少能挂载（不一定能请求成功）。 */
   val canEnable: Boolean
@@ -44,11 +46,10 @@ internal data class ProviderSettings(
         api == preset.api
 
   /**
-   * 列表卡片上的「N 个模型」：端点拉回来的 ∪ 手填/选中的那个 —— 也就是这个提供商在界面里
-   * **真的能选**的 id 数。没有手写目录，所以新加的提供商一开始就是 0 个。
+   * 列表卡片上的「N 个模型」：用户选进「可用模型」的数量（当前模型也计入）。
    */
   val modelCount: Int
-    get() = (remoteModels + listOfNotNull(model.nonBlankOrNull())).distinct().size
+    get() = (selectedModels + listOfNotNull(model.nonBlankOrNull())).distinct().size
 }
 
 /** 用户改过的字段；null / 空白表示「跟随目录默认」。 */

@@ -260,8 +260,12 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK；`check-profile.mjs` 会真的执行
   `!!js` 表达式（含 `TAPPET_LLM_MODELS` 的动态清单）。**只有 OpenCode Go 的目录默认组合
   在真机上跑通过**；用户改过端点 / 模型 / 调用风格后，界面自动撤掉「已验证」。
-- 清密钥 / 停用只改存储：**已经启动的 Node 进程仍持有旧 env 直到下次启动**。界面按这个
-  事实写文案，不要承诺「立即停止使用」。
+- **可用模型列表**（`provider.<id>.models`）：设置页从端点返回的清单勾选，或手填 id；卡片上的
+  「N 个模型」= 可用模型数。聊天页底部的模型条打开选择 sheet，选中后
+  `setModel + setEnabled + NodeRuntime.reload`，立即生效。**重载会换 dsh 会话命名空间**：
+  界面历史保留，但模型上下文从下一条消息重新开始（dsh SDK 只有 create、无 resume）。
+- 清密钥 / 停用：密钥 env 只在 Node 启动时读入，**改 key 需要重启 App**；模型 / 提供商切换
+  会 reload，不需要重启。
 
 ### 几条不许碰的约束
 
@@ -287,6 +291,12 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - **内嵌 Node 是进程内单实例、常驻形态**：stdout 是 JSON-RPC 协议独占（profile 不能挂 stdout logger，
   诊断走 stderr）；可连续任务、不需要 force-stop，但**不要发 `shutdown`、不要 `process.exit()`**
   （会 FORTIFY/SIGABRT 掉整个 App）。跨 App 任务需前台服务保活。
+- **配置切换走运行时重载，不是重启进程**：宿主写 `dsh-home/runtime-config.json`（**非密**）+
+  `runtime.reload` 信号；launcher 卸载整棵 cordis 根后重新 mount（实测 ~0.2–1s，同一 pid），
+  并在 mount 前用配置覆盖 `process.env`。密钥在 Node 启动时预置成 `TAPPET_LLM_KEY_<ID>`，
+  配置里的 `TAPPET_LLM_KEY_FROM` 只做 env 拷贝 —— **密钥不落盘**。重载后必须重新 `initialize`
+  并轮换 session 命名空间（`runtimeTag`），否则会撞上磁盘上已有的同名 dsh 会话。
+  换 API Key 仍是启动时读入：改 key 需要重启 App（或等下次进程启动）。
 
 ## 命名与存储身份（改名红线）
 
@@ -408,7 +418,7 @@ tools/
   bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验与模型模态索引）
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
-  dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
+  dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
   dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
@@ -443,10 +453,12 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 模型不读图 / 被声明成纯文本 | `assets/model-modalities.json` 缺失或没有该 id → 跑 `bundle-dsh.ps1`；索引里没有的 id 按 text 声明（安全方向），不要手改生成物 |
 | 端点模型列表拉取报 HTTP 4xx | 密钥与端点不匹配 / 该端点不提供 `/models` → 手填模型 id；列表只是辅助，不影响手填 |
 | dsh 报 `provider "tappet" has an empty baseURL`，App 崩 | 启用的自定义提供商端点被清空 → `toAgentConfig` 会回落目录默认并清空 key；若仍出现，检查 `current()` 的 `canEnable` 分支 |
-| 设置里清掉 key / 停用后，当前进程仍能发请求 | env 只在 Node 启动时读一次；重启 App 才生效（界面文案按这个事实写） |
+| 设置里清掉 key / 停用后，当前进程仍能发请求 | 密钥 env 只在 Node 启动时读入；换 key 需重启 App。模型 / 提供商切换走 reload，立即生效 |
+| 切换模型后模型看不到之前的对话 | 设计如此：reload 换 dsh 会话命名空间，界面历史保留但模型上下文重新开始（SDK 只有 create 无 resume） |
+| 重载超时 / 重载后 initialize 失败 | 看 `NODEJS-MOBILE` 的 `[launcher] reload ...` 与 `runtime.ready`；超时 60s 后 `TappetNode` 会报重载失败 |
 | 提供商列表显示「缺 Key」 | 该提供商没有密钥；启用 / 选中模型都要求先保存 key（否则会把正在用的那家停掉、App 变成未配置） |
 | 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置（构建期不带密钥，设计如此） |
-| 设置页保存了却没生效 | 设计如此：内嵌 Node 的 env 与 dsh profile 只在启动时读一次 → 重启 App |
+| 设置页保存了却没生效 | 提供商 / 模型在聊天页切换时重载生效；端点、密钥等改动在下次启动或下次切换重载后生效 |
 | 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配 → 换预选或重填 key |
 | dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
 | dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 的 runtimeTag 后缀别去掉 |

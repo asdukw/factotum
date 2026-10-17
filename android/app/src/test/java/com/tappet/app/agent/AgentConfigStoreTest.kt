@@ -300,7 +300,7 @@ class AgentConfigStoreTest {
   }
 
   @Test
-  fun `model count counts the selected model and the fetched list`() {
+  fun `model count counts the available models`() {
     val selected =
       resolveProviderSettings(
         LlmPreset.OpenAi,
@@ -311,10 +311,14 @@ class AgentConfigStoreTest {
       )
     assertEquals(1, selected.modelCount)
 
-    // 端点拉回来的清单也算进「能选的模型数」，重复 id 不重复计数。
-    val withRemote =
-      selected.copy(remoteModels = listOf("gpt-6-sol", "vendor/x", "vendor/y"))
-    assertEquals(3, withRemote.modelCount)
+    // 「可用模型」列表决定卡片上的数量；端点拉回来的清单只是候选，不算进去。
+    val withAvailable =
+      selected.copy(selectedModels = listOf("gpt-6-sol", "vendor/x", "vendor/y"))
+    assertEquals(3, withAvailable.modelCount)
+    assertEquals(
+      3,
+      withAvailable.copy(remoteModels = listOf("vendor/z")).modelCount,
+    )
 
     val empty =
       resolveProviderSettings(

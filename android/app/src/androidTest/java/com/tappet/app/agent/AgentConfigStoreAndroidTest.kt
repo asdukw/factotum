@@ -96,11 +96,11 @@ class AgentConfigStoreAndroidTest {
   @Test
   fun remoteModelListIsPersistedPerProvider() {
     saveRemoteModels(context, LlmPreset.OpenAi, listOf("vendor/model-a", "vendor/model-b"))
+    saveSelectedModels(context, LlmPreset.OpenAi, listOf("vendor/model-a"))
 
-    assertEquals(
-      listOf("vendor/model-a", "vendor/model-b"),
-      AgentConfigStore.provider(context, LlmPreset.OpenAi).remoteModels,
-    )
+    val settings = AgentConfigStore.provider(context, LlmPreset.OpenAi)
+    assertEquals(listOf("vendor/model-a", "vendor/model-b"), settings.remoteModels)
+    assertEquals(listOf("vendor/model-a"), settings.selectedModels)
     assertTrue(AgentConfigStore.provider(context, LlmPreset.DeepSeek).remoteModels.isEmpty())
 
     // 坏数据当空，不拖垮设置页。

@@ -20,7 +20,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { loadProfileDirectory, readProfilePatches, composeEntries } from '@deepseek-ai/dsh-app-boot'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -63,42 +63,113 @@ process.stdout.write = (chunk, encoding, callback) => {
 }
 
 // ── profile 组合 ────────────────────────────────────────────────────────────
-const profile = loadProfileDirectory('dsh', profileDir, installAnchor, { userLayer: true })
-const profileContext = {
-  name: 'phone',
-  dir: profileDir,
-  patchPath: profile.patchPath,
-  installAnchor,
-  startedBundles: [],
-  cwd: process.cwd(),
-  home,
-  overlays: [],
-  telemetryDisabledEnv: '1',
+// 每次 mount 都重新读 profile：重载时可以换掉 provider / models 等 !!js 结果。
+// （env 由宿主在 Node 进程启动前设好；同一个进程内重载不会改 env —— 模型清单这类
+//  非密配置由宿主写进 runtime-config.json，launcher 在 mount 前读出来覆盖 env。）
+function buildRows() {
+  const profile = loadProfileDirectory('dsh', profileDir, installAnchor, { userLayer: true })
+  const profileContext = {
+    name: 'phone',
+    dir: profileDir,
+    patchPath: profile.patchPath,
+    installAnchor,
+    startedBundles: [],
+    cwd: process.cwd(),
+    home,
+    overlays: [],
+    telemetryDisabledEnv: '1',
+  }
+  return {
+    rows: composeEntries([readProfilePatches('dsh', profileContext, profile)]),
+    profileContext,
+  }
 }
-const rows = composeEntries([readProfilePatches('dsh', profileContext, profile)])
 
-const ctx = new Context()
-ctx.baseUrl = pathToFileURL(runtimeDir + '/').href
-let exitResolve
-const exited = new Promise((resolve) => (exitResolve = resolve))
-ctx.provide('appExit', (code) => {
-  console.error(`[launcher] appExit code=${code}`)
-  exitResolve()
-})
-// dsh web 表层的命令行：不开浏览器（Android 没有可交棒的桌面浏览器），端口交给 OS 选。
-ctx.provide('cmdlineArgs', { get: () => ['--no-open', '--port', '0'] })
-ctx.provide('profileContext', profileContext)
-ctx.provide('dshHomePath', (path) => join(home, path))
+const reloadFile = join(workDir, 'runtime.reload')
+const readyFile = join(workDir, 'runtime.ready')
+const configFile = join(workDir, 'runtime-config.json')
+rmSync(reloadFile, { force: true })
+rmSync(readyFile, { force: true })
 
-// Loader 自己提供 loader 服务（异步），再把组合好的 rows 挂到根组。
-await ctx.plugin(Loader)
-await new Promise((resolve) => ctx.inject(['loader'], () => resolve()))
-await ctx.get('loader').root.update(rows)
-await ctx.get('loader').await()
+/**
+ * 重载前宿主把**非密配置**写进 runtime-config.json（env 名 → 值）。
+ * 同一个 Node 进程里改不了 process.env，所以每次 mount 前在这里覆盖一遍。
+ * 密钥不走这个文件：宿主启动时把每个提供商的 key 预置成 TAPPET_LLM_KEY_<ID>，
+ * 配置里的 TAPPET_LLM_KEY_FROM 指向其中一个 env 名，这里只做一次拷贝。
+ */
+function applyRuntimeConfig() {
+  if (!existsSync(configFile)) return
+  try {
+    const config = JSON.parse(readFileSync(configFile, 'utf8'))
+    const keyFrom = config.TAPPET_LLM_KEY_FROM
+    if (typeof keyFrom === 'string') {
+      process.env.TAPPET_LLM_KEY = process.env[keyFrom] ?? ''
+    }
+    for (const [name, value] of Object.entries(config)) {
+      if (name === 'TAPPET_LLM_KEY_FROM') continue
+      if (typeof value === 'string') process.env[name] = value
+    }
+    console.error('[launcher] runtime config applied')
+  } catch (error) {
+    console.error('[launcher] runtime config invalid:', error?.message ?? error)
+  }
+}
 
+/**
+ * 挂载一份完整的 dsh 运行时。返回的 ctx 可以被 root.fiber.dispose() 卸载，
+ * 卸载后 SDK stdio transport 会 detach stdin，下一次 mount 重新接管。
+ */
+async function mountRuntime() {
+  applyRuntimeConfig()
+  const { rows, profileContext } = buildRows()
+  const ctx = new Context()
+  ctx.baseUrl = pathToFileURL(runtimeDir + '/').href
+  let exitResolve
+  const exited = new Promise((resolve) => (exitResolve = resolve))
+  ctx.provide('appExit', (code) => {
+    console.error(`[launcher] appExit code=${code}`)
+    exitResolve()
+  })
+  // dsh web 表层的命令行：不开浏览器（Android 没有可交棒的桌面浏览器），端口交给 OS 选。
+  ctx.provide('cmdlineArgs', { get: () => ['--no-open', '--port', '0'] })
+  ctx.provide('profileContext', profileContext)
+  ctx.provide('dshHomePath', (path) => join(home, path))
+
+  // Loader 自己提供 loader 服务（异步），再把组合好的 rows 挂到根组。
+  await ctx.plugin(Loader)
+  await new Promise((resolve) => ctx.inject(['loader'], () => resolve()))
+  await ctx.get('loader').root.update(rows)
+  await ctx.get('loader').await()
+  return { ctx, exited }
+}
+
+let current = await mountRuntime()
+writeFileSync(readyFile, String(Date.now()))
 console.error('[launcher] runtime mounted; stdio JSON-RPC ready')
-// 常驻：jsonrpc server 监听 stdin 保持事件循环；shutdown/退出由宿主进程决定。
-// 内嵌 Node 里调用 process.exit() 会 abort 宿主 App 进程（pthread mutex 已销毁），
-// 所以这里只等 appExit（正常不会被触发）。
-await exited
-console.error('[launcher] runtime exited')
+
+// ── 按需重载 ────────────────────────────────────────────────────────────────
+// 宿主写 runtime.reload（内容随意）→ 卸载整棵 cordis 根 → 重新 mount。
+// 不用 process.exit：内嵌 Node 里退出会带走宿主 App 进程。
+let reloading = false
+watch(workDir, (event, filename) => {
+  if (filename !== 'runtime.reload' || reloading) return
+  if (!existsSync(reloadFile)) return
+  reloading = true
+  rmSync(reloadFile, { force: true })
+  void (async () => {
+    try {
+      console.error('[launcher] reload requested; disposing runtime')
+      await current.ctx.root.fiber.dispose()
+      current = await mountRuntime()
+      writeFileSync(readyFile, String(Date.now()))
+      console.error('[launcher] reload complete; stdio JSON-RPC ready')
+    } catch (error) {
+      console.error('[launcher] reload failed:', error?.stack ?? error)
+    } finally {
+      reloading = false
+    }
+  })()
+})
+
+// 常驻：加载/重载之间的空隙不能退出进程；退出只由宿主进程决定。
+await new Promise(() => {})

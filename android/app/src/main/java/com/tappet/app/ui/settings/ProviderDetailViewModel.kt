@@ -9,6 +9,8 @@ import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelListFetcher
 import com.tappet.app.agent.requestApiKey
 import com.tappet.app.agent.saveRemoteModels
+import com.tappet.app.agent.saveSelectedModels
+import com.tappet.app.agent.setModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,6 +48,8 @@ internal class ProviderDetailViewModel(
     val modelDraft: String = "",
     /** 从端点 `GET /models` 拉回来并落盘的清单（可能很长）。 */
     val remoteModels: List<String> = emptyList(),
+    /** 用户选进「可用模型」的清单；聊天页从这里挑。 */
+    val selectedModels: List<String> = emptyList(),
     val fetchingModels: Boolean = false,
     val fetchError: String? = null,
     val tab: DetailTab = DetailTab.Config,
@@ -92,6 +96,7 @@ internal class ProviderDetailViewModel(
         // 首次加载（草稿为空）跟随已保存模型；用户正在编辑的草稿保留。
         modelDraft = current.modelDraft.ifBlank { settings.model },
         remoteModels = settings.remoteModels,
+        selectedModels = settings.selectedModels,
       )
     }
   }
@@ -200,6 +205,28 @@ internal class ProviderDetailViewModel(
   }
 
   /**
+   * 把模型加进 / 移出「可用模型」。移除当前模型时自动落到剩下的第一个；一个都不剩就清空。
+   * 新加的第一个模型（当前模型为空）会顺手设为当前模型。
+   */
+  fun toggleSelectedModel(modelId: String) {
+    val id = modelId.trim()
+    if (id.isEmpty()) return
+    val current = _state.value
+    val next =
+      if (id in current.selectedModels) {
+        current.selectedModels - id
+      } else {
+        current.selectedModels + id
+      }
+    saveSelectedModels(appContext, preset, next)
+    when {
+      id !in next && current.model == id -> setModel(appContext, preset, next.firstOrNull().orEmpty())
+      id in next && current.model.isBlank() -> setModel(appContext, preset, id)
+    }
+    reload()
+  }
+
+  /**
    * 选一个模型。有密钥时**选中即启用这家**：模型页的语义是「Agent 用这个模型」。
    * 没有密钥时只保存模型 —— 启用一个没有 key 的提供商会把正在用的那家停掉，App 变成未配置。
    */
@@ -214,7 +241,7 @@ internal class ProviderDetailViewModel(
       _state.update { it.copy(error = "先填写 API Base Url，再选择模型") }
       return
     }
-    AgentConfigStore.saveProviderFields(appContext, preset, current.name, current.baseUrl, id, current.api)
+    setModel(appContext, preset, id)
     val hasKey = AgentConfigStore.provider(appContext, preset).hasKey
     if (hasKey) AgentConfigStore.setEnabled(appContext, preset, true)
     reload()

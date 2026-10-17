@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -100,6 +101,7 @@ fun ProviderDetailScreen(
     onResponseApiChange = viewModel::onResponseApiChange,
     onModelDraftChange = viewModel::onModelDraftChange,
     onModelSelect = viewModel::onModelSelect,
+    onToggleModel = viewModel::toggleSelectedModel,
     onUseModelDraft = viewModel::useModelDraft,
     onFetchModels = viewModel::fetchModels,
     onClearKey = viewModel::clearKey,
@@ -122,6 +124,7 @@ internal fun ProviderDetailScreen(
   onResponseApiChange: (Boolean) -> Unit,
   onModelDraftChange: (String) -> Unit,
   onModelSelect: (String) -> Unit,
+  onToggleModel: (String) -> Unit,
   onUseModelDraft: () -> Unit,
   onFetchModels: () -> Unit,
   onClearKey: () -> Unit,
@@ -138,7 +141,7 @@ internal fun ProviderDetailScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 16.dp),
       ) {
-        InfoBanner("配置改动在下次启动 App 后生效（内嵌运行时只在启动时读一次配置）")
+        InfoBanner("改动会保存；运行时在聊天页切换模型时重载，或下次启动生效")
         Spacer(Modifier.height(12.dp))
         if (state.error != null) {
           Text(
@@ -165,6 +168,7 @@ internal fun ProviderDetailScreen(
             ProviderModelsTab(
               state = state,
               onModelSelect = onModelSelect,
+              onToggleModel = onToggleModel,
               onModelDraftChange = onModelDraftChange,
               onUseModelDraft = onUseModelDraft,
               onFetchModels = onFetchModels,
@@ -346,6 +350,7 @@ private fun ApiKeyField(
 private fun ProviderModelsTab(
   state: ProviderDetailViewModel.UiState,
   onModelSelect: (String) -> Unit,
+  onToggleModel: (String) -> Unit,
   onModelDraftChange: (String) -> Unit,
   onUseModelDraft: () -> Unit,
   onFetchModels: () -> Unit,
@@ -354,12 +359,17 @@ private fun ProviderModelsTab(
 
   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(
-      text = "选中的模型就是 Agent 当前使用的模型；已保存 API Key 时，选择会启用该提供商。",
+      text = "点选可用模型会把它设为当前模型；已保存 API Key 时同时启用该提供商。",
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(horizontal = 4.dp),
     )
     CurrentModelCard(state)
+    AvailableModelsSection(
+      state = state,
+      onModelSelect = onModelSelect,
+      onToggleModel = onToggleModel,
+    )
     RemoteModelsSection(
       state = state,
       onFetchModels = onFetchModels,
@@ -371,7 +381,7 @@ private fun ProviderModelsTab(
       onUseModelDraft = onUseModelDraft,
     )
     Text(
-      text = "没有预置模型列表：从端点拉取，或直接填 id。pi-ai 目录里没有的 id 会按纯文本声明。",
+      text = "可用模型来自端点列表或手填；pi-ai 目录里没有的 id 会按纯文本声明。",
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(start = 4.dp),
@@ -381,13 +391,81 @@ private fun ProviderModelsTab(
   if (pickerOpen) {
     FetchedModelsDialog(
       models = state.remoteModels,
-      selected = state.model,
-      onSelect = { id ->
-        pickerOpen = false
-        onModelSelect(id)
-      },
+      selectedModels = state.selectedModels,
+      onToggle = onToggleModel,
       onDismiss = { pickerOpen = false },
     )
+  }
+}
+
+/** 用户从端点列表 / 手填里选出来的模型；点行设当前，右边的 × 移出列表。 */
+@Composable
+private fun AvailableModelsSection(
+  state: ProviderDetailViewModel.UiState,
+  onModelSelect: (String) -> Unit,
+  onToggleModel: (String) -> Unit,
+) {
+  SettingsGroup {
+    if (state.selectedModels.isEmpty()) {
+      Text(
+        text = "还没有可用模型：从端点添加，或在下面手填 id。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+      )
+    } else {
+      state.selectedModels.forEachIndexed { index, id ->
+        if (index > 0) SettingsDivider()
+        AvailableModelRow(
+          id = id,
+          current = id == state.model,
+          onSelect = { onModelSelect(id) },
+          onRemove = { onToggleModel(id) },
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun AvailableModelRow(
+  id: String,
+  current: Boolean,
+  onSelect: () -> Unit,
+  onRemove: () -> Unit,
+) {
+  Row(
+    modifier =
+      Modifier.fillMaxWidth()
+        .clickable(onClick = onSelect)
+        .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = id,
+      style = MaterialTheme.typography.bodyMedium,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
+    if (current) {
+      StatusBadge(text = "当前", tone = BadgeTone.Info)
+      Spacer(Modifier.width(4.dp))
+    }
+    Box(
+      modifier =
+        Modifier.size(44.dp)
+          .clip(CircleShape)
+          .clickable(onClick = onRemove)
+          .semantics { contentDescription = "移除模型 $id" },
+      contentAlignment = Alignment.Center,
+    ) {
+      Glyph(
+        kind = GlyphKind.Plus,
+        modifier = Modifier.size(18.dp).rotate(45f),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
   }
 }
 
@@ -494,12 +572,12 @@ private fun ModelDraftField(
   }
 }
 
-/** 端点返回的清单可能几百条（OpenRouter），所以带筛选 + 懒加载，不做成内联长列表。 */
+/** 端点返回的清单可能几百条（OpenRouter），所以带筛选 + 懒加载；勾选即加入可用模型。 */
 @Composable
 private fun FetchedModelsDialog(
   models: List<String>,
-  selected: String,
-  onSelect: (String) -> Unit,
+  selectedModels: List<String>,
+  onToggle: (String) -> Unit,
   onDismiss: () -> Unit,
 ) {
   var query by remember { mutableStateOf("") }
@@ -510,7 +588,7 @@ private fun FetchedModelsDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("端点返回的模型（${models.size}）") },
+    title = { Text("添加模型（${models.size}）") },
     text = {
       Column {
         OutlinedTextField(
@@ -533,8 +611,8 @@ private fun FetchedModelsDialog(
             items(visible) { id ->
               FetchedModelRow(
                 id = id,
-                selected = id == selected,
-                onClick = { onSelect(id) },
+                checked = id in selectedModels,
+                onToggle = { onToggle(id) },
               )
             }
           }
@@ -542,35 +620,36 @@ private fun FetchedModelsDialog(
       }
     },
     confirmButton = {
-      TextButton(onClick = onDismiss) { Text("关闭") }
+      TextButton(onClick = onDismiss) { Text("完成") }
     },
   )
 }
 
 @Composable
-private fun FetchedModelRow(id: String, selected: Boolean, onClick: () -> Unit) {
+private fun FetchedModelRow(id: String, checked: Boolean, onToggle: () -> Unit) {
   Row(
     modifier =
       Modifier.fillMaxWidth()
-        .clickable(onClick = onClick)
+        .clickable(onClick = onToggle)
         .padding(horizontal = 8.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    Column(Modifier.weight(1f)) {
-      Text(
-        text = id,
-        style = MaterialTheme.typography.bodyMedium,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-      )
-    }
+    Text(
+      text = id,
+      style = MaterialTheme.typography.bodyMedium,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
     Spacer(Modifier.width(12.dp))
-    if (selected) {
+    if (checked) {
       Glyph(
         kind = GlyphKind.Check,
         modifier = Modifier.size(20.dp),
         tint = MaterialTheme.colorScheme.primary,
       )
+    } else {
+      Box(Modifier.size(20.dp).border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
     }
   }
 }

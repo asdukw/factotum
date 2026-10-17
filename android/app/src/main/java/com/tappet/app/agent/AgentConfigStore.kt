@@ -24,6 +24,9 @@ private const val SUFFIX_API = "api"
 /** 端点 `GET /models` 拉回来的清单（JSON 数组字符串）。 */
 private const val SUFFIX_REMOTE_MODELS = "remote_models"
 
+/** 用户选进「可用模型」的清单（JSON 数组字符串）。 */
+private const val SUFFIX_SELECTED_MODELS = "models"
+
 // prefs 名与别名一旦定下就别再改：改了等于换一把 Keystore 密钥，用户已存的 key 读不出来。
 private const val LEGACY_SECRET_PREFS = "tappet_agent_secret"
 private const val LEGACY_KEY_ALIAS = "tappet-agent-llm-key-v1"
@@ -97,32 +100,62 @@ private fun resolve(context: Context, preset: LlmPreset, legacy: LegacyState): P
     )
   val enabled = enabledFromStored(prefs.getString(KEY_ENABLED, null), legacy) == preset
   val hasKey = apiKeyFor(context, preset, legacy).isNotBlank()
-  return resolveProviderSettings(
-    preset = preset,
-    overrides = overrides,
-    legacy = legacy.settings,
-    hasKey = hasKey,
-    enabled = enabled,
-    defaults = providerDefaultsFromBuildConfig(),
+  val base =
+    resolveProviderSettings(
+      preset = preset,
+      overrides = overrides,
+      legacy = legacy.settings,
+      hasKey = hasKey,
+      enabled = enabled,
+      defaults = providerDefaultsFromBuildConfig(),
+    )
+  // 升级用户没有「可用模型」列表：把当前模型当作唯一一项，界面与聊天页都能直接用。
+  val selected =
+    readModelList(context, preset, SUFFIX_SELECTED_MODELS).ifEmpty {
+      if (base.model.isNotBlank()) listOf(base.model) else emptyList()
+    }
+  return base.copy(
+    remoteModels = readModelList(context, preset, SUFFIX_REMOTE_MODELS),
+    selectedModels = selected,
   )
-    .copy(remoteModels = readRemoteModels(context, preset))
 }
 
-/** 端点拉回来的模型清单：只认字符串数组，坏数据当空（列表是可选功能，不该拖垮设置页）。 */
-private fun readRemoteModels(context: Context, preset: LlmPreset): List<String> {
-  val raw =
-    prefs(context).getString(providerPrefsPrefix(preset) + SUFFIX_REMOTE_MODELS, null) ?: return emptyList()
+/** 读一个模型 id 列表（JSON 数组）：只认字符串数组，坏数据当空。 */
+private fun readModelList(context: Context, preset: LlmPreset, suffix: String): List<String> {
+  val raw = prefs(context).getString(providerPrefsPrefix(preset) + suffix, null) ?: return emptyList()
   val array = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return emptyList()
   return array.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }.filter { it.isNotBlank() }
 }
 
-/** 落盘端点拉回来的清单（整份替换）。 */
-internal fun saveRemoteModels(context: Context, preset: LlmPreset, ids: List<String>) {
+private fun writeModelList(context: Context, preset: LlmPreset, suffix: String, ids: List<String>) {
   val json = buildJsonArray { ids.forEach { add(it) } }.toString()
   prefs(context)
     .edit()
-    .putString(providerPrefsPrefix(preset) + SUFFIX_REMOTE_MODELS, json)
+    .putString(providerPrefsPrefix(preset) + suffix, json)
     .apply()
+}
+
+/** 落盘端点拉回来的清单（整份替换）。 */
+internal fun saveRemoteModels(context: Context, preset: LlmPreset, ids: List<String>) =
+  writeModelList(context, preset, SUFFIX_REMOTE_MODELS, ids)
+
+/** 落盘「可用模型」清单（整份替换）。 */
+internal fun saveSelectedModels(context: Context, preset: LlmPreset, ids: List<String>) =
+  writeModelList(context, preset, SUFFIX_SELECTED_MODELS, ids)
+
+/**
+ * 设置当前模型，并确保它在「可用模型」里。
+ * 传空串 = 清除当前模型（例如用户把它从可用列表里删掉且没有其它候选）。
+ */
+internal fun setModel(context: Context, preset: LlmPreset, model: String) {
+  val settings = AgentConfigStore.provider(context, preset)
+  prefs(context)
+    .edit()
+    .putString(providerPrefsPrefix(preset) + SUFFIX_MODEL, model.trim().ifEmpty { null })
+    .apply()
+  if (model.isNotBlank() && model !in settings.selectedModels) {
+    saveSelectedModels(context, preset, settings.selectedModels + model)
+  }
 }
 
 /**
@@ -241,6 +274,8 @@ internal object AgentConfigStore {
       .remove(prefix + SUFFIX_BASE_URL)
       .remove(prefix + SUFFIX_MODEL)
       .remove(prefix + SUFFIX_API)
+      .remove(prefix + SUFFIX_REMOTE_MODELS)
+      .remove(prefix + SUFFIX_SELECTED_MODELS)
       .apply()
     val keyCleared = clearApiKey(context, preset)
     // 旧版单端点键是全局的，只在它指向的正是这家时删掉；否则重置后 legacy 仍会把旧端点

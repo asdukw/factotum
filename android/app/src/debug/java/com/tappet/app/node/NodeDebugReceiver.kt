@@ -41,6 +41,17 @@ class NodeDebugReceiver : BroadcastReceiver() {
         }
       }
 
+      "RELOAD" -> {
+        CoroutineScope(Dispatchers.IO).launch {
+          try {
+            val info = NodeRuntime.reload(app)
+            Log.i(TAG, "runtime reloaded: ${info["serverInfo"]}")
+          } catch (throwable: Throwable) {
+            Log.e(TAG, "runtime reload failed: ${throwable.message}")
+          }
+        }
+      }
+
       "TASK" -> {
         val task = intent.getStringExtra(EXTRA_TASK)
         if (task.isNullOrBlank()) {

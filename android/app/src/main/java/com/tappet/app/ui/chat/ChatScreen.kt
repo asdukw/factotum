@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,10 +39,13 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
@@ -71,11 +76,13 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
+import com.tappet.app.agent.AgentModelSwitcher
 import com.tappet.app.agent.ChatMessage
 import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
 import com.tappet.app.agent.ChatViewModel
 import com.tappet.app.agent.DshStreamer
+import com.tappet.app.agent.ModelChoice
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
 import com.tappet.app.data.session.ChatSession
@@ -107,11 +114,12 @@ fun ChatScreen(
   val appContext = LocalContext.current.applicationContext
   val viewModel: ChatViewModel = viewModel {
     ChatViewModel(
-      // 配置来自设置页（密钥走 Keystore 封装），构建期注入只是开发机上的兜底默认值。
-      // 这里读一次就定了：设置页改完要下次启动才生效，与内嵌 Node 的 env 时机一致。
+      // 配置来自设置页（密钥走 Keystore 封装）。运行时只在需要时重载：
+      // 聊天页切换模型会 remount dsh（同一个 Node 进程），不必重启 App。
       config = AgentConfigStore.current(appContext),
       streamer = DshStreamer(appContext),
       store = store,
+      switcher = AgentModelSwitcher(appContext),
     )
   }
   val state by viewModel.state.collectAsStateWithLifecycle()
@@ -124,6 +132,8 @@ fun ChatScreen(
     onOpenSession = viewModel::openSession,
     onDeleteSession = viewModel::deleteSession,
     onOpenSettings = onOpenSettings,
+    onSwitchModel = viewModel.modelSwitch::switch,
+    onPrepareModelSwitch = viewModel.modelSwitch::prepare,
     modifier = modifier,
   )
 }
@@ -138,29 +148,24 @@ internal fun ChatScreen(
   onOpenSession: (String) -> Unit = {},
   onDeleteSession: (String) -> Unit = {},
   onOpenSettings: () -> Unit = {},
+  onSwitchModel: (ModelChoice) -> Unit = {},
+  onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
   val drawerState = rememberDrawerState(DrawerValue.Closed)
   val scope = rememberCoroutineScope()
 
-  val lastMessage = state.messages.lastOrNull()
-
-  // 新消息 / 流式增量都跟着滚到底部
-  LaunchedEffect(
-    state.messages.size,
-    lastMessage?.content?.length,
-    lastMessage?.reasoning?.length,
-    lastMessage?.error,
-    lastMessage?.toolCalls?.size,
-  ) {
-    if (state.messages.isNotEmpty()) {
-      listState.scrollToItem(state.messages.lastIndex)
+  // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
+  var modelSheetOpen by remember { mutableStateOf(false) }
+  var pendingSwitch by remember { mutableStateOf(false) }
+  var modelChoices by remember { mutableStateOf(emptyList<ModelChoice>()) }
+  LaunchedEffect(state.switchingModel) {
+    if (pendingSwitch && !state.switchingModel && state.switchError == null) {
+      modelSheetOpen = false
+      pendingSwitch = false
     }
   }
-
-  val sessionTitle =
-    state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
 
   ModalNavigationDrawer(
     drawerState = drawerState,
@@ -188,42 +193,104 @@ internal fun ChatScreen(
       )
     },
   ) {
-    Column(modifier.fillMaxSize().safeDrawingPadding()) {
-      ChatTopBar(
-        title = sessionTitle,
-        onOpenSessions = { scope.launch { drawerState.open() } },
-        onNewSession = onNewSession,
-      )
+    ChatBody(
+      state = state,
+      listState = listState,
+      modifier = modifier,
+      onInputChange = onInputChange,
+      onSend = onSend,
+      onStop = onStop,
+      onNewSession = onNewSession,
+      onOpenSessions = { scope.launch { drawerState.open() } },
+      onModelSwitchClick = {
+        modelChoices = onPrepareModelSwitch()
+        modelSheetOpen = true
+      },
+    )
+  }
 
-      AccessibilityPrompt()
-      if (!state.configured) {
-        // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
-        BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
-      }
-      state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
+  if (modelSheetOpen) {
+    ModelSwitchSheet(
+      choices = modelChoices,
+      switching = state.switchingModel,
+      error = state.switchError,
+      onSelect = { choice ->
+        pendingSwitch = true
+        onSwitchModel(choice)
+      },
+      onDismiss = {
+        modelSheetOpen = false
+        pendingSwitch = false
+      },
+    )
+  }
+}
 
-      LazyColumn(
-        state = listState,
-        modifier = Modifier.weight(1f).fillMaxWidth(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-      ) {
-        if (state.messages.isEmpty()) {
-          item { EmptyHint() }
-        }
-        items(items = state.messages, key = { it.id }) { message -> MessageBubble(message) }
-      }
+@Composable
+private fun ChatBody(
+  state: ChatUiState,
+  listState: LazyListState,
+  modifier: Modifier,
+  onInputChange: (String) -> Unit,
+  onSend: () -> Unit,
+  onStop: () -> Unit,
+  onNewSession: () -> Unit,
+  onOpenSessions: () -> Unit,
+  onModelSwitchClick: () -> Unit,
+) {
+  val sessionTitle =
+    state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
 
-      ChatInputBar(
-        value = state.input,
-        isStreaming = state.isStreaming,
-        canSend = state.canSend,
-        configSummary = state.configSummary,
-        onValueChange = onInputChange,
-        onSend = onSend,
-        onStop = onStop,
-      )
+  val lastMessage = state.messages.lastOrNull()
+
+  // 新消息 / 流式增量都跟着滚到底部
+  LaunchedEffect(
+    state.messages.size,
+    lastMessage?.content?.length,
+    lastMessage?.reasoning?.length,
+    lastMessage?.error,
+    lastMessage?.toolCalls?.size,
+  ) {
+    if (state.messages.isNotEmpty()) {
+      listState.scrollToItem(state.messages.lastIndex)
     }
+  }
+
+  Column(modifier.fillMaxSize().safeDrawingPadding()) {
+    ChatTopBar(title = sessionTitle, onOpenSessions = onOpenSessions, onNewSession = onNewSession)
+    AccessibilityPrompt()
+    if (!state.configured) {
+      // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
+      BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
+    }
+    state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
+
+    LazyColumn(
+      state = listState,
+      modifier = Modifier.weight(1f).fillMaxWidth(),
+      contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+      verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+      if (state.messages.isEmpty()) {
+        item { EmptyHint() }
+      }
+      items(items = state.messages, key = { it.id }) { message -> MessageBubble(message) }
+    }
+
+    ChatInputBar(
+      value = state.input,
+      isStreaming = state.isStreaming,
+      canSend = state.canSend,
+      modelLabel =
+        listOf(state.providerName, state.model)
+          .filter { it.isNotBlank() }
+          .joinToString(" · ")
+          .ifBlank { state.configSummary },
+      onValueChange = onInputChange,
+      onSend = onSend,
+      onStop = onStop,
+      onModelSwitchClick = onModelSwitchClick,
+    )
   }
 }
 
@@ -615,10 +682,11 @@ private fun ChatInputBar(
   value: String,
   isStreaming: Boolean,
   canSend: Boolean,
-  configSummary: String,
+  modelLabel: String,
   onValueChange: (String) -> Unit,
   onSend: () -> Unit,
   onStop: () -> Unit,
+  onModelSwitchClick: () -> Unit,
 ) {
   val textStyle = MaterialTheme.typography.bodyLarge
   Column(modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
@@ -664,14 +732,33 @@ private fun ChatInputBar(
         )
       }
     }
-    if (configSummary.isNotBlank()) {
-      Text(
-        text = configSummary,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-      )
+    if (modelLabel.isNotBlank()) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .padding(top = 6.dp)
+            .clip(RoundedCornerShape(50))
+            .clickable(enabled = !isStreaming, onClick = onModelSwitchClick)
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = modelLabel,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        if (!isStreaming) {
+          Spacer(Modifier.width(6.dp))
+          Text(
+            text = "切换",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+          )
+        }
+      }
     }
   }
 }
@@ -748,3 +835,93 @@ private val USER_BUBBLE_MAX_WIDTH = 300.dp
 
 private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"
+
+/**
+ * 聊天页的模型切换 sheet：按提供商分组列出「可用模型」。
+ *
+ * 选中后由 ChatViewModel 落盘并重载 dsh 运行时；重载期间关闭切换（避免并发 remount）。
+ * 运行时重载会换掉 dsh 会话命名空间：界面历史保留，但模型上下文从下一条消息重新开始。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelSwitchSheet(
+  choices: List<ModelChoice>,
+  switching: Boolean,
+  error: String?,
+  onSelect: (ModelChoice) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  ModalBottomSheet(onDismissRequest = onDismiss) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+      Text("切换模型", style = MaterialTheme.typography.titleLarge)
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = "切换会重载运行时（约 1–3 秒）；界面记录保留，新消息使用新的模型上下文。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      if (switching) {
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+          Spacer(Modifier.width(10.dp))
+          Text("切换中…", style = MaterialTheme.typography.bodySmall)
+        }
+      }
+      if (error != null) {
+        Spacer(Modifier.height(12.dp))
+        Text(
+          text = error,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.error,
+        )
+      }
+      Spacer(Modifier.height(8.dp))
+      if (choices.isEmpty()) {
+        Text(
+          text = "还没有可用模型。去 设置 → 提供商 从端点添加，再回来切换。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      } else {
+        LazyColumn(Modifier.heightIn(max = 460.dp)) {
+          choices.groupBy { it.providerId }.forEach { (_, group) ->
+            item(key = "provider-" + group.first().providerId) {
+              Text(
+                text = group.first().providerName,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+              )
+            }
+            items(group, key = { it.providerId + "/" + it.model }) { choice ->
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = !switching) { onSelect(choice) }
+                    .padding(horizontal = 8.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = choice.model,
+                  style = MaterialTheme.typography.bodyMedium,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f),
+                )
+                if (choice.current) {
+                  Text(
+                    text = "当前",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

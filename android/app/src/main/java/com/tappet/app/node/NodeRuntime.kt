@@ -3,14 +3,19 @@ package com.tappet.app.node
 import android.content.Context
 import android.system.Os
 import android.util.Log
+import com.tappet.app.agent.AgentConfig
 import com.tappet.app.agent.AgentConfigStore
+import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelModalities
 import com.tappet.app.agent.llmModelsJson
+import com.tappet.app.agent.requestApiKey
 import com.tappet.app.bridge.DeviceBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +80,7 @@ object NodeRuntime : NodeLineListener {
 
   private const val INITIALIZE_TIMEOUT_MS = 180_000L
   private const val PROMPT_TIMEOUT_MS = 30_000L
+  private const val RELOAD_TIMEOUT_MS = 60_000L
 
   sealed interface Status {
     data object Idle : Status
@@ -140,12 +146,19 @@ object NodeRuntime : NodeLineListener {
   private val started = AtomicBoolean(false)
   private val nextId = AtomicLong(1)
 
-  /** 本次进程的 dsh 会话命名空间：dsh 会话持久化在磁盘上，进程重启后再用同名 id create 会 already exists。 */
-  private val runtimeTag = UUID.randomUUID().toString().take(8)
+  /**
+   * 本次运行时实例的 dsh 会话命名空间：dsh 会话持久化在磁盘上，同名 id 再 create 会 already exists。
+   * **重载时换新**（Node 进程没重启，但 dsh 运行时是新的）。
+   */
+  @Volatile private var runtimeTag = newRuntimeTag()
+
+  private fun newRuntimeTag(): String = UUID.randomUUID().toString().take(8)
+
   private val dshSessionIds = ConcurrentHashMap<String, String>()
   private val callerSessionIds = ConcurrentHashMap<String, String>()
   private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
   private val initMutex = Mutex()
+  private val reloadMutex = Mutex()
 
   @Volatile private var initResult: JsonObject? = null
 
@@ -212,6 +225,55 @@ object NodeRuntime : NodeLineListener {
       }
     }
   }
+
+  /**
+   * 按需重载 dsh 运行时（不重启 Node 进程、不重启 App）。
+   *
+   * 宿主把**非密配置**写进 `dsh-home/runtime-config.json`，再写 `runtime.reload` 信号；
+   * launcher 卸载整棵 cordis 根后重新 mount，并在 mount 前把配置覆盖进 `process.env`。
+   * 密钥不落盘：启动时每个提供商各自的 key 已预置成 `TAPPET_LLM_KEY_<ID>`，
+   * 配置里的 `TAPPET_LLM_KEY_FROM` 只做一次 env 拷贝。
+   *
+   * 重载后必须重新 initialize（SDK 服务是新建的），并换 session 命名空间，
+   * 否则会撞上磁盘上已有的同名 dsh 会话。
+   */
+  suspend fun reload(context: Context): JsonObject =
+    reloadMutex.withLock {
+      val app = context.applicationContext
+      if (!started.get()) {
+        ensureStarted(app)
+        return@withLock initialize(app)
+      }
+      val config = AgentConfigStore.current(app)
+      writeRuntimeConfig(app, config)
+      val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
+      val ready = File(home, "runtime.ready")
+      val before = runCatching { ready.readText() }.getOrDefault("")
+
+      pending.values.forEach {
+        it.completeExceptionally(IllegalStateException("runtime reloading"))
+      }
+      pending.clear()
+      runtimeTag = newRuntimeTag()
+      dshSessionIds.clear()
+      callerSessionIds.clear()
+      initResult = null
+      _status.value = Status.Preparing("重载运行时")
+      Log.i(TAG, "reload requested (provider=${config.preset.label}, model=${config.model})")
+      File(home, "runtime.reload").writeText(System.currentTimeMillis().toString())
+
+      try {
+        withTimeout(RELOAD_TIMEOUT_MS) {
+          while (runCatching { ready.readText() }.getOrDefault("") == before) delay(100)
+        }
+      } catch (timeout: TimeoutCancellationException) {
+        _status.value = Status.Failed("重载超时：${timeout.message ?: "未知错误"}")
+        throw timeout
+      }
+      _status.value = Status.Running
+      Log.i(TAG, "runtime reloaded")
+      initialize(app)
+    }
 
   /** 提交一条用户任务（同一 sessionId 复用会话）；返回入队消息 id。 */
   suspend fun prompt(sessionId: String, text: String): String {
@@ -384,19 +446,55 @@ object NodeRuntime : NodeLineListener {
     Os.setenv("NODE_OPTIONS", "--max-old-space-size-percentage=25", true)
   }
 
+  /** 每个提供商各自的 key env 名；重载时按它切换当前生效的 key。 */
+  private fun keyEnvName(preset: LlmPreset): String =
+    "TAPPET_LLM_KEY_" + preset.id.uppercase().replace('-', '_')
+
+  /**
+   * 写重载用的**非密配置**（env 名 → 值）。密钥不进来：只写一个指向预置 key env 的引用。
+   * launcher 在每次 mount 前读它并覆盖 process.env —— 同一个 Node 进程里这是唯一能改配置的路。
+   */
+  private fun writeRuntimeConfig(app: Context, config: AgentConfig) {
+    val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
+    val payload =
+      buildJsonObject {
+        put("TAPPET_LLM_API", config.api)
+        put("TAPPET_LLM_BASE_URL", config.baseUrl)
+        put("TAPPET_LLM_MODEL", config.model)
+        put(
+          "TAPPET_LLM_MODELS",
+          llmModelsJson(
+            modelId = config.model,
+            supportsImage = ModelModalities.supportsImage(app, config.preset.id, config.model),
+          ),
+        )
+        put(
+          "TAPPET_LLM_THINKING_FORMAT",
+          if (config.api == "openai-completions") config.preset.thinkingFormat.orEmpty() else "",
+        )
+        put("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "")
+        put("TAPPET_LLM_KEY_FROM", keyEnvName(config.preset))
+      }
+    File(home, "runtime-config.json").writeText(payload.toString())
+  }
+
   /**
    * dsh 专用 env：DSH_HOME、LLM 端点与设备桥（密钥不落日志）。
    *
-   * 这里是**一次性**的：env 只在 Node 进程启动时设一遍，dsh profile 也只在 mount 时读
-   * `process.env`。所以设置页改完配置要**下次启动**才生效 —— 不在这里重拉 Node 进程，
-   * 因为内嵌 Node 是宿主进程内的单实例，`process.exit()` / SDK `shutdown` 会把整个 App
-   * 带崩（见 AGENTS.md「常见坑」）。
+   * 这些 env 只在 Node 进程启动时设一遍。之后的配置切换用 [reload]：launcher 会重新 mount，
+   * 并在 mount 前用 `runtime-config.json` 覆盖 process.env（非密配置）。密钥不落盘 ——
+   * 每个提供商的 key 在这里预置成 `TAPPET_LLM_KEY_<ID>`，重载时只换引用。
    */
   private fun applyDshEnvironment(app: Context) {
     val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
     val config = AgentConfigStore.current(app)
     Os.setenv("DSH_HOME", home.absolutePath, true)
     Os.setenv("TAPPET_WORKDIR", home.absolutePath, true)
+    // 预置每个提供商的 key：重载切换 provider 时 launcher 只换一个 env 引用，
+    // 不必重新读 Keystore / 重启 Node。日志里绝不打印它们。
+    LlmPreset.entries.forEach { preset ->
+      Os.setenv(keyEnvName(preset), requestApiKey(app, preset), true)
+    }
     Os.setenv("TAPPET_LLM_KEY", config.apiKey, true)
     // 端点、调用风格、模型三者必须成套送过去：profile 那边的 provider 就是按这三个字段
     // 组出来的（见 tools/dsh-phone/profile/cordis.patch.yml）。缺一个就会拿 zen 的端点配
@@ -429,6 +527,8 @@ object NodeRuntime : NodeLineListener {
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)
+    // 第一次 mount 用的非密配置；重载时会重写这个文件。
+    writeRuntimeConfig(app, config)
   }
 
   private external fun prepareStdio(): Boolean

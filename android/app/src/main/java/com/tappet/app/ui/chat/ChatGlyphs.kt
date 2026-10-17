@@ -109,3 +109,52 @@ internal fun CheckGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)) 
     drawLine(tint, Offset(size.width * 0.42f, size.height * 0.74f), Offset(size.width * 0.8f, size.height * 0.28f), strokeWidth = w, cap = StrokeCap.Round)
   }
 }
+
+/** 工具行的小图标：抽象成「斜柄 + 顶环」，小尺寸下也能认出是工具。 */
+@Composable
+internal fun ToolGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    drawLine(
+      tint,
+      Offset(size.width * 0.22f, size.height * 0.78f),
+      Offset(size.width * 0.62f, size.height * 0.38f),
+      strokeWidth = w,
+      cap = StrokeCap.Round,
+    )
+    drawCircle(
+      tint,
+      radius = size.minDimension * 0.17f,
+      center = Offset(size.width * 0.74f, size.height * 0.26f),
+      style = Stroke(width = w),
+    )
+  }
+}
+
+/** 思考行的小图标：灯泡（圆 + 灯座两道线）。 */
+@Composable
+internal fun BulbGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    drawCircle(
+      tint,
+      radius = size.minDimension * 0.26f,
+      center = Offset(size.width / 2f, size.height * 0.4f),
+      style = Stroke(width = w),
+    )
+    drawLine(
+      tint,
+      Offset(size.width * 0.38f, size.height * 0.74f),
+      Offset(size.width * 0.62f, size.height * 0.74f),
+      strokeWidth = w,
+      cap = StrokeCap.Round,
+    )
+    drawLine(
+      tint,
+      Offset(size.width * 0.43f, size.height * 0.86f),
+      Offset(size.width * 0.57f, size.height * 0.86f),
+      strokeWidth = w,
+      cap = StrokeCap.Round,
+    )
+  }
+}

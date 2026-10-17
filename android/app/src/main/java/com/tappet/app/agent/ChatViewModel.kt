@@ -150,11 +150,20 @@ class ChatViewModel(
         // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
         var stepStart = 0
         var reasoningStepStart = 0
+        // 思考时长：第一次推理增量起算，第一条正文到达时结算（只活在这一轮，不入库）
+        var thinkingStartedAt: Long? = null
+
+        fun settleThinking() {
+          val started = thinkingStartedAt ?: return
+          thinkingStartedAt = null
+          markThinkingMs(draft.id, (clock() - started).coerceAtLeast(0))
+        }
 
         try {
           streamer.stream(sessionId, prompt).collect { event ->
             when (event) {
               is AgentStreamEvent.ReasoningDelta -> {
+                if (thinkingStartedAt == null) thinkingStartedAt = clock()
                 if (event.startsStep) reasoningStepStart = reasoning.length
                 reasoning.append(event.text)
                 val now = clock()
@@ -181,6 +190,7 @@ class ChatViewModel(
               is AgentStreamEvent.ToolCallFinished -> finishToolCall(draft.id, event)
 
               is AgentStreamEvent.TextDelta -> {
+                settleThinking()
                 // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
                 if (statusOnly) {
                   statusOnly = false
@@ -201,6 +211,7 @@ class ChatViewModel(
               }
 
               is AgentStreamEvent.StepFinal -> {
+                settleThinking()
                 // 增量只是先给眼睛看的；这一步的成品到了就**只替换本步**追加的部分。
                 event.reasoning?.let { full ->
                   reasoning.setLength(reasoningStepStart.coerceAtMost(reasoning.length))
@@ -438,6 +449,15 @@ class ChatViewModel(
       error = error,
       finishedAt = if (status == MessageStatus.Streaming) null else clock(),
     )
+  }
+
+  /** 记录思考时长（毫秒）；界面显示「思考了 3.8 秒」。 */
+  private fun markThinkingMs(assistantId: String, ms: Long) {
+    _state.update { state ->
+      state.copy(
+        messages = state.messages.map { message -> if (message.id == assistantId) message.copy(thinkingMs = ms) else message },
+      )
+    }
   }
 
   private fun markReasoning(assistantId: String, reasoning: String) {

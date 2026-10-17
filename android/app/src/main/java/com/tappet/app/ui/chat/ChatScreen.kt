@@ -529,11 +529,8 @@ private fun UserBubble(content: String) {
 @Composable
 private fun AssistantMessage(message: ChatMessage) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    message.reasoning?.takeIf { it.isNotBlank() }?.let { reasoning ->
-      ReasoningRow(text = reasoning, running = message.thinking)
-    }
-
-    message.toolCalls.forEach { call -> ToolCallCard(call) }
+    // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
+    ProcessBlock(message)
 
     val error = message.error
     when {
@@ -543,9 +540,8 @@ private fun AssistantMessage(message: ChatMessage) {
       message.content.isNotEmpty() ->
         MarkdownText(markdown = message.content + if (message.streaming) STREAMING_CURSOR else "")
 
-      message.thinking -> ThinkingIndicator()
-
-      message.toolCalls.isEmpty() -> Text(text = "…", style = MaterialTheme.typography.bodyMedium)
+      message.reasoning.isNullOrBlank() && message.toolCalls.isEmpty() ->
+        if (message.thinking) ThinkingIndicator() else Text(text = "…", style = MaterialTheme.typography.bodyMedium)
     }
 
     if (message.content.isNotBlank() && !message.streaming && error == null) {
@@ -584,131 +580,6 @@ private fun CopyAction(text: String) {
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-  }
-}
-
-/** 一张工具卡：默认一行（名字 + 参数摘要 + 状态），点开看完整参数与结果。 */
-@Composable
-private fun ToolCallCard(call: ToolCallView) {
-  var expanded by remember(call.id) { mutableStateOf(false) }
-  val accent =
-    when (call.state) {
-      ToolCallState.Running -> MaterialTheme.colorScheme.primary
-      ToolCallState.Ok -> MaterialTheme.colorScheme.onSurfaceVariant
-      ToolCallState.Failed -> MaterialTheme.colorScheme.error
-    }
-  val label =
-    when (call.state) {
-      ToolCallState.Running -> "执行中"
-      ToolCallState.Ok -> "完成"
-      ToolCallState.Failed -> "失败"
-    }
-
-  Surface(
-    color = MaterialTheme.colorScheme.surfaceContainerLow,
-    shape = RoundedCornerShape(16.dp),
-    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-  ) {
-    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(accent))
-        Text(
-          text = call.name,
-          style = MaterialTheme.typography.bodyMedium,
-          modifier = Modifier.weight(1f).padding(start = 8.dp),
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = accent)
-      }
-      Text(
-        text = compactArguments(call.arguments),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 14.dp, top = 2.dp),
-      )
-
-      if (expanded) {
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Text(
-          text = "参数",
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-          text = prettyJson(call.arguments),
-          style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-          modifier = Modifier.padding(top = 2.dp),
-        )
-        call.result?.let { result ->
-          Text(
-            text = "结果",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp),
-          )
-          Text(
-            text = result.take(MAX_TOOL_RESULT_CHARS) + if (result.length > MAX_TOOL_RESULT_CHARS) "\n…（已截断）" else "",
-            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            modifier = Modifier.padding(top = 2.dp),
-          )
-        }
-      }
-    }
-  }
-}
-
-/**
- * 「思考」折叠行，对齐 ChatGPT / DeepSeek 的低调样式：不是卡片，只是一行灰字 + 箭头；
- * 收起时显示推理首行摘要，展开后显示完整推理（次要字号）。
- */
-@Composable
-private fun ReasoningRow(text: String, running: Boolean) {
-  var expanded by remember { mutableStateOf(false) }
-  val summary = remember(text) { reasoningSummary(text) }
-
-  val infiniteTransition = rememberInfiniteTransition(label = "reasoning")
-  val alpha by
-    infiniteTransition.animateFloat(
-      initialValue = 0.35f,
-      targetValue = 1f,
-      animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse),
-      label = "reasoning-alpha",
-    )
-
-  Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { expanded = !expanded }) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(
-        text = if (running) "思考中…" else "已深度思考",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.alpha(if (running) alpha else 1f),
-      )
-      ChevronDownGlyph(
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.size(16.dp).rotate(if (expanded) 180f else 0f),
-      )
-    }
-
-    if (expanded) {
-      MarkdownText(
-        markdown = text,
-        modifier = Modifier.padding(top = 6.dp),
-        style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-      )
-    } else if (summary.isNotBlank()) {
-      Text(
-        text = summary,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(top = 4.dp).alpha(if (running) alpha else 1f),
-      )
-    }
   }
 }
 
@@ -852,7 +723,7 @@ internal fun groupSessions(sessions: List<ChatSession>, now: Long): List<Pair<St
     sessions.filter { sessionGroupLabel(it.updatedAt, now) == label }.takeIf { it.isNotEmpty() }?.let { label to it }
   }
 
-private fun copyTextToClipboard(context: Context, text: String) {
+internal fun copyTextToClipboard(context: Context, text: String) {
   val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
   clipboard.setPrimaryClip(ClipData.newPlainText("tappet", text))
 }
@@ -875,6 +746,5 @@ private val PRETTY_JSON = Json { prettyPrint = true }
 private val WHITESPACE = Regex("\\s+")
 private val USER_BUBBLE_MAX_WIDTH = 300.dp
 
-private const val MAX_TOOL_RESULT_CHARS = 1200
 private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"

@@ -41,6 +41,8 @@ data class ChatMessage(
   val streaming: Boolean = false,
   val thinking: Boolean = false,
   val reasoning: String? = null,
+  /** 这一轮思考了多久（毫秒）。只在内存里：库里没有这一列，重载后为 null（界面显示「思考过程」）。 */
+  val thinkingMs: Long? = null,
   val error: String? = null,
   val toolCalls: List<ToolCallView> = emptyList(),
 )

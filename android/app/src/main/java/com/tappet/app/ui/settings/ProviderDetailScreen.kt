@@ -360,11 +360,6 @@ private fun ProviderModelsTab(
       modifier = Modifier.padding(horizontal = 4.dp),
     )
     CurrentModelCard(state)
-    if (state.preset.models.isNotEmpty()) {
-      CatalogModelList(state = state, onModelSelect = onModelSelect)
-    } else {
-      InfoBanner("自定义提供商没有预置模型：用「获取模型列表」拉一份，或在下面填一个模型 id。")
-    }
     RemoteModelsSection(
       state = state,
       onFetchModels = onFetchModels,
@@ -376,7 +371,7 @@ private fun ProviderModelsTab(
       onUseModelDraft = onUseModelDraft,
     )
     Text(
-      text = "pi-ai 目录里没有的 id 会按纯文本声明：读图不可用。",
+      text = "没有预置模型列表：从端点拉取，或直接填 id。pi-ai 目录里没有的 id 会按纯文本声明。",
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(start = 4.dp),
@@ -421,23 +416,6 @@ private fun CurrentModelCard(state: ProviderDetailViewModel.UiState) {
   }
 }
 
-@Composable
-private fun CatalogModelList(
-  state: ProviderDetailViewModel.UiState,
-  onModelSelect: (String) -> Unit,
-) {
-  SettingsGroup {
-    state.preset.models.forEachIndexed { index, model ->
-      if (index > 0) SettingsDivider()
-      ModelRow(
-        model = model,
-        selected = model.id == state.model,
-        onClick = { onModelSelect(model.id) },
-      )
-    }
-  }
-}
-
 /**
  * 端点模型列表这一段：拉取 / 刷新 + 浏览入口。错误就地显示 —— 用户正看着这个页签，
  * 不需要再弹一层。
@@ -462,7 +440,7 @@ private fun RemoteModelsSection(
               if (state.remoteModels.isEmpty()) {
                 "GET ${state.baseUrl}/models —— 拉一份端点自己认的模型 id"
               } else {
-                "已拉取 ${state.remoteModels.size} 个模型（目录外 ${state.remoteOnlyModels.size} 个）"
+                "已拉取 ${state.remoteModels.size} 个模型"
               },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -617,7 +595,6 @@ private fun ProviderAdvancedTab(
         "当前模型来源",
         when {
           state.model.isBlank() -> "未设置"
-          state.preset.model(state.model) != null -> "界面目录"
           ModelModalities.isKnown(LocalContext.current, state.preset.id, state.model) -> "pi-ai 目录"
           else -> "手填"
         },
@@ -691,44 +668,6 @@ private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean
   ) {
     Text(text = label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
     Switch(checked = checked, onCheckedChange = onCheckedChange)
-  }
-}
-
-@Composable
-private fun ModelRow(
-  model: LlmPreset.Model,
-  selected: Boolean,
-  onClick: () -> Unit,
-) {
-  Row(
-    modifier =
-      Modifier.fillMaxWidth()
-        .clickable(onClick = onClick)
-        .padding(horizontal = 16.dp, vertical = 12.dp),
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Column(Modifier.weight(1f)) {
-      Text(
-        text = model.label,
-        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-      )
-      Spacer(Modifier.height(3.dp))
-      Text(
-        text = model.id,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
-    Spacer(Modifier.width(12.dp))
-    if (selected) {
-      Glyph(
-        kind = GlyphKind.Check,
-        modifier = Modifier.size(20.dp),
-        tint = MaterialTheme.colorScheme.primary,
-      )
-    } else {
-      Box(Modifier.size(20.dp).border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
-    }
   }
 }
 

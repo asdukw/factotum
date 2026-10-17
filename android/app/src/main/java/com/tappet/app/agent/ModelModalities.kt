@@ -32,20 +32,18 @@ internal fun parseModalityIndex(raw: String): ModalityIndex =
  * 1. **当前 provider 的 pi-ai 条目** —— 最可信；
  * 2. 其它 provider 里**同 id 且结论一致**的条目 —— 聚合商（OpenRouter / zen）常直接复用
  *    同一条模型 id；有分歧就不猜；
- * 3. 界面目录（[LlmPreset.catalogModel]）的 supportsImage；
- * 4. 不知道就 **false**。欠声明只是提前拒图（模型会被告知不支持图片），过度声明会把图发给
+ * 3. 不知道就 **false**。欠声明只是提前拒图（模型会被告知不支持图片），过度声明会把图发给
  *    端点、在请求中途被拒 —— 两者代价不对称。
  */
 internal fun resolveSupportsImage(
   index: ModalityIndex,
   providerId: String,
   modelId: String,
-  curated: Boolean?,
 ): Boolean {
   index[providerId]?.get(modelId)?.let { return "image" in it }
   val cross = index.values.mapNotNull { it[modelId] }.map { "image" in it }.distinct()
   if (cross.size == 1) return cross.first()
-  return curated ?: false
+  return false
 }
 
 /** 该 id 在索引里是否有**可信**条目（当前 provider 或跨 provider 结论一致）。 */
@@ -56,7 +54,7 @@ internal fun isModelKnown(index: ModalityIndex, providerId: String, modelId: Str
 
 /**
  * 模态索引的进程内缓存：第一次读 60KB 资产，之后 O(1)。资产缺失（没跑过 bundle-dsh 的
- * 开发构建）时返回空索引，调用方回落到界面目录。
+ * 开发构建）时返回空索引，所有模型按 text 声明。
  */
 internal object ModelModalities {
   private const val ASSET = "model-modalities.json"
@@ -78,12 +76,7 @@ internal object ModelModalities {
   }
 
   fun supportsImage(context: Context, providerId: String, modelId: String): Boolean =
-    resolveSupportsImage(
-      index = index(context),
-      providerId = providerId,
-      modelId = modelId,
-      curated = LlmPreset.catalogModel(modelId)?.supportsImage,
-    )
+    resolveSupportsImage(index = index(context), providerId = providerId, modelId = modelId)
 
   fun isKnown(context: Context, providerId: String, modelId: String): Boolean =
     isModelKnown(index(context), providerId, modelId)

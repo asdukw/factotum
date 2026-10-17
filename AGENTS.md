@@ -230,7 +230,7 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 
 ### 加一个提供商 = 目录 + 存储 + 运行时
 
-`agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 模型清单 / 推理格式）
+`agent/LlmPreset.kt`（端点 / 调用风格 / 默认（已验证）模型 / 推理格式）
 → 设置页 `ui/settings/`（列表 / 详情 / 模型选择；新增目录项会自动出现）
 → `AgentConfigStore`（按 `provider.<id>.*` 存覆盖；每个提供商一把 `SecretVault` 密钥）
 → `NodeRuntime`（注入 `TAPPET_LLM_API` / `_BASE_URL` / `_MODEL` / `_MODELS` /
@@ -242,24 +242,21 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
   `anthropic-messages`，DeepSeek / OpenCode Go / OpenRouter / 自定义是 `openai-completions`。
   风格拿错不会在启动时报错，只会在第一次请求时以 404/400 的样子炸出来。
+- **不维护模型清单**（2026-10-17）：[LlmPreset] 只留一个 `defaultModel`，用途是「已验证」
+  组合判定与运行时兜底，**不是界面候选列表**。模型来自端点的 `GET /models`（详情 → 模型 →
+  获取；结果落盘 `provider.<id>.remote_models`），拉不到的端点由用户手填 id。
+- **模态由构建期索引决定**：`assets/model-modalities.json` 是 `bundle-dsh.ps1` 从 pi-ai 目录
+  生成的（~60KB），运行时 `TAPPET_LLM_MODELS` 与运行时声明共用。顺序：当前 provider 条目 >
+  跨 provider **结论一致**的同 id 条目 > text（欠声明只是提前拒图，过度声明会在请求中途被
+  端点拒）。界面**不显示**可读图 / 仅文本标签（用户要求）。索引是生成物（gitignore），
+  没跑过 `bundle-dsh.ps1` 的开发构建会全部按 text 声明。
 - **模型清单是动态的，且必须包含当前选中的模型**：路由键 `tappet` 不是 pi-ai 目录里的
   provider，适配器不会从安装目录补模型 —— 未声明的 id 报 `UNKNOWN_MODEL`（**不是**退化成
-  纯文本）。`ProviderConfig.llmModelsJson` 按选中模型生成 `TAPPET_LLM_MODELS`，模态从目录取；
-  目录外的 id 声明为 `[text]`（读图会被 pi-ai 明确拒掉）。profile 里只留一条 fallback，供
-  PC 侧校验与没有 env 的直接运行。
+  纯文本）。`ProviderConfig.llmModelsJson` 按选中模型生成 `TAPPET_LLM_MODELS`。profile 里
+  只留一条 fallback，供 PC 侧校验与没有 env 的直接运行。
 - **同一时间只启用一个提供商**：内嵌运行时每个进程只连一个端点。「启用」互斥，
   「全部停用」是显式状态（`ENABLED_NONE`），不会回落到默认提供商再把旧 key 用起来。
-  启用 / 选中模型都要求三样齐全：端点、模型、密钥。
-- 模型 id 优先从运行时 pi-ai 目录取
-  （`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`）；
-  手填目录外的 id 是允许的（自定义提供商），但只有文本模态，界面会如实标「仅文本」。
-- **模型列表可以从端点拉**：详情 → 模型 → 「获取」（`GET {base}/models`，OpenAI 兼容用
-  Bearer、Anthropic 用 `x-api-key`）。结果落盘（`provider.<id>.remote_models`），只用于挑选；
-  **模态不来自它** —— `assets/model-modalities.json` 是 `bundle-dsh.ps1` 从 pi-ai 目录生成的
-  索引（~60KB），运行时 `TAPPET_LLM_MODELS` 与设置页共用同一份结论。界面**不显示**可读图 /
-  仅文本标签（用户要求），但声明必须准确：provider 条目 > 跨 provider 一致条目 > 界面目录 >
-  text（欠声明只是提前拒图，过度声明会在请求中途被端点拒）。
-  索引是生成物（gitignore），没跑过 `bundle-dsh.ps1` 的开发构建会回落到界面目录。
+  启用 / 选中模型都要求三样齐全：端点、模型、密钥；新装的提供商是 0 个模型。
 - 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK；`check-profile.mjs` 会真的执行
   `!!js` 表达式（含 `TAPPET_LLM_MODELS` 的动态清单）。**只有 OpenCode Go 的目录默认组合
   在真机上跑通过**；用户改过端点 / 模型 / 调用风格后，界面自动撤掉「已验证」。

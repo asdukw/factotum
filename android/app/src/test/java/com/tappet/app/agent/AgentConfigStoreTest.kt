@@ -163,15 +163,8 @@ class AgentConfigStoreTest {
       assertTrue("${preset.id} 缺 description", preset.description.isNotBlank())
       if (!preset.custom) {
         assertTrue("${preset.id} 缺 baseUrl", preset.baseUrl.startsWith("https://"))
-        assertTrue("${preset.id} 缺默认模型", preset.defaultModel.isNotBlank())
-        assertTrue("${preset.id} 没有可选模型", preset.models.isNotEmpty())
-        assertTrue(
-          "${preset.id} 的默认模型不在候选里，界面提示会自相矛盾",
-          preset.defaultModel in preset.modelHints,
-        )
-      }
-      preset.models.forEach { model ->
-        assertTrue("${preset.id} 的 ${model.id} 缺展示名", model.label.isNotBlank())
+        // defaultModel 只用于「已验证」组合与运行时兜底，不是界面模型列表。
+        assertTrue("${preset.id} 缺默认 / 已验证模型", preset.defaultModel.isNotBlank())
       }
       if (preset.responseApiToggle) {
         assertTrue(
@@ -187,13 +180,10 @@ class AgentConfigStoreTest {
     val ids = LlmPreset.entries.map { it.id }
     assertEquals(ids.size, ids.toSet().size)
     assertTrue(ids.none { it.isBlank() })
-    // 模型 id 在目录里不能重复，否则「按 id 选模型」会有歧义。
-    val modelIds = LlmPreset.entries.flatMap { it.models }.map { it.id }
-    assertEquals(modelIds.size, modelIds.toSet().size)
     // 只有本项目一直在用的那条路径是真机上跑通过的。
     assertEquals(listOf(LlmPreset.OpenCodeGo), LlmPreset.entries.filter { it.verified })
-    // 自定义提供商没有预置模型：模型由用户手填。
-    assertTrue(LlmPreset.Custom.models.isEmpty())
+    // 自定义提供商没有默认模型：模型由用户手填或从端点拉取。
+    assertTrue(LlmPreset.Custom.defaultModel.isBlank())
   }
 
   // --- 新版：按提供商解析 ---
@@ -211,7 +201,8 @@ class AgentConfigStoreTest {
 
     assertEquals(LlmPreset.OpenAi.label, settings.name)
     assertEquals(LlmPreset.OpenAi.baseUrl, settings.baseUrl)
-    assertEquals(LlmPreset.OpenAi.defaultModel, settings.model)
+    // 没有模型目录可回落：没选就是空，等用户拉取或手填。
+    assertEquals("", settings.model)
     assertEquals(LlmPreset.OpenAi.api, settings.api)
     assertFalse(settings.hasKey)
     assertFalse(settings.enabled)
@@ -274,7 +265,7 @@ class AgentConfigStoreTest {
         enabled = false,
       )
     assertEquals(LlmPreset.OpenAi.baseUrl, other.baseUrl)
-    assertEquals(LlmPreset.OpenAi.defaultModel, other.model)
+    assertEquals("", other.model)
     assertFalse(other.hasKey)
   }
 
@@ -294,7 +285,7 @@ class AgentConfigStoreTest {
     val settings =
       resolveProviderSettings(
         preset = LlmPreset.OpenAi,
-        overrides = ProviderOverrides(api = "openai-completions"),
+        overrides = ProviderOverrides(api = "openai-completions", model = "gpt-6-sol"),
         legacy = null,
         hasKey = true,
         enabled = true,
@@ -309,35 +300,23 @@ class AgentConfigStoreTest {
   }
 
   @Test
-  fun `model count includes a hand typed model`() {
-    val presetModels = LlmPreset.OpenAi.models.size
-
-    val inCatalog =
+  fun `model count counts the selected model and the fetched list`() {
+    val selected =
       resolveProviderSettings(
         LlmPreset.OpenAi,
-        ProviderOverrides(model = LlmPreset.OpenAi.models.first().id),
+        ProviderOverrides(model = "gpt-6-sol"),
         legacy = null,
         hasKey = false,
         enabled = false,
       )
-    assertEquals(presetModels, inCatalog.modelCount)
-
-    val handTyped =
-      resolveProviderSettings(
-        LlmPreset.OpenAi,
-        ProviderOverrides(model = "my-own-model"),
-        legacy = null,
-        hasKey = false,
-        enabled = false,
-      )
-    assertEquals(presetModels + 1, handTyped.modelCount)
+    assertEquals(1, selected.modelCount)
 
     // 端点拉回来的清单也算进「能选的模型数」，重复 id 不重复计数。
     val withRemote =
-      handTyped.copy(remoteModels = listOf("my-own-model", "vendor/x", "vendor/y"))
-    assertEquals(presetModels + 3, withRemote.modelCount)
+      selected.copy(remoteModels = listOf("gpt-6-sol", "vendor/x", "vendor/y"))
+    assertEquals(3, withRemote.modelCount)
 
-    val customEmpty =
+    val empty =
       resolveProviderSettings(
         LlmPreset.Custom,
         ProviderOverrides(),
@@ -345,7 +324,7 @@ class AgentConfigStoreTest {
         hasKey = false,
         enabled = false,
       )
-    assertEquals(0, customEmpty.modelCount)
+    assertEquals(0, empty.modelCount)
   }
 
   @Test
@@ -410,7 +389,8 @@ class AgentConfigStoreTest {
         defaults = defaults,
       )
     assertEquals(LlmPreset.DeepSeek.baseUrl, other.baseUrl)
-    assertEquals(LlmPreset.DeepSeek.defaultModel, other.model)
+    // 没有模型目录：BuildConfig 的默认模型只属于它推断出的那家。
+    assertEquals("", other.model)
   }
 
   @Test
@@ -445,7 +425,13 @@ class AgentConfigStoreTest {
   @Test
   fun `verified only applies to the untouched default combination`() {
     val base =
-      resolveProviderSettings(LlmPreset.OpenCodeGo, ProviderOverrides(), null, hasKey = true, enabled = true)
+      resolveProviderSettings(
+        LlmPreset.OpenCodeGo,
+        ProviderOverrides(model = LlmPreset.OpenCodeGo.defaultModel),
+        null,
+        hasKey = true,
+        enabled = true,
+      )
     assertTrue(base.verified)
 
     assertFalse(base.copy(baseUrl = "https://gateway.example/v1").verified)
@@ -460,7 +446,13 @@ class AgentConfigStoreTest {
   @Test
   fun `activation requires a key`() {
     val noKey =
-      resolveProviderSettings(LlmPreset.OpenAi, ProviderOverrides(), null, hasKey = false, enabled = false)
+      resolveProviderSettings(
+        LlmPreset.OpenAi,
+        ProviderOverrides(model = "gpt-6-sol"),
+        null,
+        hasKey = false,
+        enabled = false,
+      )
     assertTrue(noKey.canEnable)
     assertFalse(noKey.canActivate)
 
@@ -500,13 +492,6 @@ class AgentConfigStoreTest {
       """[{"id":"deepseek-v4.1-flash","input":["text","image"]}]""",
       llmModelsJson(" ", supportsImage = true),
     )
-  }
-
-  @Test
-  fun `global catalog lookup spans providers`() {
-    assertEquals(true, LlmPreset.catalogModel("gpt-6-sol")?.supportsImage)
-    assertEquals(false, LlmPreset.catalogModel("deepseek-v4-pro")?.supportsImage)
-    assertNull(LlmPreset.catalogModel("no-such-model"))
   }
 
   /**

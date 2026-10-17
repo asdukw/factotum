@@ -44,18 +44,11 @@ internal data class ProviderSettings(
         api == preset.api
 
   /**
-   * 列表卡片上的「N 个模型」：目录模型 ∪ 端点拉回来的 ∪ 手填的那个 —— 也就是这个提供商在
-   * 界面里**真的能选**的 id 数。自定义提供商一开始是 0 个，填了模型 id 就是 1 个。
+   * 列表卡片上的「N 个模型」：端点拉回来的 ∪ 手填/选中的那个 —— 也就是这个提供商在界面里
+   * **真的能选**的 id 数。没有手写目录，所以新加的提供商一开始就是 0 个。
    */
   val modelCount: Int
-    get() =
-      (preset.models.map { it.id } + remoteModels + listOfNotNull(model.nonBlankOrNull()))
-        .distinct()
-        .size
-
-  /** 端点拉回来的列表里、目录中没有的那些（界面上单独一段展示）。 */
-  val remoteOnlyModels: List<String>
-    get() = remoteModels.filter { preset.model(it) == null }
+    get() = (remoteModels + listOfNotNull(model.nonBlankOrNull())).distinct().size
 }
 
 /** 用户改过的字段；null / 空白表示「跟随目录默认」。 */
@@ -118,7 +111,8 @@ internal fun resolveProviderSettings(
       overrides.model.nonBlankOrNull()
         ?: legacyMatch?.model?.nonBlankOrNull()
         ?: buildMatch?.model?.nonBlankOrNull()
-        ?: preset.defaultModel,
+        // 没有模型目录可以回落：没选就是空，等用户从端点拉或手填。
+        ?: "",
     api = overrides.api.nonBlankOrNull() ?: preset.api,
     hasKey = hasKey || legacyMatch?.hasKey == true,
     enabled = enabled,

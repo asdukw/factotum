@@ -201,5 +201,6 @@ private fun AboutSection() {
 private fun providerSubtitle(state: SettingsViewModel.UiState): String {
   val name = state.providerName ?: return "未启用 —— 选一个提供商并填写 API Key"
   val keyHint = if (state.configured) "" else " · 缺 API Key"
-  return "$name · ${state.providerModel}$keyHint"
+  val model = state.providerModel.ifBlank { "未选择模型" }
+  return "$name · $model$keyHint"
 }

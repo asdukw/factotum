@@ -78,7 +78,8 @@ class AgentConfigStoreAndroidTest {
     val openAi = AgentConfigStore.provider(context, LlmPreset.OpenAi)
     assertFalse("别的提供商不能借旧 key", openAi.hasKey)
     assertEquals(LlmPreset.OpenAi.baseUrl, openAi.baseUrl)
-    assertEquals(LlmPreset.OpenAi.defaultModel, openAi.model)
+    // 没有模型目录可回落：没选就是空。
+    assertEquals("", openAi.model)
   }
 
   @Test
@@ -139,8 +140,10 @@ class AgentConfigStoreAndroidTest {
 
     val settings = AgentConfigStore.provider(context, LlmPreset.Anthropic)
     assertEquals(LlmPreset.Anthropic.baseUrl, settings.baseUrl)
-    assertEquals(LlmPreset.Anthropic.defaultModel, settings.model)
+    assertEquals("", settings.model)
     assertFalse(settings.hasKey)
+    // 重置后没有模型 → 不可用，顺带停用，避免留下一个「启用但发不出请求」的提供商。
+    assertFalse(settings.enabled)
 
     val prefs = context.getSharedPreferences("tappet_agent_settings", Context.MODE_PRIVATE)
     assertNull(prefs.getString("base_url", null))
@@ -157,12 +160,20 @@ class AgentConfigStoreAndroidTest {
       key = "legacy-key",
     )
     AgentConfigStore.saveApiKey(context, LlmPreset.OpenAi, "openai-key")
+    AgentConfigStore.saveProviderFields(
+      context = context,
+      preset = LlmPreset.OpenAi,
+      name = LlmPreset.OpenAi.label,
+      baseUrl = LlmPreset.OpenAi.baseUrl,
+      model = "gpt-6-sol",
+      api = LlmPreset.OpenAi.api,
+    )
     AgentConfigStore.setEnabled(context, LlmPreset.OpenAi, true)
 
     val config = AgentConfigStore.current(context)
     assertEquals(LlmPreset.OpenAi, config.preset)
     assertEquals(LlmPreset.OpenAi.baseUrl, config.baseUrl)
-    assertEquals(LlmPreset.OpenAi.defaultModel, config.model)
+    assertEquals("gpt-6-sol", config.model)
     assertEquals("openai-key", config.apiKey)
   }
 

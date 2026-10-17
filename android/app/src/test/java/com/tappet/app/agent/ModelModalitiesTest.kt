@@ -31,24 +31,22 @@ class ModelModalitiesTest {
   fun `provider entry wins over everything`() {
     val index = parseModalityIndex("""{"zen":{"m":["text"]}}""")
 
-    assertFalse(resolveSupportsImage(index, "zen", "m", curated = true))
+    assertFalse(resolveSupportsImage(index, "zen", "m"))
   }
 
   @Test
   fun `cross provider lookup only when the result is unanimous`() {
     val unanimous = parseModalityIndex("""{"zen":{},"openai":{"m":["text","image"]}}""")
-    assertTrue(resolveSupportsImage(unanimous, "zen", "m", curated = null))
+    assertTrue(resolveSupportsImage(unanimous, "zen", "m"))
 
     val split = parseModalityIndex("""{"a":{"m":["text","image"]},"b":{"m":["text"]}}""")
-    assertFalse("分歧时不猜", resolveSupportsImage(split, "zen", "m", curated = null))
-    assertTrue("界面目录仍是兜底", resolveSupportsImage(split, "zen", "m", curated = true))
+    assertFalse("分歧时不猜", resolveSupportsImage(split, "zen", "m"))
   }
 
   @Test
-  fun `unknown falls back to curated then text`() {
+  fun `unknown model is declared text`() {
     val empty = parseModalityIndex("{}")
-    assertTrue(resolveSupportsImage(empty, "p", "m", curated = true))
-    assertFalse(resolveSupportsImage(empty, "p", "m", curated = null))
+    assertFalse(resolveSupportsImage(empty, "p", "m"))
   }
 
   @Test

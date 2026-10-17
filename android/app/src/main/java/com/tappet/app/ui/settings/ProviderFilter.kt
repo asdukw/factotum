@@ -18,9 +18,7 @@ internal fun filterProviders(
       provider.preset.description.lowercase().contains(needle) ||
       provider.preset.id.lowercase().contains(needle) ||
       provider.model.lowercase().contains(needle) ||
-      provider.preset.models.any {
-        it.id.lowercase().contains(needle) || it.label.lowercase().contains(needle)
-      }
+      provider.remoteModels.any { it.lowercase().contains(needle) }
   }
 }
 

@@ -65,10 +65,6 @@ internal class ProviderDetailViewModel(
     /** 「Response API」开关的状态：切到 openai-responses 时为真。 */
     val responseApi: Boolean
       get() = api == "openai-responses"
-
-    /** 端点列表里、目录中没有的那些（单独一段展示，避免与目录模型重复）。 */
-    val remoteOnlyModels: List<String>
-      get() = remoteModels.filter { preset.model(it) == null }
   }
 
   private val _state = MutableStateFlow(UiState())

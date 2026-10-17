@@ -3,87 +3,236 @@ package com.tappet.app.agent
 import android.content.Context
 import com.tappet.app.data.crypto.SecretVault
 
-/**
- * Agent 端点配置的读取与落盘（服务商预选 / base URL / model / API key）。
- *
- * **优先级：设置页保存的值 > BuildConfig（仅端点与模型）> 内置默认值。**
- * BuildConfig 那一层只在开发机上非空（`android/local.properties` 注入）。
- *
- * **密钥只有一个来源：设置页。** 构建期那条注入路径已经去掉 —— 见 [AgentConfig] 的注释。
- * 密钥单独走 [SecretVault]（Android Keystore 封装）：**不进 SharedPreferences 明文、
- * 不进日志、不进云备份**。非密钥项（预选 / baseUrl / model）放普通 SharedPreferences 就够。
- */
-internal object AgentConfigStore {
-  private const val PREFS_NAME = "tappet_agent_settings"
-  private const val KEY_BASE_URL = "base_url"
-  private const val KEY_MODEL = "model"
-  private const val KEY_PRESET = "preset"
+// --- 存储布局 ---
+// 旧版单端点配置（只读，保留给升级用户）与新版按提供商的键都在同一个 prefs 文件里。
+private const val PREFS_NAME = "tappet_agent_settings"
+private const val KEY_LEGACY_BASE_URL = "base_url"
+private const val KEY_LEGACY_MODEL = "model"
+private const val KEY_LEGACY_PRESET = "preset"
+private const val KEY_ENABLED = "enabled_provider"
 
-  // prefs 名与别名一旦定下就别再改：改了等于换一把 Keystore 密钥，用户已存的 key 读不出来。
-  private val vault =
-    SecretVault(prefsName = "tappet_agent_secret", keyAlias = "tappet-agent-llm-key-v1")
+private const val SUFFIX_NAME = "name"
+private const val SUFFIX_BASE_URL = "base_url"
+private const val SUFFIX_MODEL = "model"
+private const val SUFFIX_API = "api"
 
-  /** 当前生效的配置：设置页存的（若有）盖在构建期默认值上。 */
-  fun current(context: Context): AgentConfig {
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    return resolveAgentConfig(
+// prefs 名与别名一旦定下就别再改：改了等于换一把 Keystore 密钥，用户已存的 key 读不出来。
+private const val LEGACY_SECRET_PREFS = "tappet_agent_secret"
+private const val LEGACY_KEY_ALIAS = "tappet-agent-llm-key-v1"
+
+private val legacyVault = SecretVault(prefsName = LEGACY_SECRET_PREFS, keyAlias = LEGACY_KEY_ALIAS)
+
+/** 每个提供商一把 Keystore 密钥。别名带着 [LlmPreset.id] —— id 是存储身份，不能改。 */
+internal fun providerSecretPrefsName(preset: LlmPreset): String = "$LEGACY_SECRET_PREFS-${preset.id}"
+
+internal fun providerKeyAlias(preset: LlmPreset): String = "$LEGACY_KEY_ALIAS-${preset.id}"
+
+private fun providerVault(preset: LlmPreset): SecretVault =
+  SecretVault(prefsName = providerSecretPrefsName(preset), keyAlias = providerKeyAlias(preset))
+
+private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+/** 旧配置的等效值与旧密钥（读出来给「它当时指向的那个提供商」用）。 */
+private data class LegacyState(val settings: LegacyProviderSettings?, val key: String?)
+
+private fun readLegacyState(context: Context): LegacyState {
+  val prefs = prefs(context)
+  val baseUrl = prefs.getString(KEY_LEGACY_BASE_URL, null)
+  val model = prefs.getString(KEY_LEGACY_MODEL, null)
+  val presetId = prefs.getString(KEY_LEGACY_PRESET, null)
+  val key = legacyVault.get(context)
+  if (listOf(baseUrl, model, presetId, key).all { it == null }) {
+    return LegacyState(settings = null, key = null)
+  }
+  val resolved =
+    resolveAgentConfig(
       defaults = AgentConfig.fromBuildConfig(),
-      savedBaseUrl = prefs.getString(KEY_BASE_URL, null),
-      savedModel = prefs.getString(KEY_MODEL, null),
-      savedApiKey = vault.get(context),
-      savedPreset = prefs.getString(KEY_PRESET, null),
+      savedBaseUrl = baseUrl,
+      savedModel = model,
+      savedApiKey = key,
+      savedPreset = presetId,
     )
-  }
+  return LegacyState(
+    settings =
+      LegacyProviderSettings(
+        preset = resolved.preset,
+        baseUrl = resolved.baseUrl,
+        model = resolved.model,
+        hasKey = key != null,
+      ),
+    key = key,
+  )
+}
 
-  /** 设置页保存下来的原始值，供界面回填；没存过就是 null（界面该显示构建期默认值）。 */
-  fun savedBaseUrl(context: Context): String? =
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_BASE_URL, null)
+private fun enabledFromStored(stored: String?, legacy: LegacyState): LlmPreset? =
+  resolveEnabledPreset(
+    stored = stored,
+    fallback = legacy.settings?.preset ?: defaultPresetFromBuildConfig(),
+  )
 
-  fun savedModel(context: Context): String? =
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_MODEL, null)
+private fun apiKeyFor(context: Context, preset: LlmPreset, legacy: LegacyState): String {
+  val own = providerVault(preset).get(context)
+  if (!own.isNullOrBlank()) return own
+  // 旧版的单 key 只属于升级前正在用的那家 —— 别的提供商不能借它。
+  return if (legacy.settings?.preset == preset) legacy.key.orEmpty() else ""
+}
 
-  /** 存过的服务商预选 id；没存过（老版本升上来）返回 null，由 [resolveAgentConfig] 反推。 */
-  fun savedPresetId(context: Context): String? =
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_PRESET, null)
-
-  /** 设置页里是否存着密钥（只回答有没有，不返回密钥本体）。 */
-  fun hasStoredApiKey(context: Context): Boolean = vault.has(context)
-
-  /**
-   * 保存设置页的输入。
-   *
-   * [apiKey] 传 **null = 这次不动密钥**（用户只改了 base URL），传**空串 = 清除密钥**。
-   * 这个区分是刻意的：设置页把密钥输入框留空表示「不改」，而「删掉密钥」得是一个明确动作。
-   *
-   * 返回 false 表示非密钥项或密钥有一项没写进去。
-   */
-  fun save(
-    context: Context,
-    baseUrl: String,
-    model: String,
-    apiKey: String?,
-    preset: LlmPreset,
-  ): Boolean {
-    val settingsSaved =
-      context
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .edit()
-        // 空串 = 移除该项，回落到 BuildConfig / 内置默认，而不是存一个空值把默认值顶掉。
-        .putString(KEY_BASE_URL, baseUrl.trim().ifEmpty { null })
-        .putString(KEY_MODEL, model.trim().ifEmpty { null })
-        .putString(KEY_PRESET, preset.id)
-        .commit()
-    val secretSaved = apiKey?.let { vault.put(context, it.trim()) } ?: true
-    return settingsSaved && secretSaved
-  }
-
-  /** 只清密钥，不动 base URL / model。 */
-  fun clearApiKey(context: Context): Boolean = vault.clear(context)
+private fun resolve(context: Context, preset: LlmPreset, legacy: LegacyState): ProviderSettings {
+  val prefs = prefs(context)
+  val prefix = providerPrefsPrefix(preset)
+  val overrides =
+    ProviderOverrides(
+      name = prefs.getString(prefix + SUFFIX_NAME, null),
+      baseUrl = prefs.getString(prefix + SUFFIX_BASE_URL, null),
+      model = prefs.getString(prefix + SUFFIX_MODEL, null),
+      api = prefs.getString(prefix + SUFFIX_API, null),
+    )
+  val enabled = enabledFromStored(prefs.getString(KEY_ENABLED, null), legacy) == preset
+  val hasKey = apiKeyFor(context, preset, legacy).isNotBlank()
+  return resolveProviderSettings(
+    preset = preset,
+    overrides = overrides,
+    legacy = legacy.settings,
+    hasKey = hasKey,
+    enabled = enabled,
+    defaults = providerDefaultsFromBuildConfig(),
+  )
 }
 
 /**
- * 配置解析里**纯函数的那一半**：抽出来是为了能在 JVM 单测里直接钉住优先级，
- * 不必起 Android。
+ * Agent 端点配置的读取与落盘（提供商 / base URL / model / 调用风格 / API key）。
+ *
+ * **优先级：设置页按提供商存的值 > 旧版单端点配置（仅同一个提供商）> BuildConfig（开发机）> 目录默认值。**
+ *
+ * 存储分两层：
+ * - 非密钥项（名称 / base URL / model / 调用风格 / 启用的提供商）在普通 SharedPreferences；
+ * - 密钥**每个提供商一份**，各自走 [SecretVault]（Android Keystore 封装）。密钥不进
+ *   SharedPreferences 明文、不进日志、不进云备份、不回填到界面上。
+ *
+ * 旧版的单端点键（`base_url` / `model` / `preset`）与旧密钥别名**不迁移、不删除**：
+ * 它们只对升级前正在用的那个提供商生效。这样老用户不用重填 key，而别的提供商也借不到它。
+ * 反向也安全：装回旧版本时旧键仍在。
+ *
+ * **存储身份**：[providerPrefsPrefix] 与 `providerVault` 的别名都带着 [LlmPreset.id]。改 id
+ * = 设备上已存的配置与密钥全部读不回来（与包名 / 数据库名 / 口令 prefs 同一类红线）。
+ */
+internal object AgentConfigStore {
+  /** 当前生效的配置：运行时（NodeRuntime）与聊天页读的都是它。 */
+  fun current(context: Context): AgentConfig {
+    val legacy = readLegacyState(context)
+    val enabled = enabledFromStored(prefs(context).getString(KEY_ENABLED, null), legacy)
+    // 一个都没启用时仍给出可启动的端点 / 模型，但**不带密钥** —— 聊天页据此显示「未配置」，
+    // 而不是悄悄用上一家的 key 继续发请求。
+    val preset = enabled ?: legacy.settings?.preset ?: defaultPresetFromBuildConfig()
+    val settings = resolve(context, preset, legacy)
+    // 端点 / 模型被清空（典型是自定义提供商）时，运行时仍要能挂载：AgentConfig 会回落到
+    // 目录默认组合；同时**不交出密钥**，避免把这家提供商的 key 发到另一个端点。
+    val key = if (enabled == null || !settings.canEnable) "" else apiKeyFor(context, preset, legacy)
+    return settings.toAgentConfig(key)
+  }
+
+  /** 提供商列表：目录里每一项 + 用户改过的字段。只读一次旧配置，避免逐个提供商解密。 */
+  fun providers(context: Context): List<ProviderSettings> {
+    val legacy = readLegacyState(context)
+    return LlmPreset.entries.map { resolve(context, it, legacy) }
+  }
+
+  fun provider(context: Context, preset: LlmPreset): ProviderSettings =
+    resolve(context, preset, readLegacyState(context))
+
+  /** 启用中的提供商；null = 用户把所有都关了。 */
+  fun enabledPreset(context: Context): LlmPreset? =
+    enabledFromStored(prefs(context).getString(KEY_ENABLED, null), readLegacyState(context))
+
+  fun hasStoredApiKey(context: Context, preset: LlmPreset): Boolean = provider(context, preset).hasKey
+
+  /**
+   * 保存非密钥字段。空白值写成「未设置」，于是回落到目录默认 —— 清空输入框不该把端点顶成空串。
+   * 用 apply：这些字段在输入过程中会频繁写，值本身不重要到值得同步落盘。
+   */
+  fun saveProviderFields(
+    context: Context,
+    preset: LlmPreset,
+    name: String,
+    baseUrl: String,
+    model: String,
+    api: String,
+  ) {
+    val prefix = providerPrefsPrefix(preset)
+    prefs(context)
+      .edit()
+      .putString(prefix + SUFFIX_NAME, name.trim().ifEmpty { null })
+      .putString(prefix + SUFFIX_BASE_URL, baseUrl.trim().ifEmpty { null })
+      .putString(prefix + SUFFIX_MODEL, model.trim().ifEmpty { null })
+      .putString(prefix + SUFFIX_API, api.trim().ifEmpty { null })
+      .apply()
+  }
+
+  /**
+   * 启用 / 停用提供商。**同一时间只有一个**：启用它会停用其它提供商，停用它则变成
+   * 「没有提供商」（显式存 [ENABLED_NONE]，不回落默认）。
+   *
+   * 这么设计不是界面偷懒：内嵌运行时每个进程只连一个端点（profile 里只有一条 provider 路由），
+   * 多启用没有对应的运行语义。等「默认模型」页做出来再改。
+   */
+  fun setEnabled(context: Context, preset: LlmPreset, enabled: Boolean): Boolean {
+    val prefs = prefs(context)
+    if (enabled) return prefs.edit().putString(KEY_ENABLED, preset.id).commit()
+    if (enabledPreset(context) != preset) return true
+    return prefs.edit().putString(KEY_ENABLED, ENABLED_NONE).commit()
+  }
+
+  /** 写入一个提供商的密钥。空串表示无效输入 —— 删除请走 [clearApiKey]，别把「没填」当「删除」。 */
+  fun saveApiKey(context: Context, preset: LlmPreset, key: String): Boolean {
+    val trimmed = key.trim()
+    if (trimmed.isEmpty()) return false
+    return providerVault(preset).put(context, trimmed)
+  }
+
+  /** 只清这个提供商的密钥；如果它正是升级前那家，旧别名里的 key 也一并清掉。 */
+  fun clearApiKey(context: Context, preset: LlmPreset): Boolean {
+    val legacy = readLegacyState(context)
+    val ownCleared = providerVault(preset).clear(context)
+    val legacyCleared =
+      if (legacy.settings?.preset == preset) legacyVault.clear(context) else true
+    return ownCleared && legacyCleared
+  }
+
+  /** 恢复目录默认：清掉用户改过的字段与密钥（密钥提示写在界面的确认框里）。 */
+  fun resetProvider(context: Context, preset: LlmPreset): Boolean {
+    val legacy = readLegacyState(context)
+    val prefix = providerPrefsPrefix(preset)
+    prefs(context)
+      .edit()
+      .remove(prefix + SUFFIX_NAME)
+      .remove(prefix + SUFFIX_BASE_URL)
+      .remove(prefix + SUFFIX_MODEL)
+      .remove(prefix + SUFFIX_API)
+      .apply()
+    val keyCleared = clearApiKey(context, preset)
+    // 旧版单端点键是全局的，只在它指向的正是这家时删掉；否则重置后 legacy 仍会把旧端点
+    // 顶回来，确认框承诺的「回到目录默认」就成了假话。
+    if (legacy.settings?.preset == preset) {
+      prefs(context)
+        .edit()
+        .remove(KEY_LEGACY_BASE_URL)
+        .remove(KEY_LEGACY_MODEL)
+        .remove(KEY_LEGACY_PRESET)
+        .apply()
+    }
+    // 重置后如果连端点 / 模型都没了（典型是自定义提供商），就别让它继续「启用」着 ——
+    // 那会让聊天页只报「缺 API Key」，掩盖真正缺的是端点。
+    val settings = provider(context, preset)
+    val disabledIfUnusable =
+      if (settings.enabled && !settings.canEnable) setEnabled(context, preset, false) else true
+    return keyCleared && disabledIfUnusable
+  }
+}
+
+/**
+ * 旧版配置解析里**纯函数的那一半**：抽出来是为了能在 JVM 单测里直接钉住优先级，
+ * 不必起 Android。新版的按提供商解析见 [resolveProviderSettings]；这里仍被
+ * [AgentConfigStore] 用来把旧键换算成「它当时指向的那个提供商」。
  *
  * 规则：
  * - 设置页存的端点 / 模型只在**非空白**时才覆盖默认值 —— 存了个空串等于没配，
@@ -111,5 +260,3 @@ internal fun resolveAgentConfig(
     preset = LlmPreset.byId(savedPreset) ?: LlmPreset.forBaseUrl(baseUrl) ?: LlmPreset.Custom,
   )
 }
-
-private fun String?.nonBlankOrNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }

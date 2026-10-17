@@ -228,22 +228,36 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - **视觉路径不解决「输入文字」**：`type_text` / `press(enter)` 都走控件树找输入框，树不可读时没有通道，
   只能如实告知用户做不到（自建 IME 是 roadmap §2.5 的事，还没做）。
 
-### 加一个服务商预选 = 四处对齐
+### 加一个提供商 = 目录 + 存储 + 运行时
 
-`agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 推理格式）→ `AgentConfigStore`（存预选 id）
-→ `NodeRuntime`（注入 `TAPPET_LLM_API` / `_MODEL` / `_THINKING_FORMAT` / `_ZEN`，以及 `PROVIDER` 常量）
-→ `tools/dsh-phone/profile/cordis.patch.yml`（provider 的 `api` / `baseURL` / `models`）。
+`agent/LlmPreset.kt`（端点 / 调用风格 / 默认模型 / 模型清单 / 推理格式）
+→ 设置页 `ui/settings/`（列表 / 详情 / 模型选择；新增目录项会自动出现）
+→ `AgentConfigStore`（按 `provider.<id>.*` 存覆盖；每个提供商一把 `SecretVault` 密钥）
+→ `NodeRuntime`（注入 `TAPPET_LLM_API` / `_BASE_URL` / `_MODEL` / `_MODELS` /
+`_THINKING_FORMAT` / `_ZEN`，以及 `PROVIDER` 常量）
+→ `tools/dsh-phone/profile/cordis.patch.yml`（单条 provider 路由，端点来自 env）。
 
 - **`NodeRuntime.PROVIDER` 必须与 profile 里的 provider 键逐字相同**：漏改一处时报的是
   `no adapter registered for provider "xxx"`，看着像运行时缺插件（有单测钉住）。
 - **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
-  `anthropic-messages`，DeepSeek 与 opencode zen 是 `openai-completions`。风格拿错不会在启动时报错，
-  只会在第一次请求时以 404/400 的样子炸出来。
-- 模型 id 一律从运行时 pi-ai 目录取
+  `anthropic-messages`，DeepSeek / OpenCode Go / OpenRouter / 自定义是 `openai-completions`。
+  风格拿错不会在启动时报错，只会在第一次请求时以 404/400 的样子炸出来。
+- **模型清单是动态的，且必须包含当前选中的模型**：路由键 `tappet` 不是 pi-ai 目录里的
+  provider，适配器不会从安装目录补模型 —— 未声明的 id 报 `UNKNOWN_MODEL`（**不是**退化成
+  纯文本）。`ProviderConfig.llmModelsJson` 按选中模型生成 `TAPPET_LLM_MODELS`，模态从目录取；
+  目录外的 id 声明为 `[text]`（读图会被 pi-ai 明确拒掉）。profile 里只留一条 fallback，供
+  PC 侧校验与没有 env 的直接运行。
+- **同一时间只启用一个提供商**：内嵌运行时每个进程只连一个端点。「启用」互斥，
+  「全部停用」是显式状态（`ENABLED_NONE`），不会回落到默认提供商再把旧 key 用起来。
+  启用 / 选中模型都要求三样齐全：端点、模型、密钥。
+- 模型 id 优先从运行时 pi-ai 目录取
   （`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`）；
-  目录里没有的 id 会被当成未知模型（模态退化成纯文本，读图直接失败）。
-- 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK。**目前只有 OpenCode Go 在真机跑通过**，
-  其余预选是「配置对得上目录、没用真 key 发过请求」，界面里如实标着。
+  手填目录外的 id 是允许的（自定义提供商），但只有文本模态，界面会如实标「仅文本」。
+- 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK；`check-profile.mjs` 会真的执行
+  `!!js` 表达式（含 `TAPPET_LLM_MODELS` 的动态清单）。**只有 OpenCode Go 的目录默认组合
+  在真机上跑通过**；用户改过端点 / 模型 / 调用风格后，界面自动撤掉「已验证」。
+- 清密钥 / 停用只改存储：**已经启动的 Node 进程仍持有旧 env 直到下次启动**。界面按这个
+  事实写文案，不要承诺「立即停止使用」。
 
 ### 几条不许碰的约束
 
@@ -286,6 +300,8 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 | `PassphraseVault` 的 `keyAlias` | Keystore 里的密钥别名 |
 
 **另一组同类身份**：`SecretVault` 的 `prefsName` / `keyAlias` 与 `AgentConfigStore.PREFS_NAME`。
+**提供商 id 也是存储身份**：`provider.<id>.*` 与每个提供商各自的 Keystore 别名
+（`tappet-agent-llm-key-v1-<id>`）都带着 `LlmPreset.id`；改 id = 该提供商的配置与密钥静默读不回来。
 改这几个的后果轻一些（丢的是用户填的 API key，不是聊天库），但同样静默 ——
 表现出来只是「设置页说我配过，但用起来像没配」。
 
@@ -374,7 +390,7 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 ```
 android/                        唯一运行时（Kotlin / Compose）
   app/src/main/java/com/tappet/app/
-    agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ LlmPreset（服务商预选）
+    agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ LlmPreset（提供商目录）
     accessibility/              AccessibilityService（执行层实现）
     bridge/                     DeviceBridgeServer（本地 HTTP 桥）
     data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/SecretVault 存用户填的 key
@@ -418,6 +434,10 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | dsh 启动报 `bad indentation of a mapping entry`，**App 直接崩** | profile 里 `!!js` 表达式写了对象字面量（YAML 的 plain scalar 不能含 `": "`）→ 整个表达式加双引号；`check-profile.mjs` 提前拦 |
 | dsh 报 `no adapter registered for provider "xxx"` | `NodeRuntime.PROVIDER` 与 profile 里的 provider 键不一致 → 两处一起改 |
 | 换服务商后第一次请求 404/400 | 端点、调用风格、模型没成套（Anthropic 是 `anthropic-messages`，不是 OpenAI 兼容层） |
+| 手填模型 id 报 `UNKNOWN_MODEL` | profile 没拿到 `TAPPET_LLM_MODELS`（退回了静态 fallback）→ 动态清单必须含选中模型；`ProviderConfig.llmModelsJson` 有单测 |
+| dsh 报 `provider "tappet" has an empty baseURL`，App 崩 | 启用的自定义提供商端点被清空 → `toAgentConfig` 会回落目录默认并清空 key；若仍出现，检查 `current()` 的 `canEnable` 分支 |
+| 设置里清掉 key / 停用后，当前进程仍能发请求 | env 只在 Node 启动时读一次；重启 App 才生效（界面文案按这个事实写） |
+| 提供商列表显示「缺 Key」 | 该提供商没有密钥；启用 / 选中模型都要求先保存 key（否则会把正在用的那家停掉、App 变成未配置） |
 | 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置（构建期不带密钥，设计如此） |
 | 设置页保存了却没生效 | 设计如此：内嵌 Node 的 env 与 dsh profile 只在启动时读一次 → 重启 App |
 | 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配 → 换预选或重填 key |

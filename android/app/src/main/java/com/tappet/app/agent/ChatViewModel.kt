@@ -61,7 +61,9 @@ data class ChatUiState(
  * 工具调用（tool_call 表）与消息分开落库：它只影响界面上那几张卡，写失败不该挡住回答。
  */
 class ChatViewModel(
-  private val config: AgentConfig = AgentConfig.fromBuildConfig(),
+  // 故意不是 `private val`：这里只在构造时取摘要与 configured，之后不再持有 AgentConfig。
+  // 它不是 val 就不会生成字段，明文密钥也不会随 Activity 作用域的 ViewModel 常驻内存。
+  config: AgentConfig = AgentConfig.fromBuildConfig(),
   private val streamer: ChatStreamer,
   private val store: SessionStore,
   private val clock: () -> Long = System::currentTimeMillis,

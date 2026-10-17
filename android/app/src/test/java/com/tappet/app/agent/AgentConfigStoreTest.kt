@@ -2,6 +2,7 @@ package com.tappet.app.agent
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,6 +11,8 @@ import org.junit.Test
  *
  * 这里钉住的是**回落规则**：设置页存的值只在非空白时才盖掉默认值。写反了不会报错，
  * 只会让用户在设置页清空一个输入框之后端点静默失效 —— 正是本仓库吃过的那种亏。
+ * 新版按提供商解析（[resolveProviderSettings]）与旧版单端点解析（[resolveAgentConfig]）
+ * 都在这份测试里：升级路径不写测试，出问题只会表现为「老用户的 key 没了」。
  */
 class AgentConfigStoreTest {
   private val defaults =
@@ -157,20 +160,345 @@ class AgentConfigStoreTest {
 
     LlmPreset.entries.forEach { preset ->
       assertTrue("${preset.id} 的调用风格不认识：${preset.api}", preset.api in knownApis)
+      assertTrue("${preset.id} 缺 description", preset.description.isNotBlank())
       if (!preset.custom) {
         assertTrue("${preset.id} 缺 baseUrl", preset.baseUrl.startsWith("https://"))
         assertTrue("${preset.id} 缺默认模型", preset.defaultModel.isNotBlank())
+        assertTrue("${preset.id} 没有可选模型", preset.models.isNotEmpty())
         assertTrue(
           "${preset.id} 的默认模型不在候选里，界面提示会自相矛盾",
           preset.defaultModel in preset.modelHints,
+        )
+      }
+      preset.models.forEach { model ->
+        assertTrue("${preset.id} 的 ${model.id} 缺展示名", model.label.isNotBlank())
+      }
+      if (preset.responseApiToggle) {
+        assertTrue(
+          "${preset.id} 的 Response API 开关没有对应的两种调用风格",
+          preset.api in setOf("openai-completions", "openai-responses"),
         )
       }
     }
     // 端点不能重复，否则 forBaseUrl 反推会撞车。
     val urls = LlmPreset.entries.filterNot { it.custom }.map { it.baseUrl }
     assertEquals(urls.size, urls.toSet().size)
+    // id 是存储身份（provider.<id>.* 与 Keystore 别名），不能重复也不能空。
+    val ids = LlmPreset.entries.map { it.id }
+    assertEquals(ids.size, ids.toSet().size)
+    assertTrue(ids.none { it.isBlank() })
+    // 模型 id 在目录里不能重复，否则「按 id 选模型」会有歧义。
+    val modelIds = LlmPreset.entries.flatMap { it.models }.map { it.id }
+    assertEquals(modelIds.size, modelIds.toSet().size)
     // 只有本项目一直在用的那条路径是真机上跑通过的。
     assertEquals(listOf(LlmPreset.OpenCodeGo), LlmPreset.entries.filter { it.verified })
+    // 自定义提供商没有预置模型：模型由用户手填。
+    assertTrue(LlmPreset.Custom.models.isEmpty())
+  }
+
+  // --- 新版：按提供商解析 ---
+
+  @Test
+  fun `provider settings fall back to catalog defaults`() {
+    val settings =
+      resolveProviderSettings(
+        preset = LlmPreset.OpenAi,
+        overrides = ProviderOverrides(name = "  ", baseUrl = "", model = null, api = " "),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+      )
+
+    assertEquals(LlmPreset.OpenAi.label, settings.name)
+    assertEquals(LlmPreset.OpenAi.baseUrl, settings.baseUrl)
+    assertEquals(LlmPreset.OpenAi.defaultModel, settings.model)
+    assertEquals(LlmPreset.OpenAi.api, settings.api)
+    assertFalse(settings.hasKey)
+    assertFalse(settings.enabled)
+  }
+
+  @Test
+  fun `provider overrides win over catalog`() {
+    val settings =
+      resolveProviderSettings(
+        preset = LlmPreset.OpenAi,
+        overrides =
+          ProviderOverrides(
+            name = "  我的 OpenAI  ",
+            baseUrl = "  https://gateway.example/v1  ",
+            model = " gpt-5.5 ",
+            api = " openai-completions ",
+          ),
+        legacy = null,
+        hasKey = true,
+        enabled = true,
+      )
+
+    assertEquals("我的 OpenAI", settings.name)
+    assertEquals("https://gateway.example/v1", settings.baseUrl)
+    assertEquals("gpt-5.5", settings.model)
+    assertEquals("openai-completions", settings.api)
+    assertTrue(settings.hasKey)
+    assertTrue(settings.enabled)
+  }
+
+  /** 旧版的单端点配置只属于「升级前正在用的那家」，别的提供商不能继承它的端点或密钥。 */
+  @Test
+  fun `legacy config only applies to the provider it pointed at`() {
+    val legacy =
+      LegacyProviderSettings(
+        preset = LlmPreset.Anthropic,
+        baseUrl = "https://legacy.example/v1",
+        model = "legacy-model",
+        hasKey = true,
+      )
+
+    val matching =
+      resolveProviderSettings(
+        preset = LlmPreset.Anthropic,
+        overrides = ProviderOverrides(),
+        legacy = legacy,
+        hasKey = false,
+        enabled = true,
+      )
+    assertEquals("https://legacy.example/v1", matching.baseUrl)
+    assertEquals("legacy-model", matching.model)
+    assertTrue(matching.hasKey)
+
+    val other =
+      resolveProviderSettings(
+        preset = LlmPreset.OpenAi,
+        overrides = ProviderOverrides(),
+        legacy = legacy,
+        hasKey = false,
+        enabled = false,
+      )
+    assertEquals(LlmPreset.OpenAi.baseUrl, other.baseUrl)
+    assertEquals(LlmPreset.OpenAi.defaultModel, other.model)
+    assertFalse(other.hasKey)
+  }
+
+  @Test
+  fun `enabled provider resolution distinguishes none from never configured`() {
+    assertEquals(LlmPreset.default, resolveEnabledPreset(null, LlmPreset.default))
+    assertNull(resolveEnabledPreset(ENABLED_NONE, LlmPreset.default))
+    assertEquals(
+      LlmPreset.DeepSeek,
+      resolveEnabledPreset(LlmPreset.DeepSeek.id, LlmPreset.default),
+    )
+    assertEquals(LlmPreset.default, resolveEnabledPreset("no-such-provider", LlmPreset.default))
+  }
+
+  @Test
+  fun `provider config carries the api override into agent config`() {
+    val settings =
+      resolveProviderSettings(
+        preset = LlmPreset.OpenAi,
+        overrides = ProviderOverrides(api = "openai-completions"),
+        legacy = null,
+        hasKey = true,
+        enabled = true,
+      )
+
+    val config = settings.toAgentConfig("k")
+
+    assertEquals("openai-completions", config.api)
+    assertEquals(LlmPreset.OpenAi, config.preset)
+    assertEquals("k", config.apiKey)
+    assertEquals(LlmPreset.OpenAi.thinkingFormat, config.preset.thinkingFormat)
+  }
+
+  @Test
+  fun `model count includes a hand typed model`() {
+    val presetModels = LlmPreset.OpenAi.models.size
+
+    val inCatalog =
+      resolveProviderSettings(
+        LlmPreset.OpenAi,
+        ProviderOverrides(model = LlmPreset.OpenAi.models.first().id),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+      )
+    assertEquals(presetModels, inCatalog.modelCount)
+
+    val handTyped =
+      resolveProviderSettings(
+        LlmPreset.OpenAi,
+        ProviderOverrides(model = "my-own-model"),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+      )
+    assertEquals(presetModels + 1, handTyped.modelCount)
+
+    val customEmpty =
+      resolveProviderSettings(
+        LlmPreset.Custom,
+        ProviderOverrides(),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+      )
+    assertEquals(0, customEmpty.modelCount)
+  }
+
+  @Test
+  fun `custom provider cannot be enabled without endpoint and model`() {
+    val empty =
+      resolveProviderSettings(
+        LlmPreset.Custom,
+        ProviderOverrides(),
+        legacy = null,
+        hasKey = true,
+        enabled = false,
+      )
+    assertFalse(empty.canEnable)
+
+    val filled =
+      resolveProviderSettings(
+        LlmPreset.Custom,
+        ProviderOverrides(baseUrl = "https://gateway.example/v1", model = "my-model"),
+        legacy = null,
+        hasKey = true,
+        enabled = true,
+      )
+    assertTrue(filled.canEnable)
+  }
+
+  // --- 存储身份 / 运行时注入 ---
+
+  /**
+   * 存储键是改名红线的一部分：改一个字符，设备上已存的配置与密钥就读不回来。
+   * 这条测试把字面量钉死；真要改，先写迁移。
+   */
+  @Test
+  fun `storage identity is pinned`() {
+    assertEquals("provider.opencode-go.", providerPrefsPrefix(LlmPreset.OpenCodeGo))
+    assertEquals("tappet_agent_secret-openai", providerSecretPrefsName(LlmPreset.OpenAi))
+    assertEquals("tappet-agent-llm-key-v1-anthropic", providerKeyAlias(LlmPreset.Anthropic))
+  }
+
+  @Test
+  fun `build config defaults apply only to the provider they were inferred for`() {
+    val defaults = ProviderDefaults(LlmPreset.OpenAi, "https://dev.example/v1", "dev-model")
+
+    val matching =
+      resolveProviderSettings(
+        preset = LlmPreset.OpenAi,
+        overrides = ProviderOverrides(),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+        defaults = defaults,
+      )
+    assertEquals("https://dev.example/v1", matching.baseUrl)
+    assertEquals("dev-model", matching.model)
+
+    val other =
+      resolveProviderSettings(
+        preset = LlmPreset.DeepSeek,
+        overrides = ProviderOverrides(),
+        legacy = null,
+        hasKey = false,
+        enabled = false,
+        defaults = defaults,
+      )
+    assertEquals(LlmPreset.DeepSeek.baseUrl, other.baseUrl)
+    assertEquals(LlmPreset.DeepSeek.defaultModel, other.model)
+  }
+
+  @Test
+  fun `saved and legacy values beat build config defaults`() {
+    val defaults = ProviderDefaults(LlmPreset.OpenAi, "https://dev.example/v1", "dev-model")
+    val legacy =
+      LegacyProviderSettings(
+        preset = LlmPreset.OpenAi,
+        baseUrl = "https://legacy.example/v1",
+        model = "legacy-model",
+        hasKey = false,
+      )
+
+    val fromLegacy =
+      resolveProviderSettings(LlmPreset.OpenAi, ProviderOverrides(), legacy, false, false, defaults)
+    assertEquals("https://legacy.example/v1", fromLegacy.baseUrl)
+    assertEquals("legacy-model", fromLegacy.model)
+
+    val fromSaved =
+      resolveProviderSettings(
+        LlmPreset.OpenAi,
+        ProviderOverrides(baseUrl = "https://saved.example/v1", model = "saved-model"),
+        legacy,
+        false,
+        false,
+        defaults,
+      )
+    assertEquals("https://saved.example/v1", fromSaved.baseUrl)
+    assertEquals("saved-model", fromSaved.model)
+  }
+
+  @Test
+  fun `verified only applies to the untouched default combination`() {
+    val base =
+      resolveProviderSettings(LlmPreset.OpenCodeGo, ProviderOverrides(), null, hasKey = true, enabled = true)
+    assertTrue(base.verified)
+
+    assertFalse(base.copy(baseUrl = "https://gateway.example/v1").verified)
+    assertFalse(base.copy(model = "glm-5.3").verified)
+    assertFalse(base.copy(api = "openai-responses").verified)
+    // 只有真机跑通过的那家带 verified 标记。
+    assertFalse(
+      resolveProviderSettings(LlmPreset.OpenAi, ProviderOverrides(), null, true, true).verified,
+    )
+  }
+
+  @Test
+  fun `activation requires a key`() {
+    val noKey =
+      resolveProviderSettings(LlmPreset.OpenAi, ProviderOverrides(), null, hasKey = false, enabled = false)
+    assertTrue(noKey.canEnable)
+    assertFalse(noKey.canActivate)
+
+    assertTrue(noKey.copy(hasKey = true).canActivate)
+  }
+
+  /**
+   * 自定义提供商把端点清空后仍可能处于「启用」状态。运行时必须能挂载（空 baseURL 会让
+   * dsh profile 直接失败），且不能把这家提供商的 key 发到回落后的另一个端点。
+   */
+  @Test
+  fun `agent config stays mountable and drops the key when the endpoint is missing`() {
+    val custom =
+      resolveProviderSettings(LlmPreset.Custom, ProviderOverrides(), null, hasKey = true, enabled = true)
+    assertFalse(custom.canEnable)
+
+    val config = custom.toAgentConfig("must-never-be-sent")
+
+    assertEquals(LlmPreset.default.baseUrl, config.baseUrl)
+    assertEquals(LlmPreset.default.defaultModel, config.model)
+    assertEquals(LlmPreset.default, config.preset)
+    assertEquals("", config.apiKey)
+  }
+
+  @Test
+  fun `dynamic model list declares only the selected model with catalog modality`() {
+    assertEquals(
+      """[{"id":"gpt-6-sol","input":["text","image"]}]""",
+      llmModelsJson("gpt-6-sol"),
+    )
+    assertEquals("""[{"id":"my-model","input":["text"]}]""", llmModelsJson("my-model"))
+    // 空 id 回落到默认模型：运行时至少要有一个可挂载的模型。
+    assertEquals(
+      """[{"id":"deepseek-v4.1-flash","input":["text","image"]}]""",
+      llmModelsJson(" "),
+    )
+  }
+
+  @Test
+  fun `global catalog lookup spans providers`() {
+    assertEquals(true, LlmPreset.catalogModel("gpt-6-sol")?.supportsImage)
+    assertEquals(false, LlmPreset.catalogModel("deepseek-v4-pro")?.supportsImage)
+    assertNull(LlmPreset.catalogModel("no-such-model"))
   }
 
   /**

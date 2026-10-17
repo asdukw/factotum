@@ -22,12 +22,17 @@ data class AgentConfig(
   val reasoningEffort: String?,
   val proxyHost: String?,
   val proxyPort: Int,
-  /** 端点属于哪家服务商：决定调用风格、推理格式与是否需要 zen 的会话头。 */
+  /** 端点属于哪家服务商：决定推理格式与是否需要 zen 的会话头。 */
   val preset: LlmPreset,
+  /**
+   * 调用风格覆盖：同一家提供商可能支持两种协议（OpenAI 的 Responses API 与 Chat Completions、
+   * 自定义网关的两种兼容层）。null 时跟随 [preset]。
+   */
+  val apiOverride: String? = null,
 ) {
-  /** pi-ai 的调用风格，随 [preset] 走（见 [LlmPreset] 里为什么不能一律按 OpenAI 兼容处理）。 */
+  /** pi-ai 的调用风格；设置页的「Response API」开关通过 [apiOverride] 改它。 */
   val api: String
-    get() = preset.api
+    get() = apiOverride ?: preset.api
 
   val isConfigured: Boolean
     get() = apiKey.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()
@@ -47,6 +52,12 @@ data class AgentConfig(
   /** 顶栏用的短摘要，同样不含密钥本体。 */
   fun shortSummary(): String =
     "$model · ${reasoningEffort ?: "默认"}" + if (apiKey.isBlank()) " · 缺 API key" else ""
+
+  /**
+   * data class 自动生成的 toString 会把 [apiKey] 整个打印出来 —— 任何 `"$config"` 日志、
+   * 断言失败输出或堆转储都会带出密钥。这里固定走 [describe]（只报「已配置」与长度）。
+   */
+  override fun toString(): String = describe()
 
   companion object {
     fun fromBuildConfig(): AgentConfig =

@@ -92,31 +92,14 @@
         # 所以按预选给空对象而不是无条件发。
         headers: !!js "process.env.TAPPET_LLM_ZEN === '1' ? { 'x-opencode-session': process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile' } : {}"
 
-        models:
-          # 列出的都是 pi-ai 目录里**真实存在**的 id（对应 agent/LlmPreset.kt 的候选）。
-          # 不显式声明 input 时 MODALITIES 只当 text，工具结果里的图会被 pi-ai 以
-          # "does not support image input" 直接拒掉；声明了才收图。没列出的 id 也能用，
-          # 但同样只有文本模态。
-          - id: deepseek-v4.1-flash
-            input: [text, image]
-          - id: glm-5.3
-            input: [text]
-          - id: kimi-k3
-            input: [text, image]
-          - id: qwen3.8-max
-            input: [text, image]
-          - id: gpt-6-sol
-            input: [text, image]
-          - id: gpt-5.6-sol
-            input: [text, image]
-          - id: claude-sonnet-5
-            input: [text, image]
-          - id: claude-opus-5-5
-            input: [text, image]
-          - id: deepseek-flash
-            input: [text, image]
-          - id: deepseek-v4-pro
-            input: [text]
+        # 模型清单由宿主在启动时按「当前选中的模型」写成 JSON（NodeRuntime 的 TAPPET_LLM_MODELS）。
+        # 路由键 tappet 不是 pi-ai 目录里的 provider，适配器不会从安装目录补模型：未声明的 id
+        # 会以 UNKNOWN_MODEL 失败（不是退化成纯文本）。所以清单必须动态生成，否则手填模型与
+        # 自定义提供商全都不可用。input 也由宿主按目录模态声明，目录外的 id 一律 text。
+        #
+        # 下面的 fallback 只给「没有 TAPPET_LLM_MODELS 环境变量」的场景（PC 侧 profile 校验、
+        # 直接跑 dsh）：Android 上 NodeRuntime 启动前一定会注入它。
+        models: !!js "JSON.parse(process.env.TAPPET_LLM_MODELS ?? '[{\"id\":\"deepseek-v4.1-flash\",\"input\":[\"text\",\"image\"]}]')"
         # thinkingFormat 只在对方**没有原生推理协议**时才需要（zen / DeepSeek 的 reasoning
         # 字段靠它解析）。OpenAI 的 responses 与 Anthropic 的 messages 自带推理块，
         # 那时宿主会注入空串，这里就是空对象。

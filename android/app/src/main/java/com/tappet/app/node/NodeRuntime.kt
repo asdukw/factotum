@@ -4,6 +4,7 @@ import android.content.Context
 import android.system.Os
 import android.util.Log
 import com.tappet.app.agent.AgentConfigStore
+import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.bridge.DeviceBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -401,7 +402,16 @@ object NodeRuntime : NodeLineListener {
     // OpenAI 的模型，报出来的错还像是网络问题。
     Os.setenv("TAPPET_LLM_API", config.api, true)
     Os.setenv("TAPPET_LLM_MODEL", config.model, true)
-    Os.setenv("TAPPET_LLM_THINKING_FORMAT", config.preset.thinkingFormat.orEmpty(), true)
+    // 模型清单只声明当前选中的那一个：路由键 tappet 不是 pi-ai 目录里的 provider，
+    // 未声明的 id 会以 UNKNOWN_MODEL 失败（不是退化成纯文本）。
+    Os.setenv("TAPPET_LLM_MODELS", llmModelsJson(config.model), true)
+    // thinkingFormat 只对 openai-completions 有意义；openai-responses 自带推理块，
+    // 带着它会触发 pi-ai 的 compat 协议校验（整条路由 catalogError）。
+    Os.setenv(
+      "TAPPET_LLM_THINKING_FORMAT",
+      if (config.api == "openai-completions") config.preset.thinkingFormat.orEmpty() else "",
+      true,
+    )
     // 只有 opencode zen 需要这个头（zen 的硬要求）；别的服务商带上它没有意义。
     Os.setenv("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "", true)
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。

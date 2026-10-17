@@ -75,8 +75,8 @@ if (defaultModel.provider !== providerId) {
   fail(`agent-default-model.provider=${defaultModel.provider} 与 provider 名 ${providerId} 对不上`)
 }
 
-// 每个 !!js 都要真的跑一遍：三种环境（全空 / Anthropic / zen）下都必须是可用的值
-const exprs = [cfg.api, cfg.baseURL, cfg.headers, cfg.compat, defaultModel.model]
+// 每个 !!js 都要真的跑一遍：四种环境（全空 / Anthropic / zen / 动态模型清单）下都必须是可用的值
+const exprs = [cfg.api, cfg.baseURL, cfg.headers, cfg.compat, defaultModel.model, cfg.models]
 for (const [i, v] of exprs.entries()) {
   if (!v || typeof v.js !== 'string') fail(`第 ${i + 1} 个 !!js 不是字符串标量`)
 }
@@ -103,7 +103,14 @@ const scenarios = [
       TAPPET_LLM_SESSION: 'check-profile',
     },
   },
+  {
+    // 宿主（NodeRuntime）按当前选中的模型注入的动态清单，见 ProviderConfig.llmModelsJson。
+    // 自定义提供商 / 目录外模型全靠它；空环境下的 fallback 只是一条可用的默认。
+    name: '动态模型清单',
+    env: { TAPPET_LLM_MODELS: '[{"id":"gateway/model-x","input":["text"]}]' },
+  },
 ]
+const validatedModels = []
 for (const { name, env } of scenarios) {
   const values = exprs.map((v) => {
     try {
@@ -112,13 +119,14 @@ for (const { name, env } of scenarios) {
       return fail(`[${name}] 表达式求值失败：${v.js} —— ${cause.message}`)
     }
   })
-  const [api, baseURL, headers, compat, model] = values
+  const [api, baseURL, headers, compat, model, models] = values
   for (const [label, value] of [
     ['api', api],
     ['baseURL', baseURL],
     ['headers', headers],
     ['compat', compat],
     ['model', model],
+    ['models', models],
   ]) {
     if (value === undefined || value === null) fail(`[${name}] ${label} 求值成了 ${value}`)
   }
@@ -128,16 +136,16 @@ for (const { name, env } of scenarios) {
   if (typeof headers !== 'object' || typeof compat !== 'object') {
     fail(`[${name}] headers / compat 必须是对象（空对象也要给，不能是 undefined）`)
   }
-  console.log(`  ok   ${name}：api=${api} model=${model}`)
+  if (!Array.isArray(models) || models.length === 0) fail(`[${name}] models 列表为空`)
+  for (const m of models) {
+    if (!m?.id) fail(`[${name}] models 里有条目缺 id`)
+    if (!Array.isArray(m.input) || m.input.length === 0) {
+      fail(`[${name}] 模型 ${m.id} 没声明 input：不声明时 MODALITIES 只当 text，工具结果里的图会被直接拒掉`)
+    }
+  }
+  validatedModels.push(...models)
+  console.log(`  ok   ${name}：api=${api} model=${model} models=${models.length}`)
 }
 
-const models = cfg.models
-if (!Array.isArray(models) || models.length === 0) fail('models 列表为空')
-for (const m of models) {
-  if (!m?.id) fail('models 里有条目缺 id')
-  if (!Array.isArray(m.input) || m.input.length === 0) {
-    fail(`模型 ${m.id} 没声明 input：不声明时 MODALITIES 只当 text，工具结果里的图会被直接拒掉`)
-  }
-}
-console.log(`  ok   provider=${providerId}，models=${models.length} 条（每条都声明了 input）`)
+console.log(`  ok   provider=${providerId}，动态模型清单可被注入（共校验 ${validatedModels.length} 条模型）`)
 console.log('profile 校验通过')

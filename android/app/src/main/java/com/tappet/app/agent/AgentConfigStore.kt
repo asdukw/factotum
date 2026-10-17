@@ -2,6 +2,11 @@ package com.tappet.app.agent
 
 import android.content.Context
 import com.tappet.app.data.crypto.SecretVault
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 
 // --- 存储布局 ---
 // 旧版单端点配置（只读，保留给升级用户）与新版按提供商的键都在同一个 prefs 文件里。
@@ -15,6 +20,9 @@ private const val SUFFIX_NAME = "name"
 private const val SUFFIX_BASE_URL = "base_url"
 private const val SUFFIX_MODEL = "model"
 private const val SUFFIX_API = "api"
+
+/** 端点 `GET /models` 拉回来的清单（JSON 数组字符串）。 */
+private const val SUFFIX_REMOTE_MODELS = "remote_models"
 
 // prefs 名与别名一旦定下就别再改：改了等于换一把 Keystore 密钥，用户已存的 key 读不出来。
 private const val LEGACY_SECRET_PREFS = "tappet_agent_secret"
@@ -97,7 +105,32 @@ private fun resolve(context: Context, preset: LlmPreset, legacy: LegacyState): P
     enabled = enabled,
     defaults = providerDefaultsFromBuildConfig(),
   )
+    .copy(remoteModels = readRemoteModels(context, preset))
 }
+
+/** 端点拉回来的模型清单：只认字符串数组，坏数据当空（列表是可选功能，不该拖垮设置页）。 */
+private fun readRemoteModels(context: Context, preset: LlmPreset): List<String> {
+  val raw =
+    prefs(context).getString(providerPrefsPrefix(preset) + SUFFIX_REMOTE_MODELS, null) ?: return emptyList()
+  val array = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return emptyList()
+  return array.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }.filter { it.isNotBlank() }
+}
+
+/** 落盘端点拉回来的清单（整份替换）。 */
+internal fun saveRemoteModels(context: Context, preset: LlmPreset, ids: List<String>) {
+  val json = buildJsonArray { ids.forEach { add(it) } }.toString()
+  prefs(context)
+    .edit()
+    .putString(providerPrefsPrefix(preset) + SUFFIX_REMOTE_MODELS, json)
+    .apply()
+}
+
+/**
+ * **只给「发一次请求」的路径用**：取出这家提供商的明文密钥（端点 `/models` 的认证头）。
+ * 调用方不得缓存、不得打印、不得写进任何状态。
+ */
+internal fun requestApiKey(context: Context, preset: LlmPreset): String =
+  apiKeyFor(context, preset, readLegacyState(context))
 
 /**
  * Agent 端点配置的读取与落盘（提供商 / base URL / model / 调用风格 / API key）。

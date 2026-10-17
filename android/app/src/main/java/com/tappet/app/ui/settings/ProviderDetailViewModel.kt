@@ -2,12 +2,20 @@ package com.tappet.app.ui.settings
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.tappet.app.agent.AgentConfigStore
+import com.tappet.app.agent.HttpModelListFetcher
 import com.tappet.app.agent.LlmPreset
+import com.tappet.app.agent.ModelListFetcher
+import com.tappet.app.agent.requestApiKey
+import com.tappet.app.agent.saveRemoteModels
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 提供商详情：名称 / 密钥 / 端点 / 启用状态 + 模型选择 + 高级设置。
@@ -18,6 +26,7 @@ import kotlinx.coroutines.flow.update
 internal class ProviderDetailViewModel(
   private val appContext: Context,
   providerId: String,
+  private val fetcher: ModelListFetcher = HttpModelListFetcher(),
 ) : ViewModel() {
   private val preset: LlmPreset = LlmPreset.byId(providerId) ?: LlmPreset.Custom
 
@@ -35,6 +44,10 @@ internal class ProviderDetailViewModel(
     val keySaved: Boolean = false,
     /** 模型页里「其它模型 id」的草稿，点「使用」才落盘。 */
     val modelDraft: String = "",
+    /** 从端点 `GET /models` 拉回来并落盘的清单（可能很长）。 */
+    val remoteModels: List<String> = emptyList(),
+    val fetchingModels: Boolean = false,
+    val fetchError: String? = null,
     val tab: DetailTab = DetailTab.Config,
     val error: String? = null,
   ) {
@@ -52,6 +65,10 @@ internal class ProviderDetailViewModel(
     /** 「Response API」开关的状态：切到 openai-responses 时为真。 */
     val responseApi: Boolean
       get() = api == "openai-responses"
+
+    /** 端点列表里、目录中没有的那些（单独一段展示，避免与目录模型重复）。 */
+    val remoteOnlyModels: List<String>
+      get() = remoteModels.filter { preset.model(it) == null }
   }
 
   private val _state = MutableStateFlow(UiState())
@@ -78,7 +95,31 @@ internal class ProviderDetailViewModel(
         hasKey = settings.hasKey,
         // 首次加载（草稿为空）跟随已保存模型；用户正在编辑的草稿保留。
         modelDraft = current.modelDraft.ifBlank { settings.model },
+        remoteModels = settings.remoteModels,
       )
+    }
+  }
+
+  /**
+   * 拉端点模型列表（`GET /models`）。密钥只在这一条请求里用，取完即弃 —— 不进状态、不进日志。
+   * 拉回来的清单落盘（换页 / 重启还在），选中之后仍走动态模态声明：目录外的 id 只有文本。
+   */
+  fun fetchModels() {
+    if (_state.value.fetchingModels) return
+    val settings = AgentConfigStore.provider(appContext, preset)
+    val apiKey = requestApiKey(appContext, preset)
+    _state.update { it.copy(fetchingModels = true, fetchError = null) }
+    viewModelScope.launch {
+      val result = withContext(Dispatchers.IO) { fetcher.fetch(settings, apiKey) }
+      val failure = result.error
+      if (failure != null) {
+        _state.update { it.copy(fetchingModels = false, fetchError = failure) }
+        return@launch
+      }
+      saveRemoteModels(appContext, preset, result.ids)
+      _state.update {
+        it.copy(fetchingModels = false, remoteModels = result.ids, fetchError = null)
+      }
     }
   }
 

@@ -40,3 +40,5 @@ android/app/src/main/jniLibs/
 android/app/src/main/assets/nodejs/
 android/.dsh-cache/
 android/app/src/main/assets/dsh-runtime.zip
+# 从 pi-ai 目录抽出的模型模态索引（tools/bundle-dsh.ps1 生成）
+android/app/src/main/assets/model-modalities.json

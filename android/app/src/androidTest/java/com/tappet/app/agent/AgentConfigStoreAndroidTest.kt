@@ -93,6 +93,25 @@ class AgentConfigStoreAndroidTest {
   }
 
   @Test
+  fun remoteModelListIsPersistedPerProvider() {
+    saveRemoteModels(context, LlmPreset.OpenAi, listOf("vendor/model-a", "vendor/model-b"))
+
+    assertEquals(
+      listOf("vendor/model-a", "vendor/model-b"),
+      AgentConfigStore.provider(context, LlmPreset.OpenAi).remoteModels,
+    )
+    assertTrue(AgentConfigStore.provider(context, LlmPreset.DeepSeek).remoteModels.isEmpty())
+
+    // 坏数据当空，不拖垮设置页。
+    context
+      .getSharedPreferences("tappet_agent_settings", Context.MODE_PRIVATE)
+      .edit()
+      .putString("provider.openai.remote_models", "not-json")
+      .commit()
+    assertTrue(AgentConfigStore.provider(context, LlmPreset.OpenAi).remoteModels.isEmpty())
+  }
+
+  @Test
   fun enabledProviderIsExclusiveAndNoneIsExplicit() {
     assertEquals(defaultPresetFromBuildConfig(), AgentConfigStore.enabledPreset(context))
 

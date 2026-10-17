@@ -332,6 +332,11 @@ class AgentConfigStoreTest {
       )
     assertEquals(presetModels + 1, handTyped.modelCount)
 
+    // 端点拉回来的清单也算进「能选的模型数」，重复 id 不重复计数。
+    val withRemote =
+      handTyped.copy(remoteModels = listOf("my-own-model", "vendor/x", "vendor/y"))
+    assertEquals(presetModels + 3, withRemote.modelCount)
+
     val customEmpty =
       resolveProviderSettings(
         LlmPreset.Custom,
@@ -481,16 +486,19 @@ class AgentConfigStoreTest {
   }
 
   @Test
-  fun `dynamic model list declares only the selected model with catalog modality`() {
+  fun `dynamic model list declares only the selected model with resolved modality`() {
     assertEquals(
       """[{"id":"gpt-6-sol","input":["text","image"]}]""",
-      llmModelsJson("gpt-6-sol"),
+      llmModelsJson("gpt-6-sol", supportsImage = true),
     )
-    assertEquals("""[{"id":"my-model","input":["text"]}]""", llmModelsJson("my-model"))
+    assertEquals(
+      """[{"id":"my-model","input":["text"]}]""",
+      llmModelsJson("my-model", supportsImage = false),
+    )
     // 空 id 回落到默认模型：运行时至少要有一个可挂载的模型。
     assertEquals(
       """[{"id":"deepseek-v4.1-flash","input":["text","image"]}]""",
-      llmModelsJson(" "),
+      llmModelsJson(" ", supportsImage = true),
     )
   }
 

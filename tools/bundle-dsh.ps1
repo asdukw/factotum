@@ -48,6 +48,13 @@ Copy-Item -Force (Join-Path $src "launcher.mjs") $cache
 node (Join-Path $src "check-profile.mjs") (Join-Path $src "profile/cordis.patch.yml") (Join-Path $cache "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "check-profile.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
+# 模型模态索引：设置页徽章与 TAPPET_LLM_MODELS 的 input 声明共用这一份结论。
+# 从同一个缓存运行时抽出来，保证索引与打进 APK 的 pi-ai 是同一版本。
+$dataDir = Join-Path $cache "node_modules/@earendil-works/pi-ai/dist/providers/data"
+$modalityOut = Join-Path $root "android/app/src/main/assets/model-modalities.json"
+node (Join-Path $src "modality-index.mjs") $dataDir $modalityOut
+if ($LASTEXITCODE -ne 0) { throw "生成模型模态索引失败（exit $LASTEXITCODE），已中止装配" }
+
 $profileOut = Join-Path $cache "profiles/phone"
 New-Item -ItemType Directory -Force -Path $profileOut | Out-Null
 Copy-Item -Force (Join-Path $src "profile/package.json") $profileOut

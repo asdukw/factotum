@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.LlmPreset
+import com.tappet.app.agent.ModelModalities
 
 /**
  * 提供商详情（参考图的第三屏）：配置 / 模型 / 高级设置三个页签。
@@ -96,6 +101,7 @@ fun ProviderDetailScreen(
     onModelDraftChange = viewModel::onModelDraftChange,
     onModelSelect = viewModel::onModelSelect,
     onUseModelDraft = viewModel::useModelDraft,
+    onFetchModels = viewModel::fetchModels,
     onClearKey = viewModel::clearKey,
     onReset = viewModel::resetProvider,
     modifier = modifier,
@@ -117,6 +123,7 @@ internal fun ProviderDetailScreen(
   onModelDraftChange: (String) -> Unit,
   onModelSelect: (String) -> Unit,
   onUseModelDraft: () -> Unit,
+  onFetchModels: () -> Unit,
   onClearKey: () -> Unit,
   onReset: () -> Unit,
   modifier: Modifier = Modifier,
@@ -160,6 +167,7 @@ internal fun ProviderDetailScreen(
               onModelSelect = onModelSelect,
               onModelDraftChange = onModelDraftChange,
               onUseModelDraft = onUseModelDraft,
+              onFetchModels = onFetchModels,
             )
 
           DetailTab.Advanced ->
@@ -340,7 +348,10 @@ private fun ProviderModelsTab(
   onModelSelect: (String) -> Unit,
   onModelDraftChange: (String) -> Unit,
   onUseModelDraft: () -> Unit,
+  onFetchModels: () -> Unit,
 ) {
+  var pickerOpen by remember { mutableStateOf(false) }
+
   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(
       text = "选中的模型就是 Agent 当前使用的模型；已保存 API Key 时，选择会启用该提供商。",
@@ -348,63 +359,241 @@ private fun ProviderModelsTab(
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(horizontal = 4.dp),
     )
-    if (state.model.isNotBlank()) {
-      Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Column(Modifier.weight(1f)) {
-            Text(
-              text = "当前模型",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(text = state.model, style = MaterialTheme.typography.bodyMedium)
-          }
-          StatusBadge(
-            text = if (LlmPreset.catalogModel(state.model)?.supportsImage == true) "可读图" else "仅文本",
-            tone = BadgeTone.Info,
-          )
-        }
-      }
-    }
+    CurrentModelCard(state)
     if (state.preset.models.isNotEmpty()) {
-      SettingsGroup {
-        state.preset.models.forEachIndexed { index, model ->
-          if (index > 0) SettingsDivider()
-          ModelRow(
-            model = model,
-            selected = model.id == state.model,
-            onClick = { onModelSelect(model.id) },
-          )
-        }
-      }
+      CatalogModelList(state = state, onModelSelect = onModelSelect)
     } else {
-      InfoBanner("自定义提供商没有预置模型：在下面填一个模型 id，再点「使用」。")
+      InfoBanner("自定义提供商没有预置模型：用「获取模型列表」拉一份，或在下面填一个模型 id。")
     }
-    OutlinedTextField(
-      value = state.modelDraft,
-      onValueChange = onModelDraftChange,
-      label = { Text("其它模型 id") },
-      singleLine = true,
-      shape = RoundedCornerShape(12.dp),
-      modifier = Modifier.fillMaxWidth(),
+    RemoteModelsSection(
+      state = state,
+      onFetchModels = onFetchModels,
+      onOpenPicker = { pickerOpen = true },
     )
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-      Button(onClick = onUseModelDraft, enabled = state.modelDraft.isNotBlank()) { Text("使用") }
-    }
+    ModelDraftField(
+      state = state,
+      onModelDraftChange = onModelDraftChange,
+      onUseModelDraft = onUseModelDraft,
+    )
     Text(
-      text = "目录里没有的 id 会被运行时当成纯文本模型：读图会失败。",
+      text = "pi-ai 目录里没有的 id 会按纯文本声明：读图不可用。",
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(start = 4.dp),
     )
+  }
+
+  if (pickerOpen) {
+    FetchedModelsDialog(
+      models = state.remoteModels,
+      selected = state.model,
+      onSelect = { id ->
+        pickerOpen = false
+        onModelSelect(id)
+      },
+      onDismiss = { pickerOpen = false },
+    )
+  }
+}
+
+@Composable
+private fun CurrentModelCard(state: ProviderDetailViewModel.UiState) {
+  if (state.model.isBlank()) return
+  Surface(
+    shape = RoundedCornerShape(14.dp),
+    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(Modifier.weight(1f)) {
+        Text(
+          text = "当前模型",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(text = state.model, style = MaterialTheme.typography.bodyMedium)
+      }
+    }
+  }
+}
+
+@Composable
+private fun CatalogModelList(
+  state: ProviderDetailViewModel.UiState,
+  onModelSelect: (String) -> Unit,
+) {
+  SettingsGroup {
+    state.preset.models.forEachIndexed { index, model ->
+      if (index > 0) SettingsDivider()
+      ModelRow(
+        model = model,
+        selected = model.id == state.model,
+        onClick = { onModelSelect(model.id) },
+      )
+    }
+  }
+}
+
+/**
+ * 端点模型列表这一段：拉取 / 刷新 + 浏览入口。错误就地显示 —— 用户正看着这个页签，
+ * 不需要再弹一层。
+ */
+@Composable
+private fun RemoteModelsSection(
+  state: ProviderDetailViewModel.UiState,
+  onFetchModels: () -> Unit,
+  onOpenPicker: () -> Unit,
+) {
+  SettingsGroup {
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+          Text(
+            text = "端点模型列表",
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+          )
+          Spacer(Modifier.height(2.dp))
+          Text(
+            text =
+              if (state.remoteModels.isEmpty()) {
+                "GET ${state.baseUrl}/models —— 拉一份端点自己认的模型 id"
+              } else {
+                "已拉取 ${state.remoteModels.size} 个模型（目录外 ${state.remoteOnlyModels.size} 个）"
+              },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        Spacer(Modifier.width(8.dp))
+        if (state.fetchingModels) {
+          CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+        } else {
+          TextButton(onClick = onFetchModels) {
+            Text(if (state.remoteModels.isEmpty()) "获取" else "刷新")
+          }
+        }
+      }
+      if (state.fetchError != null) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+          text = state.fetchError,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.error,
+        )
+      }
+      if (state.remoteModels.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onOpenPicker, modifier = Modifier.fillMaxWidth()) {
+          Text("浏览端点返回的模型")
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ModelDraftField(
+  state: ProviderDetailViewModel.UiState,
+  onModelDraftChange: (String) -> Unit,
+  onUseModelDraft: () -> Unit,
+) {
+  OutlinedTextField(
+    value = state.modelDraft,
+    onValueChange = onModelDraftChange,
+    label = { Text("其它模型 id") },
+    singleLine = true,
+    shape = RoundedCornerShape(12.dp),
+    modifier = Modifier.fillMaxWidth(),
+  )
+  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    Button(onClick = onUseModelDraft, enabled = state.modelDraft.isNotBlank()) { Text("使用") }
+  }
+}
+
+/** 端点返回的清单可能几百条（OpenRouter），所以带筛选 + 懒加载，不做成内联长列表。 */
+@Composable
+private fun FetchedModelsDialog(
+  models: List<String>,
+  selected: String,
+  onSelect: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  var query by remember { mutableStateOf("") }
+  val visible = remember(models, query) {
+    val needle = query.trim()
+    if (needle.isEmpty()) models else models.filter { it.contains(needle, ignoreCase = true) }
+  }
+
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("端点返回的模型（${models.size}）") },
+    text = {
+      Column {
+        OutlinedTextField(
+          value = query,
+          onValueChange = { query = it },
+          singleLine = true,
+          shape = RoundedCornerShape(12.dp),
+          placeholder = { Text("筛选") },
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        if (visible.isEmpty()) {
+          Text(
+            text = "没有匹配的模型",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        } else {
+          LazyColumn(Modifier.heightIn(max = 420.dp)) {
+            items(visible) { id ->
+              FetchedModelRow(
+                id = id,
+                selected = id == selected,
+                onClick = { onSelect(id) },
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = {
+      TextButton(onClick = onDismiss) { Text("关闭") }
+    },
+  )
+}
+
+@Composable
+private fun FetchedModelRow(id: String, selected: Boolean, onClick: () -> Unit) {
+  Row(
+    modifier =
+      Modifier.fillMaxWidth()
+        .clickable(onClick = onClick)
+        .padding(horizontal = 8.dp, vertical = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Column(Modifier.weight(1f)) {
+      Text(
+        text = id,
+        style = MaterialTheme.typography.bodyMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+    Spacer(Modifier.width(12.dp))
+    if (selected) {
+      Glyph(
+        kind = GlyphKind.Check,
+        modifier = Modifier.size(20.dp),
+        tint = MaterialTheme.colorScheme.primary,
+      )
+    }
   }
 }
 
@@ -428,8 +617,9 @@ private fun ProviderAdvancedTab(
         "当前模型来源",
         when {
           state.model.isBlank() -> "未设置"
-          LlmPreset.catalogModel(state.model) != null -> "运行时目录"
-          else -> "手填（仅文本）"
+          state.preset.model(state.model) != null -> "界面目录"
+          ModelModalities.isKnown(LocalContext.current, state.preset.id, state.model) -> "pi-ai 目录"
+          else -> "手填"
         },
       )
     }
@@ -523,20 +713,11 @@ private fun ModelRow(
         style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
       )
       Spacer(Modifier.height(3.dp))
-      Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(
-          text = model.id,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        StatusBadge(
-          text = if (model.supportsImage) "可读图" else "仅文本",
-          tone = if (model.supportsImage) BadgeTone.Info else BadgeTone.Muted,
-        )
-      }
+      Text(
+        text = model.id,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
     Spacer(Modifier.width(12.dp))
     if (selected) {

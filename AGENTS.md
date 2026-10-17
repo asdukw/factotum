@@ -253,6 +253,13 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - 模型 id 优先从运行时 pi-ai 目录取
   （`android/.dsh-cache/runtime/node_modules/@earendil-works/pi-ai/dist/providers/data`）；
   手填目录外的 id 是允许的（自定义提供商），但只有文本模态，界面会如实标「仅文本」。
+- **模型列表可以从端点拉**：详情 → 模型 → 「获取」（`GET {base}/models`，OpenAI 兼容用
+  Bearer、Anthropic 用 `x-api-key`）。结果落盘（`provider.<id>.remote_models`），只用于挑选；
+  **模态不来自它** —— `assets/model-modalities.json` 是 `bundle-dsh.ps1` 从 pi-ai 目录生成的
+  索引（~60KB），运行时 `TAPPET_LLM_MODELS` 与设置页共用同一份结论。界面**不显示**可读图 /
+  仅文本标签（用户要求），但声明必须准确：provider 条目 > 跨 provider 一致条目 > 界面目录 >
+  text（欠声明只是提前拒图，过度声明会在请求中途被端点拒）。
+  索引是生成物（gitignore），没跑过 `bundle-dsh.ps1` 的开发构建会回落到界面目录。
 - 改了 profile 就要重跑 `bundle-dsh.ps1` 并重装 APK；`check-profile.mjs` 会真的执行
   `!!js` 表达式（含 `TAPPET_LLM_MODELS` 的动态清单）。**只有 OpenCode Go 的目录默认组合
   在真机上跑通过**；用户改过端点 / 模型 / 调用风格后，界面自动撤掉「已验证」。
@@ -401,7 +408,7 @@ android/                        唯一运行时（Kotlin / Compose）
   app/src/test/                 JVM 单测      app/src/androidTest/  真机测试
 tools/
   fetch-libnode.ps1             拉 pinned libnode + 从 NDK sysroot 复制 libc++_shared 到 jniLibs
-  bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验）
+  bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验与模型模态索引）
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器
@@ -436,6 +443,8 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 装了 `rememberViewModelStoreNavEntryDecorator()` 后启动即崩 | Nav3 1.0.1 要求配套的 `SavedStateNavEntryDecorator`（该版本没有）→ 别装它；VM 用 Activity 作用域 + `viewModel(key = ...)`（提供商详情即如此，按 providerId 区分） |
 | 换服务商后第一次请求 404/400 | 端点、调用风格、模型没成套（Anthropic 是 `anthropic-messages`，不是 OpenAI 兼容层） |
 | 手填模型 id 报 `UNKNOWN_MODEL` | profile 没拿到 `TAPPET_LLM_MODELS`（退回了静态 fallback）→ 动态清单必须含选中模型；`ProviderConfig.llmModelsJson` 有单测 |
+| 模型不读图 / 被声明成纯文本 | `assets/model-modalities.json` 缺失或没有该 id → 跑 `bundle-dsh.ps1`；索引里没有的 id 按 text 声明（安全方向），不要手改生成物 |
+| 端点模型列表拉取报 HTTP 4xx | 密钥与端点不匹配 / 该端点不提供 `/models` → 手填模型 id；列表只是辅助，不影响手填 |
 | dsh 报 `provider "tappet" has an empty baseURL`，App 崩 | 启用的自定义提供商端点被清空 → `toAgentConfig` 会回落目录默认并清空 key；若仍出现，检查 `current()` 的 `canEnable` 分支 |
 | 设置里清掉 key / 停用后，当前进程仍能发请求 | env 只在 Node 启动时读一次；重启 App 才生效（界面文案按这个事实写） |
 | 提供商列表显示「缺 Key」 | 该提供商没有密钥；启用 / 选中模型都要求先保存 key（否则会把正在用的那家停掉、App 变成未配置） |

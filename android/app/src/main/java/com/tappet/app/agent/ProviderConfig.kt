@@ -21,6 +21,8 @@ internal data class ProviderSettings(
   val api: String,
   val hasKey: Boolean,
   val enabled: Boolean,
+  /** 从端点 `GET /models` 拉回来并落盘的 id（可能很多）；只用来挑选，不改变模态声明。 */
+  val remoteModels: List<String> = emptyList(),
 ) {
   /** 端点与模型都齐全 —— 运行时至少能挂载（不一定能请求成功）。 */
   val canEnable: Boolean
@@ -42,11 +44,18 @@ internal data class ProviderSettings(
         api == preset.api
 
   /**
-   * 列表卡片上的「N 个模型」：目录里的模型 + 用户手填的那个（如果不在目录里）。
-   * 自定义提供商一开始是 0 个，填了模型 id 就是 1 个 —— 与界面所见一致。
+   * 列表卡片上的「N 个模型」：目录模型 ∪ 端点拉回来的 ∪ 手填的那个 —— 也就是这个提供商在
+   * 界面里**真的能选**的 id 数。自定义提供商一开始是 0 个，填了模型 id 就是 1 个。
    */
   val modelCount: Int
-    get() = preset.models.size + if (model.isNotBlank() && preset.model(model) == null) 1 else 0
+    get() =
+      (preset.models.map { it.id } + remoteModels + listOfNotNull(model.nonBlankOrNull()))
+        .distinct()
+        .size
+
+  /** 端点拉回来的列表里、目录中没有的那些（界面上单独一段展示）。 */
+  val remoteOnlyModels: List<String>
+    get() = remoteModels.filter { preset.model(it) == null }
 }
 
 /** 用户改过的字段；null / 空白表示「跟随目录默认」。 */
@@ -174,11 +183,11 @@ internal fun ProviderSettings.toAgentConfig(apiKey: String): AgentConfig {
  * 会以 UNKNOWN_MODEL 失败（不是「退化成纯文本」）。所以清单必须由宿主在启动时按选中模型生成，
  * 否则设置页的手填模型 / 自定义提供商全都不可用。
  *
- * `input` 按目录里的模态声明：目录外的 id 一律 `[text]`，读图会被 pi-ai 明确拒绝。
+ * `input` 由调用方用 [ModelModalities] 判断（pi-ai 目录 → 跨 provider 一致条目 → 界面目录 →
+ * false）；判断不出来的 id 一律 `[text]`，读图会被 pi-ai 明确拒绝。
  */
-internal fun llmModelsJson(modelId: String): String {
+internal fun llmModelsJson(modelId: String, supportsImage: Boolean): String {
   val id = modelId.nonBlankOrNull() ?: LlmPreset.default.defaultModel
-  val supportsImage = LlmPreset.catalogModel(id)?.supportsImage == true
   return buildJsonArray {
     add(
       buildJsonObject {

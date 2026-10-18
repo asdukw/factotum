@@ -5,31 +5,42 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
-## [未发布]
+## [0.6.0] - 2026-10-19
+
+这一版是「把 dsh 的能力尽可能搬到手机上」的第一批：模型多了**联网搜索**、**向用户提问**、
+**长期记忆**、**文件读写与检索**，外加一批官方预置能力的补齐。
 
 ### 新增
 
-- **联网搜索（`web_search`）**：接的是 **dsh 自带的 web 能力 seam**（`dsh-web` + `dsh-tool-web`
-  + `dsh-web-search-deepseek`），不是另写一个插件 —— 模型拿到 `web_search` 与 `web_fetch`
-  两个工具，附提示词指引、来源上限、超时，网页正文被标成**外部不可信数据**。
-- **不接搜索 API**：Bing Web Search API 已退役（替代品要 Azure 订阅）、Google Custom Search
-  JSON API 已对新客户关闭。走模型服务商自己的服务器端搜索：**零新增厂商、零新增凭据**
-  （用的还是用户已经配好的那把 key）。
-- **换协议比换模型划算**：zen 的 Anthropic 兼容端点 `/zen/go/v1/messages` 支持原生
-  `web_search_20250305`，同一个 `claude-haiku-5-5` 在 zen 的 `/responses` 上是被协议门挡掉的。
-  实测一次搜索 input 约 13k token，比 `/responses` 那条（17k–44k）便宜。
-- 没有可用搜索端点的提供商（OpenRouter / 自定义）**工具照样挂着**，每次调用回结构化的
-  `WEB_PROVIDER_UNAVAILABLE` —— 与连接器「没配就回 `NOT_CONNECTED`」同一条路数。
+- **联网搜索（`web_search` / `web_fetch`）**：接的是 dsh 自带的 web 能力 seam，
+  不是另接一家搜索 API（Bing Web Search API 已退役、Google Custom Search JSON API 已对新客户关闭）。
+  **零新增厂商、零新增凭据** —— 用的还是你已经配好的那把 key。网页正文被标成**外部不可信数据**。
+- **模型可以向你提问（`ask_user_question`）**：模型需要你拍板时，屏幕底部弹出一张卡片 ——
+  选项、自由输入、跳过都在；一屏一题、多题可翻页。单选点了就走，多选可叠加自定义答案。
+  **关闭卡片不等于回答**，模型会如实告知「没等到答案」而不是替你猜。
+- **长期记忆**：接的是 dsh 官方的指令文件机制（`AGENTS.md` 那一套），落在 App 私有目录。
+  模型可以自己读写它 —— 稳定的偏好与约定写进主文件，之后每一轮都会自动带上。
+- **文件读写与检索**：模型多了 `read` / `write` / `edit` 与 `glob` / `grep`。
+  检索用的是**为 Android 交叉编译的 ripgrep**（默认特性、无额外动态依赖），
+  所以带的是 ripgrep 的完整语义：`.gitignore` 感知遍历、正则、并发。
+- **任务清单与目标**：`todo_write` 建待办；同会话 goal 可跨轮次保持。
+- **后台任务、技能、计划模式**：长任务可以在后台跑并取回输出；技能从工作区文件系统发现；
+  复杂任务可以先出计划再执行。
+- **上下文压缩**：长会话不再一路撞上下文墙 —— 旧工具结果会被压小，超长时可压缩历史。
+- **会话开始后自动收起软键盘**：模型要在屏幕上操作时，键盘不再占掉小半屏、
+  也不会作为 IME 窗口混进控件树与截图里。
 
 ### 已知限制
 
-- **「接受工具」不等于「会真的搜索」**：网关不校验模型是否真支持宿主 `web_search`。
-  实测 zen 的 `deepseek-v4.1-flash` 收下工具、回 200，然后一次都没搜（`input_tokens` 只有 50）
-  —— 所以搜索模型是**单独指定**的（OpenCode Go 用 `claude-haiku-5-5`），不是当前聊天模型。
-- **Anthropic 官方端点与 DeepSeek 官方端点未验**（没有对应的 key），形状按官方文档写。
-- 一次搜索约 13k input token（zen + `claude-haiku-5-5`）。
+- **联网搜索只有 OpenCode Go 的组合实测可用**（zen 的 Anthropic 兼容端点 +
+  `claude-haiku-5-5`）。**「模型接受工具」不等于「它会真的联网」** —— 有的模型收下工具、
+  回 200、然后一次都不搜，所以搜索模型是单独指定的，不是当前聊天模型。
+- **文件工具的路径不是沙箱**：模型能读写 App 能碰到的全部路径。
+- **提问没有倒计时**：dsh 原生的倒计时属于 timed 等待，这一版接的是普通等待。
+- 记忆、文件与提问这三条都在 **Android 16 模拟器**上端到端验过；联网搜索与 `glob` / `grep`
+  是在真机（一加 15T）上验的。
 
-边界、两道门的实测与真机验证步骤见 [docs/web-search.md](docs/web-search.md)。
+完整说明见 [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md)。
 
 ## [0.5.0] - 2026-10-18
 

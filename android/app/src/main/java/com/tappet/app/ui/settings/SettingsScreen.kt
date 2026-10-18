@@ -40,6 +40,7 @@ import com.tappet.app.device.AccessibilityStatus
 fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -55,6 +56,7 @@ fun SettingsScreen(
     state = state,
     onBack = onBack,
     onOpenProviders = onOpenProviders,
+    onOpenTermuxBridge = onOpenTermuxBridge,
     modifier = modifier,
   )
 }
@@ -64,6 +66,7 @@ internal fun SettingsScreen(
   state: SettingsViewModel.UiState,
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -92,6 +95,8 @@ internal fun SettingsScreen(
         ExecutionSection(
           accessibilityEnabled = accessibilityEnabled,
           onOpenAccessibility = { context.startActivity(AccessibilityStatus.settingsIntent()) },
+          linuxConfigured = state.linuxConfigured,
+          onOpenTermuxBridge = onOpenTermuxBridge,
         )
         SectionLabel("关于")
         AboutSection()
@@ -165,7 +170,12 @@ private fun ComingSoonRow(glyph: GlyphKind, title: String, subtitle: String) {
 }
 
 @Composable
-private fun ExecutionSection(accessibilityEnabled: Boolean, onOpenAccessibility: () -> Unit) {
+private fun ExecutionSection(
+  accessibilityEnabled: Boolean,
+  onOpenAccessibility: () -> Unit,
+  linuxConfigured: Boolean,
+  onOpenTermuxBridge: () -> Unit,
+) {
   SettingsGroup {
     SettingsRow(
       glyph = GlyphKind.Accessibility,
@@ -181,6 +191,23 @@ private fun ExecutionSection(accessibilityEnabled: Boolean, onOpenAccessibility:
       StatusBadge(
         text = if (accessibilityEnabled) "已开启" else "未开启",
         tone = if (accessibilityEnabled) BadgeTone.Enabled else BadgeTone.Disabled,
+      )
+    }
+    SettingsDivider()
+    SettingsRow(
+      glyph = GlyphKind.Server,
+      title = "Linux 环境",
+      subtitle =
+        if (linuxConfigured) {
+          "已配置 —— agent 可在其中的 Debian 里执行命令"
+        } else {
+          "未配置 —— 装上 Termux + Debian 后，agent 能直接读写文件、跑命令"
+        },
+      onClick = onOpenTermuxBridge,
+    ) {
+      StatusBadge(
+        text = if (linuxConfigured) "已配置" else "未配置",
+        tone = if (linuxConfigured) BadgeTone.Enabled else BadgeTone.Muted,
       )
     }
   }

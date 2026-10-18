@@ -8,6 +8,7 @@ import com.tappet.app.ui.chat.ChatScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.SettingsScreen
+import com.tappet.app.ui.settings.TermuxBridgeScreen
 
 @Composable
 fun MainNavigation() {
@@ -25,6 +26,7 @@ fun MainNavigation() {
           SettingsScreen(
             onBack = { backStack.removeLastOrNull() },
             onOpenProviders = { backStack.add(Providers) },
+            onOpenTermuxBridge = { backStack.add(TermuxBridge) },
           )
         }
         entry<Providers> {
@@ -38,6 +40,9 @@ fun MainNavigation() {
             providerId = key.providerId,
             onBack = { backStack.removeLastOrNull() },
           )
+        }
+        entry<TermuxBridge> {
+          TermuxBridgeScreen(onBack = { backStack.removeLastOrNull() })
         }
       },
   )

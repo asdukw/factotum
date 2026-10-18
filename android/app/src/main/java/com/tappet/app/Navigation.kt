@@ -9,6 +9,7 @@ import com.tappet.app.ui.settings.ConnectorsScreen
 import com.tappet.app.ui.settings.GmailConnectorScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
+import com.tappet.app.ui.settings.ScheduledTasksScreen
 import com.tappet.app.ui.settings.SettingsScreen
 import com.tappet.app.ui.settings.TermuxBridgeScreen
 
@@ -29,6 +30,7 @@ fun MainNavigation() {
             onBack = { backStack.removeLastOrNull() },
             onOpenProviders = { backStack.add(Providers) },
             onOpenConnectors = { backStack.add(Connectors) },
+            onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
           )
         }
         entry<Providers> {
@@ -51,6 +53,9 @@ fun MainNavigation() {
             providerId = key.providerId,
             onBack = { backStack.removeLastOrNull() },
           )
+        }
+        entry<ScheduledTasks> {
+          ScheduledTasksScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<TermuxBridge> {
           TermuxBridgeScreen(onBack = { backStack.removeLastOrNull() })

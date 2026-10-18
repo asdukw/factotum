@@ -48,6 +48,7 @@ fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
+  onOpenScheduledTasks: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -64,6 +65,7 @@ fun SettingsScreen(
     onBack = onBack,
     onOpenProviders = onOpenProviders,
     onOpenConnectors = onOpenConnectors,
+    onOpenScheduledTasks = onOpenScheduledTasks,
     modifier = modifier,
   )
 }
@@ -74,6 +76,7 @@ internal fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
+  onOpenScheduledTasks: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -102,6 +105,7 @@ internal fun SettingsScreen(
         ExecutionSection(
           accessibilityEnabled = accessibilityEnabled,
           onOpenAccessibility = { context.startActivity(AccessibilityStatus.settingsIntent()) },
+          onOpenScheduledTasks = onOpenScheduledTasks,
         )
         SectionLabel("连接器")
         ConnectorSection(state = state, onOpenConnectors = onOpenConnectors)
@@ -180,6 +184,7 @@ private fun ComingSoonRow(glyph: GlyphKind, title: String, subtitle: String) {
 private fun ExecutionSection(
   accessibilityEnabled: Boolean,
   onOpenAccessibility: () -> Unit,
+  onOpenScheduledTasks: () -> Unit,
 ) {
   val context = LocalContext.current
   SettingsGroup {
@@ -226,6 +231,13 @@ private fun ExecutionSection(
         },
       )
     }
+    SettingsDivider()
+    SettingsRow(
+      glyph = GlyphKind.Server,
+      title = "定时任务",
+      subtitle = "每天到点让 agent 跑一句指令",
+      onClick = onOpenScheduledTasks,
+    )
     SettingsDivider()
     // Linux 环境（Termux 桥）**功能已在代码里，但还没开发完，所以先按「即将推出」占位** ——
     // 与上面「助手 / 扩展管理」同一套处理：`enabled = false`、不给 onClick，用户点不进去。

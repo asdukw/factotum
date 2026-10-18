@@ -18,6 +18,9 @@ import kotlinx.serialization.Serializable
 /** Linux 环境（Termux 桥）配置：地址 + 访问 token。 */
 @Serializable data object TermuxBridge : NavKey
 
+/** 定时任务列表（设置 → 执行层 → 定时任务）。 */
+@Serializable data object ScheduledTasks : NavKey
+
 /** 连接器列表（设置 → 连接器）：Gmail / Outlook…… */
 @Serializable data object Connectors : NavKey
 

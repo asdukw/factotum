@@ -3,6 +3,7 @@ package com.tappet.app.data.db
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.tappet.app.data.crypto.PassphraseVault
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -28,12 +29,31 @@ object TappetDatabaseProvider {
     }
   }
 
+  /**
+   * v1 → v2：加定时任务表。
+   *
+   * **不用破坏性迁移**：那会把用户已有的会话与消息清空。这里只加一张表。
+   */
+  private val MIGRATION_1_2 =
+    object : Migration(1, 2) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          "CREATE TABLE IF NOT EXISTS `scheduled_task` (" +
+            "`id` TEXT NOT NULL, `title` TEXT NOT NULL, `prompt` TEXT NOT NULL, " +
+            "`hour` INTEGER NOT NULL, `minute` INTEGER NOT NULL, " +
+            "`enabled` INTEGER NOT NULL, `last_run_at` INTEGER, `last_error` TEXT, " +
+            "PRIMARY KEY(`id`))",
+        )
+      }
+    }
+
   fun open(context: Context): TappetDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, TappetDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
+      .addMigrations(MIGRATION_1_2)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

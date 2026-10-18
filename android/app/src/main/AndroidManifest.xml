@@ -5,6 +5,10 @@
     <!-- 应用内更新：把验证过的 APK 交给系统安装器。Android 8+ 还要用户为「这个来源」
          手动打开「安装未知应用」，由 AppUpdater.canInstall 判断并引导。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 定时任务：精确到分钟的唤醒。Android 12+ 是特殊权限，用户要在系统里手动开；
+         没开时降级成 setWindow（可能晚几分钟），功能不会消失。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 任务期间保活（ColorOS 会冻结后台进程）；通知在 13+ 需要运行时权限，拒绝也允许 FGS 运行 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -76,6 +80,23 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- 定时任务：闹钟响 → 跑任务；开机 / 改时间 → 重排（alarm 不持久化）。 -->
+        <receiver
+            android:name=".schedule.ScheduledTaskReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.tappet.app.schedule.FIRE" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".schedule.ScheduledTaskBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -558,7 +558,7 @@ object NodeRuntime : NodeLineListener {
     // 原生库直接从 APK mmap，那个目录下没有文件可 exec（实测 `lib/arm64/` 是空的）。
     Os.setenv("TAPPET_RG_PATH", File(app.applicationInfo.nativeLibraryDir, "librg.so").absolutePath, true)
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
-    Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)
+    Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(app), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)
     // 手机上 Linux 环境（Termux + proot Debian）的桥：配了才有值，插件按这两个 env
     // 决定要不要把 run_command 注册进工具表（空值 = 不注册，见插件 index.mjs）。

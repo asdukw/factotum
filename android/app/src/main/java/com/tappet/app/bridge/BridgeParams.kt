@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 
 /**
  * 桥请求体里那几个字段的读取。
@@ -15,6 +16,8 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 internal fun JsonObject.string(key: String): String? =
   this[key]?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+
+internal fun JsonObject.long(key: String): Long? = runCatching { this[key]?.jsonPrimitive?.long }.getOrNull()
 
 internal fun JsonObject.int(key: String): Int? =
   this[key]?.let { runCatching { it.jsonPrimitive.intOrNull }.getOrNull() }

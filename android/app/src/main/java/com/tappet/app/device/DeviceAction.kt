@@ -60,6 +60,30 @@ sealed interface DeviceAction {
    * 图由 dsh 侧存成附件交给模型，帧字段由插件渲染成模型可见的图例（见 [ScreenFrame]）。
    */
   data object Screenshot : DeviceAction
+
+  /**
+   * 设置闹钟。**走系统 intent**（`AlarmClock.ACTION_SET_ALARM`）—— 不需要任何权限，
+   * 也**不需要无障碍**：确认留给时钟 App 自己（`EXTRA_SKIP_UI` 是 false）。
+   *
+   * 为什么不用 AlarmManager 直接建：那只是「几小时后响一次」的定时器，不是用户在时钟 App 里
+   * 看得见、能改、能关的闹钟。用户要的是后者。
+   */
+  data class SetAlarm(val hour: Int, val minute: Int, val label: String?) : DeviceAction
+
+  /**
+   * 新建日程。**走系统 intent**（`CalendarContract` 的 insert）—— 同样不需要权限，
+   * 日历 App 会带着预填内容打开、由用户点保存。
+   *
+   * 直接写 `ContentResolver` 要 `WRITE_CALENDAR` 运行时权限，那会弹系统授权框；
+   * 一个「可选功能」不该为了建一条日程先要一个账号级权限。
+   */
+  data class AddCalendarEvent(
+    val title: String,
+    val beginMillis: Long,
+    val endMillis: Long,
+    val location: String?,
+    val description: String?,
+  ) : DeviceAction
 }
 
 enum class SwipeDirection {

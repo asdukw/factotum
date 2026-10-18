@@ -126,17 +126,33 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     // 执行前先记「触摸探索实际是否生效」——「点了没反应」是不是预期行为全靠它区分
     observeExploration()
     return when (action) {
+      // 这两个动作**不经过无障碍**（桥直接交给系统 App，见 SystemIntents）。
+      // 正常路径走不到这里；留一条明确的失败，比让 when 编译不过或静默落到别处好。
+      is DeviceAction.SetAlarm, is DeviceAction.AddCalendarEvent ->
+        DeviceActionResult(ok = false, summary = "这个动作由桥直接处理，不经过无障碍", code = "NOT_HANDLED_HERE")
+
       DeviceAction.ReadScreen -> executeReadScreen()
+
       is DeviceAction.TapNode -> executeTapNode(action.ref)
+
       is DeviceAction.TapPoint -> executeTapPoint(action.x, action.y)
+
       is DeviceAction.TapFrame -> executeTapFrame(action)
+
       is DeviceAction.LongPressNode -> executeLongPressNode(action.ref, action.durationMs)
+
       is DeviceAction.LongPressPoint -> executeLongPressPoint(action.x, action.y, action.durationMs)
+
       is DeviceAction.LongPressFrame -> executeLongPressFrame(action)
+
       is DeviceAction.TypeText -> executeTypeText(action.text)
+
       is DeviceAction.Press -> executePress(action.key)
+
       is DeviceAction.LaunchApp -> executeLaunchApp(action.query)
+
       is DeviceAction.Swipe -> executeSwipe(action.direction)
+
       DeviceAction.Screenshot -> executeScreenshot()
     }
   }

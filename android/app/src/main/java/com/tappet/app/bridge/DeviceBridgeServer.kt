@@ -11,6 +11,7 @@ import com.tappet.app.device.MAX_LONG_PRESS_MS
 import com.tappet.app.device.MIN_LONG_PRESS_MS
 import com.tappet.app.device.PressKey
 import com.tappet.app.device.SwipeDirection
+import com.tappet.app.device.SystemIntents
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -39,8 +40,11 @@ object DeviceBridgeServer {
 
   @Volatile private var port: Int = -1
 
+  @Volatile private var appContext: android.content.Context? = null
+
   /** 启动（幂等），返回给 Node 的 base URL；token 通过 [authToken] 读取。 */
-  fun start(): String {
+  fun start(context: android.content.Context): String {
+    appContext = context.applicationContext
     if (started.compareAndSet(false, true)) {
       val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
       port = socket.localPort
@@ -117,12 +121,23 @@ object DeviceBridgeServer {
         ?: return errorJson("非法 JSON")
     val action = root.string("action") ?: return errorJson("缺少 action")
     val deviceAction = toDeviceAction(action, root) ?: return errorJson("未知或参数不全的 action：$action")
-    val service = TappetAccessibilityService.get()
+    val context = appContext ?: return errorJson("设备桥尚未初始化")
+    // 闹钟与日程**不经过无障碍**（见 SystemIntents）：先把它们分出去，
+    // 否则无障碍没开时这两个动作会被误判成失败。
     val result =
-      if (service == null) {
-        AccessibilityStatus.unavailableToolResult()
-      } else {
-        runBlocking { service.execute(deviceAction) }
+      when (deviceAction) {
+        is DeviceAction.SetAlarm -> SystemIntents.setAlarm(context, deviceAction)
+
+        is DeviceAction.AddCalendarEvent -> SystemIntents.addCalendarEvent(context, deviceAction)
+
+        else -> {
+          val service = TappetAccessibilityService.get()
+          if (service == null) {
+            AccessibilityStatus.unavailableToolResult()
+          } else {
+            runBlocking { service.execute(deviceAction) }
+          }
+        }
       }
     BridgeHealth.record(result.code, action)
     // 只记动作与结构化结果（计数），不记 payload 正文
@@ -186,8 +201,27 @@ object DeviceBridgeServer {
           runCatching { DeviceAction.Swipe(SwipeDirection.valueOf(raw.uppercase())) }.getOrNull()
         }
 
+      "set_alarm" ->
+        root.int("hour")?.let { hour ->
+          root.int("minute")?.let { minute -> DeviceAction.SetAlarm(hour, minute, root.string("label")) }
+        }
+
+      "add_calendar_event" -> calendarEvent(root)
+
       else -> null
     }
+
+  /** 日程参数单独一个函数：四个可空字段凑一个对象，写成嵌套 `let` 会撞 detekt 的嵌套深度。 */
+  private fun calendarEvent(root: JsonObject): DeviceAction.AddCalendarEvent? {
+    val title = root.string("title")?.takeIf { it.isNotBlank() }
+    val begin = root.long("begin")
+    val end = root.long("end")
+    return if (title != null && begin != null && end != null) {
+      DeviceAction.AddCalendarEvent(title, begin, end, root.string("location"), root.string("description"))
+    } else {
+      null
+    }
+  }
 
   private fun readLine(input: BufferedInputStream): String? {
     val buffer = StringBuilder()

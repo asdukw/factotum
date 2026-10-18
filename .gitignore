@@ -8,6 +8,9 @@ all_keys.json
 
 # --- 本地工具 ---
 .workbuddy-ai/
+# Claude Code 的 worktree 隔离目录：每个 worktree 一份完整检出，不是源码。
+# 只忽略这一层 —— .claude/agents/ 下的子 agent 定义是要入库的。
+.claude/worktrees/
 
 # --- 审计产物（tools/audit/collect.mjs 产出）---
 # 含屏幕正文与工具结果原文，属敏感数据：工具与任务集入库，产物不入库。

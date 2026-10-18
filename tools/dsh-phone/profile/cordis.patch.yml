@@ -42,6 +42,10 @@
 # 或挂 permission / sandbox 那一层（本 profile 现在没挂）。
 - id: tool-fs
   disabled: false
+# tool-fs-search（模型的 glob / grep）也开：记忆文件一多，没有检索模型就只能靠 INDEX 猜。
+# 它依赖 `@vscode/ripgrep` 的**打包二进制**，而那个包没有 android 产物 —— 我们交叉编译了
+# 一份（.github/workflows/rg.yml），由 tools/fetch-rg.ps1 拉进 jniLibs，
+# 再用 tools/dsh-phone/ripgrep-stub 顶掉那个包、把 rgPath 指过去。三处缺一不可。
 - id: tool-fs-search
   disabled: true
 - id: fs-sandbox

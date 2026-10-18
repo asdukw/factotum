@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用内更新用：只把缓存目录暴露给 FileProvider（安装器经 content:// 读那个 APK）。
+     路径收窄到 cacheDir 根，别把 filesDir / databases 也放进来。 -->
+<paths>
+    <cache-path name="updates" path="." />
+</paths>

@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +26,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.device.AccessibilityStatus
+import com.tappet.app.update.AppUpdater
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 设置首页：分组卡片 + 语义徽章，模型部分之外的项目先以「即将推出」占位。
@@ -233,9 +238,80 @@ private fun ConnectorSection(state: SettingsViewModel.UiState, onOpenConnectors:
   }
 }
 
+/**
+ * 关于 + 应用内更新。
+ *
+ * **只在用户点的时候联网**（与连接器「不后台轮询」同一条原则）：进这一页不发起任何请求，
+ * 点「检查更新」才查 GitHub API。
+ *
+ * 更新链路上的两条保证由 [AppUpdater] 负责，这里只负责把结果如实说出来：
+ * 下载的包要过 SHA-256 与**签名证书比对**；任何一步不过就不给安装入口。
+ */
 @Composable
 private fun AboutSection() {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var state by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+
+  fun startCheck() {
+    if (state is UpdateUiState.Checking || state is UpdateUiState.Downloading) return
+    state = UpdateUiState.Checking
+    scope.launch {
+      val result = withContext(Dispatchers.IO) { AppUpdater.check(appVersionName()) }
+      state =
+        when (result) {
+          is AppUpdater.UpdateCheck.UpToDate -> UpdateUiState.UpToDate(result.current)
+          is AppUpdater.UpdateCheck.Available -> UpdateUiState.Available(result.release)
+          is AppUpdater.UpdateCheck.Failed -> UpdateUiState.Failed(result.reason)
+        }
+    }
+  }
+
+  fun startInstall(release: AppUpdater.Release) {
+    if (!AppUpdater.canInstall(context)) {
+      state = UpdateUiState.NeedsPermission
+      return
+    }
+    state = UpdateUiState.Downloading(0)
+    scope.launch {
+      val outcome =
+        withContext(Dispatchers.IO) {
+          runCatching {
+            AppUpdater.download(context, release) { done, total ->
+              state = UpdateUiState.Downloading(if (total > 0) (done * 100 / total).toInt() else 0)
+            }
+          }
+        }
+      outcome
+        .onSuccess { apk ->
+          runCatching { context.startActivity(AppUpdater.installIntent(context, apk)) }
+            .onFailure { state = UpdateUiState.Failed(it.javaClass.simpleName) }
+            .onSuccess { state = UpdateUiState.UpToDate(appVersionName()) }
+        }
+        .onFailure { state = UpdateUiState.Failed(it.message ?: it.javaClass.simpleName) }
+    }
+  }
+
   SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Info,
+      title = "版本更新",
+      subtitle = updateSubtitle(state),
+      onClick = {
+        when (val current = state) {
+          is UpdateUiState.Available -> startInstall(current.release)
+
+          UpdateUiState.NeedsPermission ->
+            runCatching { context.startActivity(AppUpdater.unknownSourcesIntent(context)) }
+              .onFailure { state = UpdateUiState.Failed("NO_SETTINGS") }
+
+          else -> startCheck()
+        }
+      },
+    ) {
+      StatusBadge(updateBadge(state), updateTone(state))
+    }
+    SettingsDivider()
     SettingsRow(
       glyph = GlyphKind.Info,
       title = "关于",
@@ -244,6 +320,49 @@ private fun AboutSection() {
     )
   }
 }
+
+/** 更新入口的四种可操作状态 + 三种终态。UI 只读它，不做判断。 */
+private sealed interface UpdateUiState {
+  data object Idle : UpdateUiState
+
+  data object Checking : UpdateUiState
+
+  data class UpToDate(val version: String) : UpdateUiState
+
+  data class Available(val release: AppUpdater.Release) : UpdateUiState
+
+  data class Downloading(val percent: Int) : UpdateUiState
+
+  data object NeedsPermission : UpdateUiState
+
+  data class Failed(val reason: String) : UpdateUiState
+}
+
+private fun updateSubtitle(state: UpdateUiState): String =
+  when (state) {
+    UpdateUiState.Idle -> "点这里检查新版本"
+    UpdateUiState.Checking -> "正在检查…"
+    is UpdateUiState.UpToDate -> "已是最新（${state.version}）"
+    is UpdateUiState.Available -> "发现新版本 ${state.release.version} —— 点这里下载并安装"
+    is UpdateUiState.Downloading -> "正在下载… ${state.percent}%"
+    UpdateUiState.NeedsPermission -> "需要允许「安装未知应用」才能安装 —— 点这里去设置"
+    is UpdateUiState.Failed -> "检查失败（${state.reason}）—— 点这里重试"
+  }
+
+private fun updateBadge(state: UpdateUiState): String =
+  when (state) {
+    is UpdateUiState.Available -> "可更新"
+    UpdateUiState.NeedsPermission -> "待授权"
+    is UpdateUiState.Failed -> "失败"
+    else -> "检查"
+  }
+
+private fun updateTone(state: UpdateUiState): BadgeTone =
+  when (state) {
+    is UpdateUiState.Available -> BadgeTone.Enabled
+    UpdateUiState.NeedsPermission, is UpdateUiState.Failed -> BadgeTone.Disabled
+    else -> BadgeTone.Muted
+  }
 
 private fun providerSubtitle(state: SettingsViewModel.UiState): String {
   val name = state.providerName ?: return "未启用 —— 选一个提供商并填写 API Key"

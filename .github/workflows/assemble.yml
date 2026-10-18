@@ -102,7 +102,11 @@ jobs:
           unzip -l "$APK" | awk '{print $4}' | grep '^lib/' || echo "(一个都没有)"
           echo "--- 构建前的 jniLibs ---"
           ls -l android/app/src/main/jniLibs/*/ || echo "(jniLibs 是空的)"
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so; do
+          # 这三个都是「缺了不会让构建失败、但装到设备上功能静默坏掉」的东西，所以逐个查。
+          # librg.so 是 v0.6.0 第一次出包时漏掉的那个：打包方式从「塞进运行时 zip」改成
+          # 「放 jniLibs」时，bundle-dsh 里那条「缺 rg 就 throw」的检查被一起删了，
+          # 而把 rg 放进 jniLibs 的 fetch-rg.ps1 没进 CI —— 于是构建成功、包是坏的。
+          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so; do
             unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
           done
           # 运行时资产必须是真 zip（头两个字节 PK）；v0.1.0 那次是 tar 冒充 zip，而构建是成功的

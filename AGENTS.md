@@ -146,8 +146,13 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   （Linux 的 GNU tar 写不了 zip，产物是改了后缀的 tar），第二次又缺 `libc++_shared.so`。
   `assemble.yml` 就是为这两次教训加的。
 
-**发版**：打 `v*` tag → `release.yml` 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
-版本说明写在 `docs/releases/<tag>.md`（有就用它，没有就 `--generate-notes`）。
+**发版**（顺序不能反，`release.yml` 在 tag 上一次性把包与说明发出去）：
+
+1. 改 `android/app/build.gradle.kts` 的 `versionCode` / `versionName` —— **包内版本号来自这里，
+   不是来自 tag**，漏改会打出「tag 叫 `v0.6.0`、装到设备上却报 `0.5.0`」的包；
+2. 写 `docs/releases/<tag>.md` 并更新 `CHANGELOG.md`，**先提交再打 tag** —— `release.yml` 只读
+   仓库里已有的那份说明文件，没有就退回 `--generate-notes`；
+3. 打 `v*` tag → 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
 
 | 签名材料 | 位置 |
 |---|---|
@@ -286,6 +291,11 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 | `bridge/ConnectorBridgeServer.kt` | 只发短命 access token 的本地桥，**独立于设备桥**（理由见类注释） |
 | `tools/dsh-phone/plugins/gmail/` | 模型可见的三个只读工具；Gmail 的 REST 语义全在这里 |
 
+- **状态（2026-10-18，v0.5.0）**：授权全流程（浏览器同意 → 回环回调 → 落库）与 `mail_list`
+  真实读到邮件都在一加 15T 上跑通，但**只在一个账号上验过**。两个已知边界：预置的 OAuth 客户端
+  停在 Google **测试模式**（只有白名单账号能授权，refresh token 实测 7 天到期），发布包给别人用
+  仍得让对方填自己的客户端 id；授权期间 App 进程必须活着（最长 10 分钟持有回环 socket），
+  被杀就得重来。
 - **令牌的信任边界**：refresh token 永不离开 Kotlin；插件每次调用向桥要一个 access token
   （`{"action":"access_token","connector":"gmail"}`）。所以「插件被注入」也拿不到长期凭据。
 - **桥不代理云端请求**：只发令牌。否则一处 API 会被劈成「宿主知道路径、插件知道工具描述」两半。
@@ -453,8 +463,11 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 - **完成一个可验证的里程碑时自行提交**，不要攒大改动等用户开口。判据：构建 / 单测通过，
   或真机验证完成，即提交一个内聚的 commit。
 - **master 已开启分支保护，改动走 PR**：从 master 拉分支 → 提交 → 开 PR → CI 三项检查
-  （静态检查 / 单元测试 / 离线自检）通过 → 合并。直接 push master 会被远端拒绝；
-  `v*` tag 的 release 不受影响。仓库默认分支叫 **master**（不是 main）。
+  （静态检查 / 单元测试 / 离线自检）通过 → 合并。保护是 GitHub **Ruleset**（不是旧版 branch
+  protection）：禁删除 / 禁 force push / 要求 PR / 要求三项 CI 且 strict。**仓库管理员被显式
+  列为 bypass actor（`bypass_mode: always`），可以直推 master** —— 这是个人项目的刻意选择；
+  非 admin 的贡献者仍会被远端拒绝。`v*` tag 的 release 不受影响。
+  仓库默认分支叫 **master**（不是 main）。
 - **合并 PR 与 push 一样，必须由用户逐次明确授权**：「改完就提交」是默认动作，
   「开 PR / 合并 / 推上去」不是。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、
@@ -484,8 +497,11 @@ tools/
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
-  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
+  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename、assistant-stream → session.stream）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
+  dsh-phone/modality-index.mjs  从 pi-ai 目录生成 assets/model-modalities.json（bundle-dsh.ps1 调用）
+  dsh-phone/rpc-probe.mjs       PC 侧探针：以 SDK client 身份直连 launcher 的 JSON-RPC（验 initialize 与事件通道）
+  dsh-phone/android-attachments/  附件存储的纯 JS 实现（替掉依赖 sharp 的 attachment-local）
   dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
   dsh-phone/plugins/gmail/      邮箱连接器工具（只读 3 个；令牌走本地连接器桥）
   dsh-phone/profile/            phone profile（cordis.patch.yml）
@@ -549,7 +565,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
 | 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
 | 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |
-| 浏览器点完同意后 App 没反应 | 浏览器没跳到 `127.0.0.1`（部分浏览器拦回环）→ 看 stderr 里监听器有没有收到请求；这是真机未验项之一 |
+| 浏览器点完同意后 App 没反应 | 授权全流程真机已跑通；遇到时先看 stderr 里回环监听器有没有收到请求（部分浏览器拦 `127.0.0.1`）。另：授权期间 App 进程被杀就得重来（最长 10 分钟持有 socket） |
 | 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
 | 邮件工具整个不见了 / dsh 起不来 | 插件名三处不一致（profile 的 insert / `bundle-dsh.ps1` 的 Package / 插件 `package.json`）→ 有单测钉住；改完重跑 `bundle-dsh.ps1` |
 | 输入框快速打字丢字符 | 每次击键同步 `commit()` 落盘（主线程 fsync）→ 频繁写的字段用 `apply()`，只有需要「写进去没有」答案的凭据才用 `commit` |

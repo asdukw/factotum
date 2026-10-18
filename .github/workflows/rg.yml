@@ -1,0 +1,120 @@
+name: Build ripgrep
+
+# 交叉编译 aarch64-linux-android 的 ripgrep，存成 release 产物，供 tools/fetch-rg.ps1 按
+# pinned 版本下载。**这是「编一次」那一半**：正常构建与本 workflow 无关 —— 跟 libnode 一样，
+# 产物不入库，构建时按 pinned 版本拉。
+#
+# **为什么自己编，而不是拿 Termux 的包**（2026-10-18 查过，实测数据）：
+#   Termux 的 `ripgrep_15.2.0_aarch64.deb`（1.2 MB，sha256 38e28bc2…）解出来的 rg 是
+#   ELF64 AArch64、4.87 MB，NEEDED 是 libpcre2-8.so / libdl.so / libc.so，
+#   而且 RUNPATH 硬编码 `/data/data/com.termux/files/usr/lib`。
+#   也就是说：还得再带一个 libpcre2-8.so，并靠 LD_LIBRARY_PATH 把它喂给 loader，
+#   而我们控制不了 exec 出来的子进程的搜索路径（除非改 dsh 那边 spawn 的环境）。
+#   自己编用**默认特性**（ripgrep 的默认特性是空的，没有 pcre2、没有 C 依赖），
+#   出来是自包含的：只需要 bionic 的 libc / libdl。少一个 .so、少一个环境变量、少一个
+#   「Termux 换了 soname 就炸」的隐患。代价就是这个 workflow 跑一次。
+#
+# 为什么在 CI 编而不是本机：本机是 Windows + MSVC，而这台机器**没装 MSVC 构建工具**
+#   （link.exe 不存在，Rust 的 msvc host 工具链连 build script 都链不出来；
+#   Git Bash 的 coreutils `link` 还会把 MSVC 的 link.exe 顶掉）。装 VS Build Tools 是
+#   2–4 GB，正是这个方案想避开的那类成本。Linux runner 上 NDK + rustup 都是常规操作。
+#
+# 只在手动触发跑：它是「编一次」的动作，不是每次构建都要走的路。
+#
+# 那个 push 触发器只为「让它在非默认分支上也能跑」而存在：GitHub 只暴露**默认分支上**的
+# workflow_dispatch，所以第一次（还没合进 master 时）没法用 `gh workflow run`。
+# 它被 paths 限死在自己这个文件上，改别的任何东西都不会触发它。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ripgrep 版本（crates.io 上的版本号）"
+        required: true
+        default: "15.2.0"
+  push:
+    paths:
+      - ".github/workflows/rg.yml"
+
+permissions:
+  contents: write # 发 release 产物
+
+jobs:
+  build:
+    name: 编 aarch64-linux-android 的 rg
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: "29.0.14206865"
+      # 与 android/app/build.gradle.kts 的 minSdk 对齐；NDK 里可用的最低 API level 是 21。
+      ANDROID_API: "24"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: android-actions/setup-android@v4
+      - name: 缓存 NDK
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+          key: android-ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+      - name: 装 NDK
+        run: sdkmanager "ndk;${{ env.NDK_VERSION }}"
+
+      # ubuntu runner 自带 rustup；只补一个交叉 target。
+      - name: 装 Rust 交叉 target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-linux-android
+          rustc --version
+
+      - name: 交叉编译
+        env:
+          VERSION: ${{ inputs.version || '15.2.0' }}
+        run: |
+          set -euo pipefail
+          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
+          # --profile release-lto 是 ripgrep 自己定义的 profile：fat LTO + strip symbols +
+          # panic=abort + 单 codegen unit。默认的 release profile 只设了 debug = 1，
+          # 出来的二进制又大又带符号。
+          cargo install ripgrep --version "$VERSION" \
+            --target aarch64-linux-android --profile release-lto --root "$PWD/out"
+          ls -la out/bin/
+
+      # **验产物本身**，不看退出码。这一步把「自包含」这个前提钉住：
+      # 一旦将来有人带了 pcre2 之类的特性进来，NEEDED 会多出一条，那时应该在这里红，
+      # 而不是等到设备上 exec 失败。
+      - name: 验产物（架构 / 自包含 / 能跑）
+        run: |
+          set -euo pipefail
+          RG=out/bin/rg
+          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$NDK_BIN/llvm-readelf" -h "$RG" | grep -q "AArch64"
+          echo "--- 动态依赖 ---"
+          "$NDK_BIN/llvm-readelf" -d "$RG" | grep NEEDED
+          # 只允许 bionic 自带的那几个；多一个都不行（多出来的那个 .so 在设备上不存在）。
+          if "$NDK_BIN/llvm-readelf" -d "$RG" | grep -qE "NEEDED.*lib(pcre2|gcc|android-support)"; then
+            echo "::error::产物带了额外的动态依赖，设备上 exec 会失败"
+            exit 1
+          fi
+          strip_size=$(stat -c%s "$RG")
+          echo "rg = $strip_size bytes"
+          sha256sum "$RG" > rg-aarch64-linux-android.sha256
+          cp "$RG" rg-aarch64-linux-android
+          cat rg-aarch64-linux-android.sha256
+
+      - name: 发 release 产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || '15.2.0' }}
+        run: |
+          set -euo pipefail
+          TAG="rg-$VERSION"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber rg-aarch64-linux-android rg-aarch64-linux-android.sha256
+          else
+            gh release create "$TAG" \
+              --title "ripgrep $VERSION (aarch64-linux-android)" \
+              --notes "交叉编译给 Tappet 内嵌运行时用的 ripgrep。默认特性（无 pcre2），自包含，只依赖 bionic 的 libc/libdl。供 tools/fetch-rg.ps1 按版本下载，产物不入库。" \
+              rg-aarch64-linux-android rg-aarch64-linux-android.sha256
+          fi

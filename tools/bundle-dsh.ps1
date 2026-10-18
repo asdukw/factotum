@@ -92,14 +92,6 @@ foreach ($plugin in $plugins) {
   }
 }
 
-# ripgrep：模型的 glob / grep（dsh-tool-fs-search）要 exec 它。它没有 android 产物，
-# 我们交叉编译了一份（.github/workflows/rg.yml → rg-<version> release → tools/fetch-rg.ps1）。
-# 放进运行时根目录：App 解压后在 files/dsh-runtime/rg 上 chmod +x，再经 TAPPET_RG_PATH 指过去。
-$rgBin = Join-Path $src ".bin/rg"
-if (-not (Test-Path -LiteralPath $rgBin)) {
-  throw "缺少 ripgrep：先跑 tools/fetch-rg.ps1（profile 里已启用 tool-fs-search，缺了它那组工具会静默消失）"
-}
-Copy-Item -Force $rgBin (Join-Path $cache "rg")
 # 顶掉真的 @vscode/ripgrep：它**没有 android 平台产物**（12 个 optional dep 只有
 # darwin / win32 / linux），而 dsh-tool-fs-search 靠 `(await import("@vscode/ripgrep")).rgPath`
 # 拿二进制 —— 不换掉的话模型侧的 glob / grep 一调用就炸。桩包只做一件事：把 rgPath 指向

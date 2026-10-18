@@ -624,7 +624,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
 | 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
-| `tool-fs-search`（`glob` / `grep`）在设备上跑不起来 | 它依赖 `@vscode/ripgrep` 的**打包二进制**，而那个包**没有 android 平台产物**（12 个 optional dep 里只有 darwin / win32 / linux），`--os=android` 装出来的目录里连 `bin/` 都没有 → 要开得自己带一个 arm64 静态 ripgrep 进 assets |
+| `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ **必须 `useLegacyPackaging = true`** —— Android 10+ 的 W^X 不许应用执行自己可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。别被 `run-as …/rg --version` 骗了：那能跑是因为 run-as 的 SELinux 域还是 shell |
 | 想知道「dsh 官方预置有什么、我们缺什么」 | 用 launcher 同一套 API 把组合打出来比：`loadProfileDirectory` + `readProfilePatches` + `composeEntries`，然后对比 `preset-standard` 与 `preset-phone` 的 `config.plugins`（现成脚本可照 `docs/memory.md` §3 写，10 行） |
 
 ## 深度文档

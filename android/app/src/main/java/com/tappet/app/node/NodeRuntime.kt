@@ -427,14 +427,6 @@ object NodeRuntime : NodeLineListener {
         }
       }
     }
-    // zip 里存不了可执行位，解出来一律是 0644 —— 而 rg 是要 exec 的。
-    // 只有这一个文件需要，所以单独给它加上，别去动整棵树。
-    // 少了这一步的表现：glob / grep 两个工具在，但每次调用都报
-    // 「ripgrep provider failure」（子进程起不来），而且日志里没有更细的原因。
-    val rg = File(dir, "rg")
-    if (rg.isFile && !rg.setExecutable(true, true)) {
-      Log.w(TAG, "rg 没能加上可执行位：${rg.absolutePath}")
-    }
     prefs.edit().putLong(KEY_DSH_UPDATE, lastUpdate).apply()
     Log.i(TAG, "dsh runtime extracted: $entries entries in ${System.currentTimeMillis() - startedAt}ms")
     return dir
@@ -562,7 +554,7 @@ object NodeRuntime : NodeLineListener {
     //
     // **不要改用 jniLibs / nativeLibraryDir**：现代 AGP 默认 extractNativeLibs=false，
     // 原生库直接从 APK mmap，那个目录下没有文件可 exec（实测 `lib/arm64/` 是空的）。
-    Os.setenv("TAPPET_RG_PATH", File(File(app.filesDir, DIR_DSH), "rg").absolutePath, true)
+    Os.setenv("TAPPET_RG_PATH", File(app.applicationInfo.nativeLibraryDir, "librg.so").absolutePath, true)
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)

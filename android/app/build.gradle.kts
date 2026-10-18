@@ -148,6 +148,16 @@ android {
     resources {
       excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+    jniLibs {
+      // 让原生库**解压**到 nativeLibraryDir，而不是留在 APK 里被 mmap。
+      // 必须这样：Android 10 起 targetSdk >= 29 的应用受 W^X 限制，不能执行自己可写
+      // 目录里的文件，而唯一能执行的地方就是 APK 的原生库目录 —— 不解压出来那目录是空的。
+      // 代价：libnode.so(64MB) 与 libc++_shared.so(9MB) 也会一起解，安装后多占约 77 MB。
+      useLegacyPackaging = true
+      // librg.so 不是共享库，是 fetch-rg.ps1 放进去的可执行文件（见 manifest 的
+      // extractNativeLibs="true"）。不加这条 AGP 会拿 llvm-strip 去处理它。
+      keepDebugSymbols += "**/librg.so"
+    }
   }
 
   androidResources {

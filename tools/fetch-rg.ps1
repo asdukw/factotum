@@ -1,5 +1,6 @@
 param(
   [string]$Version = "15.2.0",
+  [string]$Abi = "arm64-v8a",
   [string]$Repo = "asdukw/tappet",
   # 与 $Version **必须一起改**：改版本而忘了改哈希，脚本会当场报错而不是装一个来路不明的二进制。
   [string]$Sha256 = "1ae03be7fb16989724326d661839a77dfb8d014da18ab9ba9d80fbc1fba387e5",
@@ -7,22 +8,27 @@ param(
   [string]$Proxy = $(if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } elseif ($env:HTTP_PROXY) { $env:HTTP_PROXY } else { "" })
 )
 
-# 把交叉编译好的 aarch64 ripgrep 拉到 tools/dsh-phone/.bin/rg，供 `tool-fs-search`
-# （模型的 glob / grep）用。**本脚本只负责取件**，怎么进设备见下面的「产物怎么进 App」。
+# 把交叉编译好的 aarch64 ripgrep 拉进 jniLibs，供 `tool-fs-search`（模型的 glob / grep）用。
 #
-# **产物从哪来**：`.github/workflows/rg.yml` 在 Linux runner 上用 NDK 交叉编译
-# （默认特性，无 pcre2，自包含：NEEDED 只有 libc/libdl），发成 `rg-<version>` release 的产物。
+# **产物从哪来**：`.github/workflows/rg.yml` 在 Linux runner 上用 NDK 交叉编译（默认特性、
+# 无 pcre2、自包含：NEEDED 只有 libc/libdl），发成 `rg-<version>` release 的产物。
 # 这是「编一次」那一半 —— 正常构建与发版都不需要 Rust，跟 libnode 同一套模式。
 #
-# **产物怎么进 App**：`bundle-dsh.ps1` 把它复制进 dsh 运行时缓存并打进
-# `assets/dsh-runtime.zip`，App 侧解压到 `files/dsh-runtime/rg` 再 `chmod +x`，
-# `NodeRuntime` 注入 `TAPPET_RG_PATH` 指向它。
+# **为什么是 jniLibs + 叫 librg.so**：Android 10 起，targetSdk ≥ 29 的应用受
+# **W^X** 限制 —— **不能执行自己可写目录里的文件**。数据目录（filesDir / cacheDir）里
+# 放一个 rg 出来 exec，会被 SELinux 挡掉（症状是 `ripgrep provider failure`，
+# 而 `run-as …/rg --version` 却正常，因为 run-as 的 SELinux 域还是 shell —— 别被它骗了）。
+# 应用**可以**执行的地方只有 APK 的原生库目录，所以把它当原生库打包。
 #
-# **为什么不放 jniLibs**（试过，2026-10-18）：放 `jniLibs/<abi>/librg.so` 看着最顺 ——
-# 原生库目录是应用有执行权限的地方。但**现代 AGP 默认 `extractNativeLibs=false`**，
-# 原生库直接从 APK 里 mmap，`nativeLibraryDir` 下**根本没有这个文件**（实测 `lib/arm64/`
-# 是空的），exec 必然失败。要让它落地就得 `extractNativeLibs="true"`，那会把 64 MB 的
-# libnode.so 和 9 MB 的 libc++_shared 一起解出来——为了一个 3.4 MB 的 rg 不值。
+# 配套三处，改这里时要一起看：
+#   - `AndroidManifest.xml` 的 `android:extractNativeLibs="true"`：AGP 默认是 false，
+#     原生库直接从 APK 里 mmap，`nativeLibraryDir` 下**根本没有文件**（实测那目录是空的）。
+#     打开它才会真的解出来。**代价**：libnode.so(64MB) 与 libc++_shared.so(9MB) 也会一起解，
+#     安装后多占约 77 MB。
+#   - `build.gradle.kts` 的 `packaging.jniLibs.keepDebugSymbols`：不加的话 AGP 会对
+#     这个非共享库跑 llvm-strip。
+#   - `NodeRuntime` 注入 `TAPPET_RG_PATH` 指向 nativeLibraryDir 下的它；
+#     `tools/dsh-phone/ripgrep-stub/` 是顶掉 `@vscode/ripgrep` 的桩包，读这个 env。
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $cacheDir = Join-Path $root "android/.rg-cache"
@@ -48,15 +54,14 @@ if ($actual -ne $Sha256.ToLowerInvariant()) {
   throw "ripgrep 产物哈希不符（期望 $Sha256，实际 $actual）—— 已删掉缓存文件。换版本时记得同时改 `$Sha256。"
 }
 
-# 落在 tools/dsh-phone/.bin/（gitignored）：它是 bundle-dsh.ps1 的输入，不是入库物。
-$binDir = Join-Path $root "tools/dsh-phone/.bin"
-New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-$target = Join-Path $binDir "rg"
+$jniLibs = Join-Path $root "android/app/src/main/jniLibs/$Abi"
+New-Item -ItemType Directory -Force -Path $jniLibs | Out-Null
+$target = Join-Path $jniLibs "librg.so"
 Copy-Item -Force $cachePath $target
 
 # 复制完当场验一遍落点与大小 —— 与 fetch-libnode 里那条自检同一个理由：
 # 脚本打印「成功」而文件落在别处，症状要到装包之后才现形。
-if (-not (Test-Path -LiteralPath $target)) { throw "rg 没落到 .bin：$target" }
-if ((Get-Item -LiteralPath $target).Length -lt 1MB) { throw "rg 太小，像是坏文件：$target" }
+if (-not (Test-Path -LiteralPath $target)) { throw "librg.so 没落到 jniLibs：$target" }
+if ((Get-Item -LiteralPath $target).Length -lt 1MB) { throw "librg.so 太小，像是坏文件：$target" }
 
-Write-Host "ripgrep $Version -> $target"
+Write-Host "ripgrep $Version ($Abi) -> $target"

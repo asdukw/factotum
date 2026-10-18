@@ -128,7 +128,7 @@ mention 语法是 Markdown 形式的 `@[label](dsh-session:<base64url id>)` 或�
 | `agent-instructions` | 指令文件加载（§1） | **已用宿主层补上** |
 | `tool-fs` | 模型可见的 read / write / edit | **已用宿主层补上** |
 | `tool-web` | `web_search` / `web_fetch` | **已用宿主层补上**（见 `docs/web-search.md`） |
-| `tool-fs-search` | `glob` / `grep`，**依赖打包的 ripgrep 二进制** | **开不了** —— 见下 |
+| `tool-fs-search` | `glob` / `grep`（ripgrep） | **已开** —— 我们交叉编译了一份 rg，见下 |
 | `tool-jobs` | 后台任务（`job_output` / `job_list` / `job_kill`） | 未开 |
 | `skill-filesystem` + `tool-skill` | 文件系统发现的技能 + 模型侧加载工具 | 未开 |
 | `goal` / `tool-goal` / `command-goal` | 同会话 goal（事件溯源） | 未开 |
@@ -171,13 +171,16 @@ mention 语法是 Markdown 形式的 `@[label](dsh-session:<base64url id>)` 或�
 
 ### 建议的下一步（按性价比排序）
 
-1. **`tool-fs-search` 现在开不了，而且不是配置问题**（2026-10-18 查过）：
-   `@vscode/ripgrep@1.18.0` 的 optionalDependencies 有 darwin / win32 / linux 共 12 个平台，
-   **没有 android**；而 `bundle-dsh.ps1` 用 `--os=android --cpu=arm64` 装，
-   这些平台包全被跳过 —— 装出来的 `@vscode/ripgrep` 下**连 `bin/` 目录都没有**，
-   `rgPath` 解析必然失败。与当初 `sharp` / `attachment-local` 是同一类。
-   真要用只有两条路：**自己带一个 arm64 的静态 ripgrep 进 assets**，或者不用它
-   （记忆文件少时 `read` + `INDEX.md` 够用；文件一多就另说）。
+1. ~~`tool-fs-search` 开不了~~ —— **已解决**（2026-10-18 真机验过）。路径是：
+   自己交叉编译一份自包含的 ripgrep（`.github/workflows/rg.yml`，默认特性无 pcre2，
+   NEEDED 只有 libc/libdl），`tools/fetch-rg.ps1` 按版本+sha256 拉进 jniLibs，
+   `ripgrep-stub` 顶掉没有 android 产物的 `@vscode/ripgrep`，
+   `tool-fs-search` 需要的 `subprocess` 服务也开了（koffi / node-pty 是懒加载的，
+   Android 上不触发）。
+   **但必须开 `useLegacyPackaging = true`**：Android 10+ 的 W^X 不允许应用执行自己
+   可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap（`nativeLibraryDir` 是空的），
+   只有解压出来 rg 才 exec 得了。代价：libnode(64MB) 与 libc++_shared 也一起解，
+   lib 目录约 68 MB。
 2. **`@file` mention 的原生入口**：这是「按需读记忆」的正式通道，也是移植里最像 dsh 的一步。
    需要 Compose 输入框接 `ctx.fileReferences`（`dsh-file-reference-local` 已挂）。
 3. **记忆布局**：`AGENTS.md` 只放「现在成立的事实」（目标几 KB）+ `memory/YYYY-MM-DD.md`

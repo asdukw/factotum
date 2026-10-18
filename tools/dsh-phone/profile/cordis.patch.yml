@@ -16,7 +16,7 @@
 - id: spill-policy
   disabled: true
 - id: subprocess
-  disabled: true
+  disabled: false
 - id: sandbox
   disabled: true
 - id: sandbox-policy
@@ -47,7 +47,7 @@
 # 一份（.github/workflows/rg.yml），由 tools/fetch-rg.ps1 拉进 jniLibs，
 # 再用 tools/dsh-phone/ripgrep-stub 顶掉那个包、把 rgPath 指过去。三处缺一不可。
 - id: tool-fs-search
-  disabled: true
+  disabled: false
 - id: fs-sandbox
   disabled: true
 - id: fs-observation-policy

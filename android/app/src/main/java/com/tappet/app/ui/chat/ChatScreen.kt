@@ -379,43 +379,32 @@ private fun AccessibilityPrompt() {
     onPauseOrDispose { }
   }
   if (!AccessibilityStatus.shouldPrompt(lastBridgeError, enabled)) return
-  AccessibilityBanner(onOpenSettings = { context.startActivity(AccessibilityStatus.settingsIntent()) })
-}
-
-/**
- * 「无障碍没开」的提示卡。
- *
- * 出现的条件见 [AccessibilityStatus.shouldPrompt]：必须**先有一次设备动作失败**，
- * 所以纯聊天（模型没碰设备）不会弹这张卡。
- *
- * 文案里那句「保持开启」是 ColorOS / 一加的坑：不点它，系统会把服务关掉，用户会以为白开了
- * —— 实测过，所以写进提示里而不是只写在文档里。
- */
-@Composable
-private fun AccessibilityBanner(onOpenSettings: () -> Unit) {
-  Surface(
-    color = MaterialTheme.colorScheme.errorContainer,
-    shape = RoundedCornerShape(12.dp),
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-  ) {
-    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+  // **只在用户想要的操作真的因此失败时弹**，并且说清是哪个操作 —— 「无障碍没开」这句话
+  // 单独出现时，用户不知道跟自己刚才那句「往下滑一下」有什么关系。
+  val action by BridgeHealth.lastErrorAction.collectAsStateWithLifecycle()
+  AlertDialog(
+    onDismissRequest = { BridgeHealth.dismiss() },
+    title = { Text("「${AccessibilityStatus.actionLabel(action)}」需要开启无障碍") },
+    text = {
       Text(
-        text = "无障碍服务没开，读屏 / 点击 / 截图都用不了",
-        style = MaterialTheme.typography.titleSmall,
+        "Tappet 只能通过系统的无障碍服务操作手机，刚才这个操作没有执行就是因为这个服务没开" +
+          "（Android 不允许应用自己开启它）。\n\n" +
+          "点「去开启」→ 在「已安装的服务」里找到 Tappet 打开；系统随后会弹「保持开启」" +
+          "（3 秒倒计时），必须点它，不点会被系统关掉。",
       )
-      Text(
-        text = "应用无法自行开启它（Android 不允许），需要你手动开一次。",
-        style = MaterialTheme.typography.bodySmall,
-      )
-      Text(
-        text =
-          "点「去开启」→ 在「已下载的应用 / 已安装的服务」里找到 Tappet 打开；" +
-            "系统随后会弹「保持开启」（3 秒倒计时），必须点它，不点会被系统关掉。",
-        style = MaterialTheme.typography.bodySmall,
-      )
-      Button(onClick = onOpenSettings, modifier = Modifier.align(Alignment.End)) { Text("去开启") }
-    }
-  }
+    },
+    confirmButton = {
+      TextButton(
+        onClick = {
+          BridgeHealth.dismiss()
+          context.startActivity(AccessibilityStatus.settingsIntent())
+        },
+      ) {
+        Text("去开启")
+      }
+    },
+    dismissButton = { TextButton(onClick = { BridgeHealth.dismiss() }) { Text("稍后") } },
+  )
 }
 
 @Composable

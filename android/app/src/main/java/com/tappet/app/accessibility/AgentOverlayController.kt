@@ -67,15 +67,47 @@ internal class AgentOverlayController(private val service: AccessibilityService)
   private var status: TextView? = null
   private var entries: TextView? = null
   private var collapsed = false
+  private var lastState: AgentProgressState? = null
+  private var foregroundIsSelf = true
+  private var enabledByUser = OverlaySettings.isEnabled(service)
 
   fun start() {
     if (job != null) return
     job =
       scope.launch {
         AgentProgressCenter.state.collectLatest { state ->
-          if (state == null) hide() else render(state)
+          lastState = state
+          refresh()
         }
       }
+  }
+
+  /**
+   * 前台是不是 Tappet 自己。**悬浮球只在用户离开 Tappet、而任务还在跑时出现** ——
+   * 停在聊天页时弹一个「Tappet · 执行中」的气泡没有意义，它挡的正是用户正在看的内容。
+   *
+   * 不知道当前前台是谁时按「是 Tappet」处理（= 不显示）：宁可晚一点出现，
+   * 也不要在应用内闪一下。
+   */
+  fun setForeground(isSelf: Boolean) {
+    if (foregroundIsSelf == isSelf) return
+    foregroundIsSelf = isSelf
+    refresh()
+  }
+
+  /** 用户在设置里开关悬浮球。关掉 = 立刻收起，之后只在下次打开时再出现。 */
+  fun setEnabled(enabled: Boolean) {
+    enabledByUser = enabled
+    refresh()
+  }
+
+  /**
+   * 唯一的显示判据。三个条件缺一不可：**有任务状态**、**用户不在 Tappet 里**、
+   * **用户没关掉悬浮球**。把它收在一处，是为了避免「三处各自判断、漏掉一个就闪一下」。
+   */
+  private fun refresh() {
+    val state = lastState
+    if (state == null || foregroundIsSelf || !enabledByUser) hide() else render(state)
   }
 
   fun stop() {

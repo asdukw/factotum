@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tappet.app.accessibility.OverlaySettings
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.update.AppUpdater
@@ -179,6 +181,7 @@ private fun ExecutionSection(
   accessibilityEnabled: Boolean,
   onOpenAccessibility: () -> Unit,
 ) {
+  val context = LocalContext.current
   SettingsGroup {
     SettingsRow(
       glyph = GlyphKind.Accessibility,
@@ -194,6 +197,33 @@ private fun ExecutionSection(
       StatusBadge(
         text = if (accessibilityEnabled) "已开启" else "未开启",
         tone = if (accessibilityEnabled) BadgeTone.Enabled else BadgeTone.Disabled,
+      )
+    }
+    SettingsDivider()
+    // 悬浮球开关：关掉之后，任务在别的 App 里跑时也不会出现那个球。
+    // 写偏好后立刻通知正在跑的无障碍服务（OverlaySettings.setEnabled），不需要等服务重连。
+    var overlayEnabled by remember { mutableStateOf(OverlaySettings.isEnabled(context)) }
+    SettingsRow(
+      glyph = GlyphKind.Server,
+      title = "任务悬浮球",
+      subtitle =
+        if (overlayEnabled) {
+          "离开 Tappet 执行任务时显示"
+        } else {
+          "已关闭 —— 任务在执行中不会有任何屏幕提示"
+        },
+      onClick = {
+        val next = !overlayEnabled
+        overlayEnabled = next
+        OverlaySettings.setEnabled(context, next)
+      },
+    ) {
+      Switch(
+        checked = overlayEnabled,
+        onCheckedChange = { next ->
+          overlayEnabled = next
+          OverlaySettings.setEnabled(context, next)
+        },
       )
     }
     SettingsDivider()

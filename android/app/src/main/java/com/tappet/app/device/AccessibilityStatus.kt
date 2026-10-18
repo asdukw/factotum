@@ -31,6 +31,22 @@ object AccessibilityStatus {
   fun shouldPrompt(lastErrorCode: String?, enabled: Boolean): Boolean =
     !enabled && lastErrorCode == CODE_NOT_ENABLED
 
+  // 把桥的动作名翻成「什么操作需要无障碍」。
+  // 对话框必须说明具体原因：只说「无障碍没开」，用户不知道这跟自己刚才那句
+  // 「往下滑一下」有什么关系。认不出来的动作说「这个操作」，不编。
+  fun actionLabel(action: String?): String =
+    when (action) {
+      "read_screen" -> "读屏"
+      "capture_frame", "screenshot" -> "截图"
+      "tap_node", "tap_point", "tap_target" -> "点击屏幕"
+      "long_press", "long_press_target" -> "长按屏幕"
+      "type_text" -> "输入文字"
+      "press" -> "按系统键"
+      "launch_app" -> "启动应用"
+      "swipe" -> "滑动屏幕"
+      else -> "这个操作"
+    }
+
   fun isEnabled(context: Context): Boolean {
     val manager =
       context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false

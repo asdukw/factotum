@@ -124,7 +124,7 @@ object DeviceBridgeServer {
       } else {
         runBlocking { service.execute(deviceAction) }
       }
-    BridgeHealth.record(result.code)
+    BridgeHealth.record(result.code, action)
     // 只记动作与结构化结果（计数），不记 payload 正文
     Log.i(TAG, "$action ok=${result.ok} code=${result.code ?: "-"} ${result.summary}")
     return resultJson(result)

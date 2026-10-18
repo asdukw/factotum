@@ -58,14 +58,36 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   override fun onServiceConnected() {
     super.onServiceConnected()
     agentOverlay?.stop()
-    agentOverlay = AgentOverlayController(this).also { it.start() }
+    agentOverlay =
+      AgentOverlayController(this).also {
+        it.start()
+        // 初始判据：读不到前台包名时**按「在 Tappet 里」处理**（= 不显示）。
+        // 宁可晚一点出现，也不要在应用内闪一下。
+        it.setForeground(rootInActiveWindow?.packageName?.toString().let { pkg -> pkg == null || pkg == packageName })
+      }
     instance = this
     // 默认不带触摸探索标志：带着会让用户的手动点击变成「探索 + 双击」。
     setTouchExplorationForTask(false)
     Log.i(TAG, "service connected (touchExploration=$touchExplorationActive)")
   }
 
-  override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+  /**
+   * 只为一件事订阅事件：**知道用户什么时候离开了 Tappet**。
+   *
+   * 悬浮球只在任务跑着、而用户不在 Tappet 里时出现（在聊天页弹一个「执行中」的气泡
+   * 没有意义，它挡的正是用户正在看的内容）。这里只看窗口切换，不读任何页面内容 ——
+   * 与控制台那套「只记类型 / 包名」的隐私规矩一致。
+   */
+  override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+    val pkg = event.packageName?.toString() ?: return
+    agentOverlay?.setForeground(pkg == packageName)
+  }
+
+  /** 设置页关掉 / 打开悬浮球时调用，让**正在跑**的服务立刻生效。 */
+  fun applyOverlayEnabled(enabled: Boolean) {
+    agentOverlay?.setEnabled(enabled)
+  }
 
   override fun onInterrupt() = Unit
 

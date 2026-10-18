@@ -28,7 +28,17 @@ object BridgeHealth {
   private val _lastErrorCode = MutableStateFlow<String?>(null)
   val lastErrorCode: StateFlow<String?> = _lastErrorCode.asStateFlow()
 
-  internal fun record(code: String?) {
+  private val _lastErrorAction = MutableStateFlow<String?>(null)
+  val lastErrorAction: StateFlow<String?> = _lastErrorAction.asStateFlow()
+
+  internal fun record(code: String?, action: String? = null) {
     _lastErrorCode.value = code
+    _lastErrorAction.value = action
+  }
+
+  /** 用户处理完（去开启 / 稍后）时清掉：对话框不该挂在那里，也不该下次重组又弹出来。 */
+  fun dismiss() {
+    _lastErrorCode.value = null
+    _lastErrorAction.value = null
   }
 }

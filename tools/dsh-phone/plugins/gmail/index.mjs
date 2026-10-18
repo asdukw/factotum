@@ -67,10 +67,18 @@ async function gmailGet(path, params = {}) {
     if (value === undefined || value === null || value === '') continue
     url.searchParams.set(key, String(value))
   }
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { authorization: `Bearer ${token}` },
-  })
+  // **网络不通不是授权问题**：没开代理时 `fetch` 直接抛（DNS / TLS / 连接超时），
+  // 以前这个异常原样冒到模型面前，而令牌那一步在宿主侧还会被报成「没授权」——
+  // 两类问题看起来一样，用户会跑去重新授权。这里统一说清是「连不上 Google」。
+  let response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${token}` },
+    })
+  } catch {
+    throw new Error('连不上 Gmail：检查网络或代理（Gmail 工具需要能访问 Google）。')
+  }
   if (!response.ok) {
     // **不回显响应体**：Gmail 的错误体里可能带邮箱地址与请求细节（docs §2.5）。
     throw new Error(httpFailure(response.status))

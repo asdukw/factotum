@@ -653,6 +653,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 发布出的包连不上 Gmail | `release.yml` 的 `TAPPET_GMAIL_CLIENT_ID/SECRET` 两个 secret 没配 → 构建期注入是空的，包里就没有预置值 |
 | 授权报 `client_secret is missing` | Google 文档把这项标「Optional」而令牌端点实际要求 → 必须发（桌面应用类型与 Android/iOS 不同） |
 | 同意页写着「读取、撰写和发送你的邮件」 | 正常：申请的是 `gmail.modify`（一次要齐，避免以后重授权），但工具面目前只有只读三个 |
+| 没开代理时邮件工具报「未授权」 | 已经修了：令牌请求的网络失败现在报 `NETWORK`（连不上 Google 的授权服务），不再被 `.orEmpty()` 吞成空响应、当成授权失效。见 `GmailAuth.postForm` 的注释 |
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
 | 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
 | 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |

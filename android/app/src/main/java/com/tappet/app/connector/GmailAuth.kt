@@ -170,7 +170,17 @@ internal object GmailAuth {
       }
       val clientSecret = ConnectorStore.effectiveClientSecret(context, GMAIL_CONNECTOR_ID)
       val refreshForm = refreshTokenForm(clientId, clientSecret, refreshToken)
-      when (val outcome = parseTokenResponse(postForm(GOOGLE_TOKEN_URL, refreshForm).orEmpty())) {
+      // **网络问题不是授权问题**。以前这里用 .orEmpty() 把任何异常都吞成空串，
+      // 于是「没开梯子」被报成「没授权」—— 用户会跑去重新授权，而问题在网络。
+      val tokenBody =
+        postForm(GOOGLE_TOKEN_URL, refreshForm).getOrElse { error ->
+          Log.w(TAG, "token endpoint unreachable: ${error.javaClass.simpleName}")
+          return@withLock AccessTokenResult.Unavailable(
+            code = "NETWORK",
+            summary = "连不上 Google 的授权服务：检查网络或代理（Gmail 工具需要能访问 Google）。",
+          )
+        }
+      when (val outcome = parseTokenResponse(tokenBody)) {
         is TokenOutcome.Granted -> {
           persist(context, outcome)
           freshToken() ?: AccessTokenResult.Unavailable("REFRESH_FAILED", "换到令牌但没能缓存，请重试")
@@ -221,13 +231,17 @@ internal object GmailAuth {
     code: String,
     verifier: String,
     redirectUri: String,
-  ): TokenOutcome =
-    parseTokenResponse(
+  ): TokenOutcome {
+    val body =
       postForm(
         GOOGLE_TOKEN_URL,
         codeExchangeForm(clientId, clientSecret, code, verifier, redirectUri),
-      ).orEmpty(),
-    )
+      ).getOrElse { error ->
+        Log.w(TAG, "token endpoint unreachable: ${error.javaClass.simpleName}")
+        return TokenOutcome.Denied("NETWORK", "连不上 Google 的授权服务：检查网络或代理")
+      }
+    return parseTokenResponse(body)
+  }
 
   private fun openBrowser(context: Context, url: String): Boolean =
     runCatching {
@@ -240,16 +254,19 @@ internal object GmailAuth {
    * 发一个表单 POST，返回响应体。**不返回状态码**：令牌端点把成功与失败都放在 body 里，
    * 按状态码分流会把一次正常的 400（`invalid_grant`）当网络错误。
    *
-   * 失败只回 null，**不回显响应体** —— 它可能带请求细节。
+   * **失败要能区分「网络不通」与「端点回了错误」**：前者交给调用方报成 NETWORK，
+   * 后者才走 invalid_grant 那条授权路径。所以返回 Result 而不是 null —— 一个 null
+   * 让这两种情况再也分不开（这就是「没开梯子被报成没授权」的根因）。
+   *
+   * 失败时不回显响应体 —— 它可能带请求细节。
    */
-  private fun postForm(url: String, form: String): String? {
+  private fun postForm(url: String, form: String): Result<String> {
     val request =
       Request.Builder()
         .url(url)
         .post(form.toRequestBody(formMediaType))
         .build()
     return runCatching { http.newCall(request).execute().use { it.body?.string().orEmpty() } }
-      .getOrNull()
   }
 
   /**

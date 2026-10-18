@@ -129,14 +129,14 @@ mention 语法是 Markdown 形式的 `@[label](dsh-session:<base64url id>)` 或�
 | `tool-fs` | 模型可见的 read / write / edit | **已用宿主层补上** |
 | `tool-web` | `web_search` / `web_fetch` | **已用宿主层补上**（见 `docs/web-search.md`） |
 | `tool-fs-search` | `glob` / `grep`（ripgrep） | **已开** —— 我们交叉编译了一份 rg，见下 |
-| `tool-jobs` | 后台任务（`job_output` / `job_list` / `job_kill`） | 未开 |
-| `skill-filesystem` + `tool-skill` | 文件系统发现的技能 + 模型侧加载工具 | 未开 |
-| `goal` / `tool-goal` / `command-goal` | 同会话 goal（事件溯源） | 未开 |
-| `planning` / `plan-mode` | 计划模式（含 slash command 与用户侧开关） | 未开 |
-| `compaction`（+ 宿主级 `compaction-basic` / `command-compact` / `tool-result-pruner`） | **上下文压缩**：长对话的接续、`/compact` 命令、工具结果剪枝 | 未开 —— 长会话会先撞上下文墙 |
-| `delegation`（+ `tool-subagent*` / `workflow-ptc`） | 子 agent 委派与工作流 | 未开 |
-| `tool-ask-user` | `ask_user_question`（向用户提问） | 未开 —— **原生体验最该补的一条** |
-| `tool-todo` | `todo_write`（事件溯源的任务清单） | 未开 |
+| `tool-jobs` | 后台任务（`job_output` / `job_list` / `job_kill`） | **已开** |
+| `skill-filesystem` + `tool-skill` | 文件系统发现的技能 + 模型侧加载工具 | **已开** |
+| `goal` / `tool-goal` / `command-goal` | 同会话 goal（事件溯源） | **已开** |
+| `planning` / `plan-mode` | 计划模式（含 slash command 与用户侧开关） | **已开** |
+| `compaction`（+ `compaction-basic` / `command-compact` / `tool-result-pruner`） | **上下文压缩**：长对话的接续、`/compact`、工具结果剪枝 | **已开** |
+| `delegation`（+ `tool-subagent*` / `workflow-ptc`） | 子 agent 委派与工作流 | 未开（下一批） |
+| `tool-ask-user` | `ask_user_question`（向用户提问） | **不能开** —— 见下 |
+| `tool-todo` | `todo_write`（事件溯源的任务清单） | **已开**（真机验证） |
 | `present` | 工作区文件交付声明 | 未开 |
 | `tool-bash` / `tool-pwsh` | shell | 两边的预置里都是 off（Android 上没意义） |
 | `tool-plugin-manager` | 插件管理 | 两边都 off |
@@ -150,6 +150,12 @@ mention 语法是 Markdown 形式的 `@[label](dsh-session:<base64url id>)` 或�
 | `tool-subagent*` / `workflow-ptc`（宿主级那一套） | 与 `delegation` 同一件事 |
 | `skill-badge` | 技能徽章（展示层） |
 | `desktop-product-telemetry` / `product-analytics` | 遥测 —— **关掉是对的** |
+
+**`tool-ask-user` 为什么不能开**（2026-10-18 真机踩过）：它 inject 的 `tools` + `userQuestions`
+宿主层都有，所以能挂上、也能被调用 —— 但它是**阻塞**的，在等用户回答，而我们的 Compose 聊天
+没有回答它的入口。实测结果是**整轮永久挂住**：会话一直 running、没有任何后续事件，用户看到的
+是永远转圈。要开它必须先做 UI 那一半（把问题渲染出来、把答案送回 `ctx.userQuestions`）。
+**一个会永久挂住回合的工具，比没有这个工具更糟。**
 
 **一个反复出现的坑（已经踩过两次）**：`dsh-web-app`（本 profile 的第二个 bundle）会把
 `dsh-base` 的**宿主级**行禁掉，改成「按 agent preset 组合」。照它的样子把行放进

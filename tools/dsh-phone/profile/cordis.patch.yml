@@ -179,6 +179,49 @@
   config:
     maxBytes: 65536
 
+# --- 把 dsh 官方预置里有、而我们缺的能力逐条补回来（2026-10-18） ---
+# 清单来自 `node tools/dsh-phone/preset-diff.mjs`：官方 preset-standard 有 19 条插件，
+# 我们的 preset-phone 只有 2 条。缺的那些里有一批是「宿主级本来就该有、被 dsh-web-app 禁了」，
+# 所以在这里 `disabled: false` 打开 —— **必须在宿主层**，放进 preset 的 plugins 里不管用
+# （tool-web 与 agent-instructions 都这么踩过）。宿主级不存在的行（例如 tool-ask-user，
+# 它只在 presets/*.yml 里）则用下面的 `- insert:` 加。
+#
+# 这几个都只需宿主级已有的服务（tools / commands / goals / jobs / skills / sessionProjections），
+# 依赖都已在组合里。**每加一批都要真机验一次 mount**：这几行写坏会让整棵 cordis 根 mount 失败，
+# 而内嵌 Node 与宿主同进程 —— 那就是整个 App 崩。
+- id: tool-todo # todo_write：事件溯源的任务清单
+  disabled: false
+- id: tool-goal # 同会话 goal 的模型侧工具
+  disabled: false
+- id: command-goal # /goal 这个人类侧命令
+  disabled: false
+- id: tool-jobs # 后台任务：job_output / job_list / job_kill
+  disabled: false
+- id: skill-filesystem # 从工作区文件系统发现技能
+  disabled: false
+- id: tool-skill # 模型侧加载技能
+  disabled: false
+- id: plan-mode # 计划模式（含 slash command）
+  disabled: false
+
+# 上下文压缩栈：手机上跑长任务迟早撞上下文墙，没有它只能看着会话变哑。
+# 三条是一套 —— `compaction-basic` 是服务本身，`command-compact` 给 /compact 命令，
+# `tool-result-pruner` 剪掉旧工具结果的体积（视觉路径每步一张图，这条尤其重要）。
+# 注意 `image-offload` 一直是开的（见文件顶部），它和 pruner 是两回事：
+# offload 是「超预算时丢最老的图重试」，pruner 是「平时就把旧结果压小」。
+- id: compaction-basic
+  disabled: false
+- id: command-compact
+  disabled: false
+- id: tool-result-pruner
+  disabled: false
+
+# **tool-ask-user 不要开**（2026-10-18 真机踩过）：它 inject 的 `tools` + `userQuestions`
+# 宿主层都有，所以能挂上、也能被调用 —— 但它是**阻塞**的：等用户回答，而我们的 Compose
+# 聊天没有回答它的入口。结果是整轮永久挂住（会话一直 running，没有任何后续事件，
+# 用户看到的是永远转圈）。要开它必须先做 UI 那一半：把问题渲染出来、把答案送回
+# `ctx.userQuestions`。在那之前，一个会永久挂住回合的工具比没有这个工具更糟。
+
 # --- 手机 agent 的系统提示 ---
 - id: system-prompt
   config:

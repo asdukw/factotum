@@ -39,27 +39,41 @@ object TermuxBridgeLauncher {
   private const val EXTRA_BACKGROUND = "com.termux.RUN_COMMAND_BACKGROUND"
 
   private const val TERMUX_HOME = "/data/data/com.termux/files/home"
-  private const val TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash"
+  private const val TERMUX_PREFIX = "/data/data/com.termux/files/usr"
+  private const val TERMUX_BASH = "$TERMUX_PREFIX/bin/bash"
 
   /**
    * 启动脚本。[startScript] 里 `$1` 是 token（经 argv 传，不拼进脚本文本）。
    *
-   * 换掉旧桥有两道：先按 pidfile 杀（干净），再用**绝对路径**模式兜底 —— 早于 pidfile 那版
-   * 启动的桥没有 pidfile。模式必须写全路径：脚本正文里是 `python "$HOME/bridge.py"`，
-   * 不含这个绝对路径，所以不会把脚本自己匹配上（`pkill -f` 会匹配父进程的命令行，
-   * 匹配到就等于把自己杀掉，桥永远起不来）。
+   * 四件必须自己做的事，都是实测踩出来的：
+   * 1. **摆正 PATH**。RUN_COMMAND 起的是**非交互 shell**，环境里不保证有 Termux 的
+   *    `$PREFIX/bin`（实测：连 `PREFIX` 都是空的）。
+   * 2. **输出重定向到文件**。RUN_COMMAND 的 stdout/stderr 是没人读的管道，任何 traceback
+   *    都会消失，现象只剩「桥没起来」——这一条害我们查了三轮。
+   * 3. **用绝对路径调 python**，并显式 export HOME（同一个理由）。
+   * 4. **不要用 `pkill -f`**。脚本是被 `bash -lc <脚本文本>` 拉起来的，脚本文本**就在 argv 里** ——
+   *    于是任何写在正文里的模式都会匹配到脚本自己，pkill 把脚本自己杀掉：token 写完了、
+   *    后面的行一行没跑、日志也没被碰过，外面只看到「桥没起来」。实测就是这么被坑的。
+   *    改成扫 `/proc` 比命令行（并跳过自己与父进程），语义精确且不会自杀。
    */
   internal fun startScript(): String =
     """
     umask 077
+    export HOME=$TERMUX_HOME
+    export PATH=$TERMUX_PREFIX/bin:/system/bin
     printf %s "${'$'}1" > "${'$'}HOME/.tappet-bridge-token"
     if [ -f "${'$'}HOME/.tappet-bridge.pid" ]; then
       kill "$(cat "${'$'}HOME/.tappet-bridge.pid")" 2>/dev/null
       sleep 1
     fi
-    pkill -f "python $TERMUX_HOME/bridge.py" 2>/dev/null
+    for proc in /proc/[0-9]*; do
+      case "${'$'}proc" in "/proc/${'$'}${'$'}"|"/proc/${'$'}PPID") continue ;; esac
+      case "$(cat "${'$'}proc/cmdline" 2>/dev/null | tr '\0' ' ')" in
+        "python ${'$'}HOME/bridge.py "*) kill "${'$'}{proc#/proc/}" 2>/dev/null ;;
+      esac
+    done
     sleep 1
-    exec python "${'$'}HOME/bridge.py"
+    exec $TERMUX_PREFIX/bin/python "${'$'}HOME/bridge.py" >> "${'$'}HOME/bridge.log" 2>&1
     """.trimIndent()
 
   /** 启动命令的参数表：`bash -lc <script> <$0> <$1=token>`。 */
@@ -178,6 +192,8 @@ object TermuxBridgeLauncher {
     }
 
   private const val PROBE_TIMEOUT_MS = 1500
-  private const val POLL_ATTEMPTS = 15
+  // 窗口给到 ~45 秒：ColorOS 会把后台的 Termux **整个杀掉**（不只是冻结），此时 startService
+  // 要先冷启动 Termux（实测光是 `am start` 拉起它就要 ~6 秒，还要加上投递与 bootstrap）。
+  private const val POLL_ATTEMPTS = 45
   private const val POLL_INTERVAL_MS = 1000L
 }

@@ -33,24 +33,33 @@ class TermuxBridgeStoreTest {
 
   /**
    * 启动脚本是送给 Termux 的**唯一一段代码**，写错了只会在设备上以「桥没起来」的形式现形。
-   * 硬要求：token 走 argv（不拼进脚本正文）、先按 pidfile 杀旧桥、兜底的 pkill 必须用
-   * **绝对路径**（脚本正文里是 `python "$HOME/bridge.py"`，用裸模式会匹配到脚本自己的
-   * 命令行，把自己杀掉）、最后 exec 让 python 接管进程。
+   * 硬要求（每条都是实测踩出来的）：
+   * - token 走 argv，不拼进脚本正文
+   * - **自己 export PATH**：RUN_COMMAND 是非交互 shell，环境里连 `PREFIX` 都是空的
+   * - 用**绝对路径**调 python、显式 export HOME
+   * - **输出重定向到 bridge.log**：不然任何 traceback 都看不见
+   * - **不许出现 `pkill -f`**：脚本被 `bash -lc <脚本文本>` 拉起，脚本文本就在 argv 里，
+   *   正文里写什么模式都会匹配到脚本自己 —— 实测被这个坑掉过三轮排查
    */
   @Test
-  fun `start script passes token via argv and kills by pidfile`() {
+  fun `start script passes token via argv and survives its own command line`() {
     val script = TermuxBridgeLauncher.startScript()
     assertTrue(script.contains("\"\$1\""))
     assertTrue(script.contains(".tappet-bridge.pid"))
-    assertTrue(script.contains("exec python"))
+    assertTrue("必须自己摆正 PATH", script.contains("export PATH=/data/data/com.termux/files/usr/bin"))
+    assertTrue("必须显式 export HOME", script.contains("export HOME=/data/data/com.termux/files/home"))
+    assertTrue("必须用绝对路径调 python", script.contains("/data/data/com.termux/files/usr/bin/python"))
+    assertTrue("必须把输出重定向到日志", script.contains(">> \"\$HOME/bridge.log\" 2>&1"))
+    assertFalse("pkill -f 会匹配到脚本自己的命令行、把脚本杀掉", script.contains("pkill"))
   }
 
   @Test
-  fun `pkill fallback uses an absolute path so it cannot match the script itself`() {
+  fun `stale bridge is killed by scanning proc, skipping self and parent`() {
     val script = TermuxBridgeLauncher.startScript()
-    val pkillLine = script.lineSequence().first { it.contains("pkill") }
-    assertTrue("兜底的 pkill 必须带绝对路径：$pkillLine", pkillLine.contains("/data/data/com.termux/files/home/bridge.py"))
-    assertFalse("裸的 bridge.py 模式会匹配到脚本自己的命令行", pkillLine.contains("\"bridge.py\""))
+    assertTrue("要扫 /proc", script.contains("for proc in /proc/[0-9]*"))
+    assertTrue("要跳过自己", script.contains("/proc/\$\$"))
+    assertTrue("要跳过父进程", script.contains("/proc/\$PPID"))
+    assertTrue("要按命令行精确匹配", script.contains("cmdline"))
   }
 
   @Test

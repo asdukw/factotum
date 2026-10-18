@@ -43,6 +43,9 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 
 - **代理必须放 `GRADLE_OPTS` 环境变量** —— 行内 `-D` 会被 `gradlew.bat` 拆坏。
   依赖下载不通时改阿里云镜像 `https://maven.aliyun.com/repository/public`（实测秒下）。
+- **跑 `.ps1` 脚本用 `pwsh`（PowerShell 7），不要用 `powershell`（5.1）**：5.1 跑在 .NET
+  Framework 上，`bundle-dsh.ps1` 打的 zip 条目名会变成反斜杠，装到设备上解不出目录树、
+  App 直接起不来（报的是 `ERR_MODULE_NOT_FOUND`，看着像依赖没装）。脚本末尾现在有自检。
 - `tools/` 下的装配脚本只认 `HTTP_PROXY` / `HTTPS_PROXY`（默认跟随本机 127.0.0.1:7897），
   没有就走直连（CI 如此）。代理没开时 npm 会 `ECONNREFUSED 127.0.0.1:7897` ——
   临时绕过：当前 shell 清空这两个变量再跑。
@@ -338,11 +341,17 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 |---|---|
 | `agent/LlmPreset.kt` 的 `Endpoint.search` | 该提供商的搜索端点（Anthropic 兼容基址）与模型；`null` = 没验证过 |
 | `node/NodeRuntime.kt` | 注入 `TAPPET_WEB_SEARCH_BASE_URL` / `_MODEL` / `_KEY_ENV`（重载时也写进 runtime-config.json） |
-| `tools/dsh-phone/profile/cordis.patch.yml` | `web-search-deepseek` 的 config 段：`baseURL` / `model` / `apiKeyEnv` 全部读宿主注入 |
+| `tools/dsh-phone/profile/cordis.patch.yml` | ① `web-search-deepseek` 的 config 段（端点 / 模型 / 密钥来源全部读宿主注入）；② **宿主层 `- id: tool-web` + `disabled: false`** |
 | `tools/dsh-phone/zen-session-fetch.mjs` | 替搜索 provider 补 zen 的 `x-opencode-session`（provider 没有自定义 header 的字段） |
 
-- **`web_search` / `web_fetch` 两个工具与提示词指引来自 `dsh-tool-web`**，由 `dsh-base`
-  默认挂载 —— **不要再写一个自己的搜索插件**（写过一次，删了）。要加能力先看 dsh 有没有。
+- **工具行必须挂在宿主层，不能放进 agent preset 的 `plugins:`**：`dsh-web-app`（本 profile 的
+  第二个 bundle）把 `dsh-base` 的宿主级 `tool-web` 行禁用了，改成「按 preset 组合」。照它的样子
+  放进 `preset-phone` 里**组合结果里有那一行，但工具进不了模型的工具表**，而且日志里一个错都没有
+  （2026-10-18 真机踩过）。宿主层 `disabled: false` 才对。
+- **`task done ... tools=N` 的 `N` 是这一轮的工具调用次数，不是注册了几个工具** —— `tools=0`
+  只说明模型没调工具。别拿它当可用工具数（我误判过一次）。
+- **`web_search` / `web_fetch` 两个工具与提示词指引来自 `dsh-tool-web`** ——
+  **不要再写一个自己的搜索插件**（写过一次，删了）。要加能力先看 dsh 有没有。
 - **端点与模型是两套，不能从 `TAPPET_LLM_API` 推**：zen 聊天走 `openai-completions`，
   而它的原生 `web_search` 在 Anthropic 兼容的 `/messages` 上。基址**不含** `/messages`，
   provider 自己追加（写成带 `/messages` 的会得到 `.../messages/messages` → 一个看不懂的 404）。
@@ -612,6 +621,8 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 装完启动报 `Cannot find module .../zen-session-fetch.mjs` | 同上一类：launcher 的兄弟模块漏拷 → 重跑 `tools/bundle-dsh.ps1` |
 | 搜索回了答案但一个来源都没有 | **真搜门**：模型收下了 `web_search` 但一次都没搜（网关不校验）→ 换实测会搜的模型（zen 上是 claude 系 / gpt-6-luna / grok-4.x） |
 | `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
+| 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
+| 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
 
 ## 深度文档
 

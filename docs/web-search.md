@@ -1,8 +1,9 @@
 # 联网搜索（web_search）：边界、协议与实测
 
-> 状态：**已在 PC 侧接好（profile 校验 + 单测 + 装配通过），真机未验**（2026-10-18）。
-> 唯一实测过「真的会搜」的组合是 **OpenCode Go（zen）+ `claude-haiku-5-5`**，
-> 走的是 zen 的 Anthropic 兼容端点 `/zen/go/v1/messages`。
+> 状态：**端到端已在真机验过**（2026-10-18，一加 15T：模型真的调了 `web_search`，
+> 答案带真实来源与日期）。唯一实测过「真的会搜」的组合是 **OpenCode Go（zen）+
+> `claude-haiku-5-5`**，走的是 zen 的 Anthropic 兼容端点 `/zen/go/v1/messages`；
+> Anthropic / DeepSeek 官方端点没有对应 key，未验。
 > 本文是 `AGENTS.md` §「安全与隐私红线」第 6 条要求的前置文档：**重新引入任何采集/外部
 > 数据能力之前，先在这里写清边界与隐私闸门，再动代码。**
 
@@ -47,9 +48,10 @@ dsh 自带三件套（`dsh-base` 默认挂载）：
 | `@deepseek-ai/dsh-tool-web` | **模型可见的 `web_search` + `web_fetch`**，带提示词指引、来源上限、超时、把结果标成外部不可信数据 |
 | `@deepseek-ai/dsh-web-search-deepseek` | 搜索 provider：走 **Anthropic 兼容 Messages + 原生 `web_search_20250305` 服务器工具** |
 
-我们只做两件事：**把 provider 的端点指到当前提供商**（profile 的 `web-search-deepseek`
-一段），**替它补一个 zen 要求的请求头**（§2.2）。工具、指引、来源上限、超时、数据边界
-标记全部由上游提供 —— 自己重写一遍是重复劳动，而且会漏掉上游的后续修正。
+我们只做三件事：**把 provider 的端点指到当前提供商**（profile 的 `web-search-deepseek`
+一段）、**在宿主层重新启用工具行 `tool-web`**（§2.3）、**替 provider 补一个 zen 要求的请求头**
+（§2.2）。工具、指引、来源上限、超时、数据边界标记全部由上游提供 —— 自己重写一遍是重复劳动，
+而且会漏掉上游的后续修正。
 
 ### 2.1 实测：两道门，网关只把第一道
 
@@ -87,6 +89,22 @@ zen 硬要求 `x-opencode-session`，不带就 400 `MissingSessionID`。LLM 那�
 **为什么不去改上游插件**：这是 zen 的私有要求，不是 dsh 的通用缺口。补在我们自己的
 launcher 里，上游升级不会冲突。
 
+### 2.3 工具行要在**宿主层**重新启用（真机踩过）
+
+`dsh-base` 本来有宿主级的 `tool-web` 行，但本 profile 的第二个 bundle **`dsh-web-app` 把它
+`disabled: true` 了**，改成「按 agent preset 组合」—— 它自带的 standard 预置就是这么做的。
+
+**照它的样子把 `tool-web` 放进我们 `preset-phone` 的 `plugins:` 里不行。** 实测：组合结果里
+确实有那一行（可以用 launcher 的同一套 API 把行打出来核对），但工具**进不了模型的工具表** ——
+模型明确回答「这个会话里没有 `web_search` 工具」，而日志里一个错都没有，`tools=0`。
+表现和 AGENTS.md 里那条「模型侧 `tools: []`」是同一类：**静默**。
+
+正确的做法是在宿主层把它重新启用（我们 profile 里 `- id: tool-web` + `disabled: false`）——
+这一层 `tools` / `web` / `systemPrompt` 三个注入都在同一作用域。
+
+> 顺带一条**怎么发现的**：`task done ... tools=N` 里的 `N` 是这一轮的**工具调用次数**，不是
+> 「注册了几个工具」。`tools=0` 只说明模型没调工具，不说明工具没挂上 —— 别把它当成可用工具数。
+
 ## 3. 隐私闸门
 
 1. **查询词会离开设备**：用户的问题（或模型改写后的检索词）会发给当前提供商的搜索后端。
@@ -122,9 +140,19 @@ launcher 里，上游升级不会冲突。
 | zen 会话头补丁的边界 | ✅ 单测（只加 zen 主机 / 不覆盖 / 幂等） |
 | `LlmPreset.Endpoint.search` 形状与「OpenCode Go 指向 zen」 | ✅ JVM 单测 |
 | 装配（launcher 兄弟模块进 zip） | ✅ `bundle-dsh.ps1` 通过 |
-| **模型真的调用 `web_search` 并拿到结果（端到端）** | ❌ **未验** —— PC 上整轮跑不了（jsonl 持久化的 win32 Koffi 模块缺失），要走真机 |
+| **模型真的调用 `web_search` 并拿到结果（端到端，真机）** | ✅ **2026-10-18 一加 15T 验过**：`task done ok=true tools=2`，答案带真实来源与日期（CNBC 2026-10-16 / ghacks.net），模型自己说明「没打开原文核对，可以再 fetch」—— 两个工具都在 |
 | Anthropic 官方端点 / DeepSeek 官方端点 | ❌ 未验（没有对应的 key），形状按官方文档写 |
 | 成本 | 一次搜索 input 约 13k token（zen + claude-haiku-5-5）；`maxUses: 5` 是每次请求的上限 |
 
-**端到端怎么验**（真机）：装包后提交「用 web_search 查一条今天的科技新闻」，
-`adb logcat` 里应看到工具卡是 `web_search`、结果里带来源链接；把结论写回本文 §5。
+**真机验证怎么做的**（`AGENTS.md` 的 debug 广播）：
+
+```powershell
+adb install -r android\app\build\outputs\apk\debug\app-debug.apk
+adb shell settings put secure enabled_accessibility_services com.tappet.app/.accessibility.TappetAccessibilityService
+adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op START
+adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op TASK --es task '用 web_search 查一条今天的科技新闻，给出标题和链接。' --ez logPayload true"
+adb logcat -s TappetNode        # 看 "task done ... tools=N" 与助手正文
+```
+
+判据：`tools` ≥ 1，且正文里有**带 URL 的来源**。只有「答案看起来对」不算 ——
+那正是 §2.1 里「凭记忆编」的样子。

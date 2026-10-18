@@ -80,6 +80,15 @@ class NodeRuntimeProfileTest {
     for (name in listOf("TAPPET_WEB_SEARCH_BASE_URL", "TAPPET_WEB_SEARCH_MODEL", "TAPPET_WEB_SEARCH_KEY_ENV")) {
       assertTrue("profile 的搜索 provider 没读 $name", text.contains(name))
     }
+
+    // **工具行必须在宿主层重新启用**：dsh-web-app（本 profile 的第二个 bundle）把 dsh-base 的
+    // 宿主级 tool-web 行禁用了，改成「按 agent preset 组合」。照它的样子放进 preset-phone 的
+    // plugins 里**不行** —— 组合结果里有那一行，但工具进不了模型的工具表，而且日志里一个错都
+    // 没有（2026-10-18 真机踩过）。所以在宿主层 `disabled: false` 重新启用。
+    assertTrue(
+      "profile 没有在宿主层重新启用 tool-web —— web_search / web_fetch 不会出现在模型面前",
+      text.contains("- id: tool-web\n  disabled: false"),
+    )
   }
 
   @Test

@@ -137,6 +137,18 @@
     apiKeyEnv: !!js process.env.TAPPET_WEB_SEARCH_KEY_ENV || 'DEEPSEEK_API_KEY'
     maxUses: 5
 
+# 工具行（`web_search` / `web_fetch`）**在宿主层重新启用**。
+# dsh-base 本来有这一行，但 dsh-web-app（本 profile 的第二个 bundle）把它 `disabled: true`
+# 了，改成「按 agent preset 组合」—— 它的 standard 预置就是这么做的。
+# 我们试过照它的样子放进 `preset-phone` 的 plugins 里：**组合结果里有那一行，但工具进不了
+# 模型的工具表**（真机实测：模型明确说「没有 web_search 这个工具」，而日志里一个错都没有）。
+# 放回宿主层就对了 —— 这一层 `tools` / `web` / `systemPrompt` 三个注入都在同一作用域。
+- id: tool-web
+  disabled: false
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
 # --- 手机 agent 的系统提示 ---
 - id: system-prompt
   config:

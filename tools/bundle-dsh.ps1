@@ -114,4 +114,21 @@ $head = [System.IO.File]::ReadAllBytes($zipOut)[0..3]
 if ($head[0] -ne 0x50 -or $head[1] -ne 0x4B -or $head[2] -ne 0x03 -or $head[3] -ne 0x04) {
   throw "打出来的不是 zip（头四字节不是 PK）：$zipOut"
 }
+
+# 再验条目名的分隔符：**必须是正斜杠**。
+# Windows PowerShell 5.1（.NET Framework）的 ZipFile::CreateFromDirectory 会按
+# Path.DirectorySeparatorChar 写成 ``，而那是**不合规的 zip**：App 侧的 ZipInputStream
+# 会把它当成一个扁平文件名，解出来是 `node_modules.bincordis` 这样的文件而不是目录树，
+# 于是运行时起不来，报的是 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'`
+# —— 看着像依赖没装，其实是包写坏了。pwsh 7（.NET Core）没这个问题，所以「在谁家 shell 下跑的」
+# 决定了产物对不对；这条检查就是为了不让它取决于这个。实测踩过一次（2026-10-18）。
+$archive = [System.IO.Compression.ZipFile]::OpenRead($zipOut)
+try {
+  $bad = $archive.Entries | Where-Object { $_.FullName.Contains([char]92) } | Select-Object -First 1
+  if ($null -ne $bad) {
+    throw "zip 条目名用了反斜杠（$($bad.FullName)）—— 这个包在设备上解不出目录树。请用 pwsh 7 重跑本脚本。"
+  }
+} finally {
+  $archive.Dispose()
+}
 Write-Host "done: $([math]::Round((Get-Item $zipOut).Length/1MB,1))MB"

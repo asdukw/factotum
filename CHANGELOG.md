@@ -26,9 +26,10 @@ release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版�
 - **「接受工具」不等于「会真的搜索」**：网关不校验模型是否真支持宿主 `web_search`。
   实测 zen 的 `deepseek-v4.1-flash` 收下工具、回 200，然后一次都没搜（`input_tokens` 只有 50）
   —— 所以搜索模型是**单独指定**的（OpenCode Go 用 `claude-haiku-5-5`），不是当前聊天模型。
-- **端到端未验**：PC 上整轮跑不了（jsonl 持久化的 win32 Koffi 模块缺失），
-  「模型真的调用 `web_search` 并拿到结果」要在真机上验。Anthropic 官方端点与 DeepSeek
-  官方端点也没有用真 key 跑过。边界与实测见 [docs/web-search.md](docs/web-search.md)。
+- **Anthropic 官方端点与 DeepSeek 官方端点未验**（没有对应的 key），形状按官方文档写。
+- 一次搜索约 13k input token（zen + `claude-haiku-5-5`）。
+
+边界、两道门的实测与真机验证步骤见 [docs/web-search.md](docs/web-search.md)。
 
 ## [0.5.0] - 2026-10-18
 

@@ -11,6 +11,7 @@ import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
 import com.tappet.app.bridge.ConnectorBridgeServer
 import com.tappet.app.bridge.DeviceBridgeServer
+import com.tappet.app.bridge.UserQuestionBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -563,6 +564,11 @@ object NodeRuntime : NodeLineListener {
     // NOT_CONNECTED —— 「工具在、但会如实报错」比「工具随配置忽隐忽现」对模型更可预测。
     Os.setenv("TAPPET_CONNECTOR_BRIDGE_URL", ConnectorBridgeServer.start(app), true)
     Os.setenv("TAPPET_CONNECTOR_BRIDGE_TOKEN", ConnectorBridgeServer.authToken(), true)
+    // 第三个桥：`ask_user_question` 的问题进 UI、答案回插件（见 UserQuestionBridgeServer 的
+    // 类注释）。它同样只监听 127.0.0.1 + 每进程随机 token。**没配这个桥时插件会让路**，
+    // 问题交给下一个 answerer —— 而不是编一个答案。
+    Os.setenv("TAPPET_QUESTION_BRIDGE_URL", UserQuestionBridgeServer.start(), true)
+    Os.setenv("TAPPET_QUESTION_BRIDGE_TOKEN", UserQuestionBridgeServer.authToken(), true)
     // 第一次 mount 用的非密配置；重载时会重写这个文件。
     writeRuntimeConfig(app, config)
   }

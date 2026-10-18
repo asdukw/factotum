@@ -92,6 +92,35 @@ class NodeRuntimeProfileTest {
   }
 
   @Test
+  fun `the user-question answerer is wired the same in all three places`() {
+    assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
+    // 与 gmail 那条同一类：插件名要在 profile 的 insert、装配脚本的 Package、插件自己的
+    // package.json 三处逐字相同。对不上时运行时少一组能力，报错只有一句「找不到模块」。
+    //
+    // 额外钉一条**这个插件特有的**约束：它必须能排在 `dsh-api-remotes` 前面（那个包会把
+    // `user-questions/request` 推进没人消费的 remote 队列，请求就永远不落地）。注册顺序在
+    // 插件里靠 `{ prepend: true }`，这里只能钉「profile 里有这一行」—— 真正的顺序由
+    // 插件的单测守（tools/dsh-phone/plugins/user-questions/test/smoke.mjs）。
+    val name = "dsh-plugin-user-questions"
+    assertTrue("profile 里没有插入 $name", profile.readText().contains("name: '$name'"))
+    assertTrue(
+      "profile 没有启用 tool-ask-user —— 没有它模型根本不会提问（answerer 也就用不上）",
+      profile.readText().contains("name: '@deepseek-ai/dsh-tool-ask-user'"),
+    )
+
+    val bundler = File("../../tools/bundle-dsh.ps1")
+    assumeTrue("仓库里没有装配脚本（不是完整检出），跳过", bundler.isFile)
+    assertTrue("bundle-dsh.ps1 的插件清单里没有 $name", bundler.readText().contains(name))
+
+    val manifest = File("../../tools/dsh-phone/plugins/user-questions/package.json")
+    assertTrue("插件源码缺失：$manifest", manifest.isFile)
+    assertTrue(
+      "插件的 package.json 里 name 不是 $name",
+      manifest.readText().contains("\"name\": \"$name\""),
+    )
+  }
+
+  @Test
   fun `long-term memory is wired`() {
     assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
     val text = profile.readText()

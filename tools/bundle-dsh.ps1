@@ -66,6 +66,7 @@ $plugins = @(
   @{ Package = "dsh-plugin-android-tools"; Src = "plugins/android-tools" }
   @{ Package = "dsh-android-attachments"; Src = "android-attachments" }
   @{ Package = "dsh-plugin-gmail"; Src = "plugins/gmail" }
+  @{ Package = "dsh-plugin-user-questions"; Src = "plugins/user-questions" }
 )
 
 # chat-tools 已下线：从持久缓存里删掉，避免旧包被 tar 通配符重新打进运行时。
@@ -87,8 +88,12 @@ foreach ($plugin in $plugins) {
   }
   $pluginOut = Join-Path $cache "node_modules/$($plugin.Package)"
   New-Item -ItemType Directory -Force -Path $pluginOut | Out-Null
+  # cordis.patch.yml 是**可选**的（有的插件需要自带的 patch 层，有的不需要）。
+  # 早先这里无条件拷三个文件，结果一个没有那个文件的插件会让装配整个失败 ——
+  # 报的是「找不到路径」，看着像插件缺文件，其实是脚本假设太强。
   foreach ($file in "package.json", "index.mjs", "cordis.patch.yml") {
-    Copy-Item -Force (Join-Path $pluginDir $file) $pluginOut
+    $source = Join-Path $pluginDir $file
+    if (Test-Path -LiteralPath $source) { Copy-Item -Force $source $pluginOut }
   }
 }
 

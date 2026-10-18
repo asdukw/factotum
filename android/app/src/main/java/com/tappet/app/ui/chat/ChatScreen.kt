@@ -94,6 +94,7 @@ import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
+import com.tappet.app.agent.UserQuestionHub
 import com.tappet.app.data.session.ChatSession
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
@@ -180,6 +181,12 @@ internal fun ChatScreen(
       focus.clearFocus()
     }
   }
+
+  // 模型提问（`ask_user_question`）：面板浮在聊天之上。
+  // 状态在 `UserQuestionHub` 这个单例里，不在 ViewModel —— 桥那边挂起的协程属于进程，
+  // 而 UI 会随导航重建；放进 ViewModel 会让「切走再切回来」变成「答案丢了、插件还在等」。
+  val pendingQuestion by UserQuestionHub.pending.collectAsStateWithLifecycle()
+  pendingQuestion?.let { UserQuestionSheet(it) }
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
   var modelSheetOpen by remember { mutableStateOf(false) }

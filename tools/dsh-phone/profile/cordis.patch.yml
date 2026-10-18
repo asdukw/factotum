@@ -221,6 +221,12 @@
 # 聊天没有回答它的入口。结果是整轮永久挂住（会话一直 running，没有任何后续事件，
 # 用户看到的是永远转圈）。要开它必须先做 UI 那一半：把问题渲染出来、把答案送回
 # `ctx.userQuestions`。在那之前，一个会永久挂住回合的工具比没有这个工具更糟。
+#
+# 2026-10-18 稍后：UI 那一半做完了（`UserQuestionSheet` + `UserQuestionBridgeServer`
+# + `dsh-plugin-user-questions`），所以这里开回来。宿主级没有这一行，要 insert。
+- insert:
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
 
 # --- 手机 agent 的系统提示 ---
 - id: system-prompt
@@ -297,6 +303,19 @@
 - insert:
     - id: dsh-gmail
       name: 'dsh-plugin-gmail'
+
+# --- 用户提问：`ask_user_question` 的 answerer ---
+# dsh 原生的答案是注册在 Cordis waterfall `user-questions/request` 上的 answerer 给的
+# （官方 Web UI 经 `dsh-api-remotes` 转发过去）。我们的 Kotlin 宿主不连那条 Web 通道，
+# 所以这个插件自己当 answerer，把问题转给 App 的 UI（第三个本地桥，见 UserQuestionBridgeServer）。
+#
+# 它用 `prepend: true` 注册 —— **必须排在 api-remotes 前面**：那个包会把请求推进 remote 队列
+# 等浏览器回答，而没人消费时请求就永远不落地（实测过：会话一直 running、几分钟没有后续事件）。
+# 形状与语义（单选 custom 覆盖 / 多选 custom 补充 / 跳过 = 空 selected）逐字对齐 dsh，
+# 见 docs/user-questions.md。
+- insert:
+    - id: dsh-user-questions
+      name: 'dsh-plugin-user-questions'
 
 # --- SDK stdio JSON-RPC：Kotlin 宿主当 client，提交任务并接收会话事件 ---
 # stdout 归 JSON-RPC（部署约束：不要挂 stdout logger）；诊断走 stderr。

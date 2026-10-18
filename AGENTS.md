@@ -544,6 +544,7 @@ tools/
   dsh-phone/android-attachments/  附件存储的纯 JS 实现（替掉依赖 sharp 的 attachment-local）
   dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
   dsh-phone/plugins/gmail/      邮箱连接器工具（只读 3 个；令牌走本地连接器桥）
+  dsh-phone/plugins/user-questions/  ask_user_question 的 answerer（问题经本地桥进 UI）
   dsh-phone/profile/            phone profile（cordis.patch.yml）
 docs/                           深度文档 + releases/<tag>.md（每个版本的发布说明）
 ```
@@ -622,6 +623,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 装完启动报 `Cannot find module .../zen-session-fetch.mjs` | 同上一类：launcher 的兄弟模块漏拷 → 重跑 `tools/bundle-dsh.ps1` |
 | 搜索回了答案但一个来源都没有 | **真搜门**：模型收下了 `web_search` 但一次都没搜（网关不校验）→ 换实测会搜的模型（zen 上是 claude 系 / gpt-6-luna / grok-4.x） |
 | `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
+| 模型调了 `ask_user_question` 之后整轮卡住、会话一直 running | 没有 answerer 接手（或 answerer 排在 `dsh-api-remotes` 后面被它吃掉 —— 它把请求推进没人消费的 remote 队列）。我们的 answerer 用 `{ prepend: true }` 注册；见 `docs/user-questions.md` §2.2 |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
 | 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
 | `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ **必须 `useLegacyPackaging = true`** —— Android 10+ 的 W^X 不许应用执行自己可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。别被 `run-as …/rg --version` 骗了：那能跑是因为 run-as 的 SELinux 域还是 shell |
@@ -636,6 +638,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
 | `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
 | `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |
+| `docs/user-questions.md` | 动 `ask_user_question` / 任何「模型等用户回答」的功能之前：waterfall 的注册顺序坑、答案的三条语义、为什么不能只开工具不做 UI |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

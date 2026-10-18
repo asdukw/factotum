@@ -185,8 +185,7 @@ internal fun ChatScreen(
   // 模型提问（`ask_user_question`）：面板浮在聊天之上。
   // 状态在 `UserQuestionHub` 这个单例里，不在 ViewModel —— 桥那边挂起的协程属于进程，
   // 而 UI 会随导航重建；放进 ViewModel 会让「切走再切回来」变成「答案丢了、插件还在等」。
-  val pendingQuestion by UserQuestionHub.pending.collectAsStateWithLifecycle()
-  pendingQuestion?.let { UserQuestionSheet(it) }
+  ChatOverlays()
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
   var modelSheetOpen by remember { mutableStateOf(false) }
@@ -1155,4 +1154,20 @@ private fun ModelChoiceCard(
       }
     }
   }
+}
+
+/**
+ * 浮在聊天之上的两层：模型提问的面板，与「发现新版本」的提醒。
+ *
+ * 单独一个函数只是因为 [ChatScreen] 本身已经顶到 detekt 的函数长度上限了 ——
+ * 这两块都**不属于聊天的布局**，抽出来反而更清楚：它们都是「有就弹、没有就不存在」的覆盖层。
+ *
+ * 更新提醒每个**进程启动**查一次；查不到就什么也不弹（更新是锦上添花，不该因为没网就打扰用户）。
+ * 设置页那个入口是手动的，不受这里的跳过列表影响。
+ */
+@Composable
+private fun ChatOverlays() {
+  val pendingQuestion by UserQuestionHub.pending.collectAsStateWithLifecycle()
+  pendingQuestion?.let { UserQuestionSheet(it) }
+  UpdateReminder()
 }

@@ -19,11 +19,14 @@ name: Build ripgrep
 #   Git Bash 的 coreutils `link` 还会把 MSVC 的 link.exe 顶掉）。装 VS Build Tools 是
 #   2–4 GB，正是这个方案想避开的那类成本。Linux runner 上 NDK + rustup 都是常规操作。
 #
-# 只在手动触发跑：它是「编一次」的动作，不是每次构建都要走的路。
+# **只手动触发**：它是「编一次」的动作，不是每次构建 / 发版都要走的路。
+# 产物发成 `rg-<version>` release 之后，装配与发版都只是 `fetch-rg.ps1` 按版本 + sha256
+# 下载它 —— 那两条 workflow 里没有任何 Rust。
 #
-# 那个 push 触发器只为「让它在非默认分支上也能跑」而存在：GitHub 只暴露**默认分支上**的
-# workflow_dispatch，所以第一次（还没合进 master 时）没法用 `gh workflow run`。
-# 它被 paths 限死在自己这个文件上，改别的任何东西都不会触发它。
+# 早先这里挂过一个 `push: paths: [本文件]` 的触发器，只为让它在合进 master 之前也能跑
+# （workflow_dispatch 只认默认分支）。**那个触发器会在 tag 上误触发**（tag push 的 paths
+# 过滤是跟上一个 tag 比的，而这个文件是新增的），每次发版白跑一次 3 分钟的编译。
+# 文件已经在 master 上，所以删掉它。
 on:
   workflow_dispatch:
     inputs:
@@ -31,9 +34,6 @@ on:
         description: "ripgrep 版本（crates.io 上的版本号）"
         required: true
         default: "15.2.0"
-  push:
-    paths:
-      - ".github/workflows/rg.yml"
 
 permissions:
   contents: write # 发 release 产物

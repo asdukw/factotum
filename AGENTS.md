@@ -535,6 +535,7 @@ tools/
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
   dsh-phone/zen-session-fetch.mjs  launcher 的兄弟模块：只对 zen 主机补 x-opencode-session（有单测）
+  dsh-phone/preset-diff.mjs     组合对比：把 phone profile 实际 mount 的行与 dsh 官方预置比一遍（移植用）
   dsh-phone/test/               工具的离线单测（CI 的「离线自检」跑）
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename、assistant-stream → session.stream）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
@@ -623,6 +624,8 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
 | 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
+| `tool-fs-search`（`glob` / `grep`）在设备上跑不起来 | 它依赖 `@vscode/ripgrep` 的**打包二进制**，而那个包**没有 android 平台产物**（12 个 optional dep 里只有 darwin / win32 / linux），`--os=android` 装出来的目录里连 `bin/` 都没有 → 要开得自己带一个 arm64 静态 ripgrep 进 assets |
+| 想知道「dsh 官方预置有什么、我们缺什么」 | 用 launcher 同一套 API 把组合打出来比：`loadProfileDirectory` + `readProfilePatches` + `composeEntries`，然后对比 `preset-standard` 与 `preset-phone` 的 `config.plugins`（现成脚本可照 `docs/memory.md` §3 写，10 行） |
 
 ## 深度文档
 
@@ -632,6 +635,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
 | `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
+| `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

@@ -71,6 +71,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -163,6 +165,21 @@ internal fun ChatScreen(
   val listState = rememberLazyListState()
   val drawerState = rememberDrawerState(DrawerValue.Closed)
   val scope = rememberCoroutineScope()
+  val keyboard = LocalSoftwareKeyboardController.current
+  val focus = LocalFocusManager.current
+
+  // 会话一开始跑就收起软键盘。
+  // 理由不是「看着清爽」：agent 接下来要在屏幕上操作（读屏 / 截图 / 点按），
+  // 键盘既占掉小半屏，又会让 IME 窗口出现在控件树与截图里 —— 模型会把键盘本身
+  // 当成页面内容的一部分，去点一个并不存在的按钮。
+  // 挂在 isStreaming 而不是「点了发送」上：重载运行时、恢复中断的会话等路径也会进入
+  // 流式状态，这样一处覆盖得到。
+  LaunchedEffect(state.isStreaming) {
+    if (state.isStreaming) {
+      keyboard?.hide()
+      focus.clearFocus()
+    }
+  }
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
   var modelSheetOpen by remember { mutableStateOf(false) }

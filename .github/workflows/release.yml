@@ -71,6 +71,9 @@ jobs:
       - name: 装配运行时（libnode + dsh）
         run: |
           pwsh -NoProfile -File tools/fetch-libnode.ps1
+          # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
+          # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
+          pwsh -NoProfile -File tools/fetch-rg.ps1
           pwsh -NoProfile -File tools/bundle-dsh.ps1
 
       - name: 还原签名材料

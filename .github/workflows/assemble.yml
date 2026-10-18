@@ -52,7 +52,7 @@ jobs:
           path: |
             ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
             ${{ env.ANDROID_HOME }}/cmake/3.31.6
-          key: android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
+          key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
       - name: 装 SDK 平台 / NDK / CMake
         run: |
           yes | sdkmanager --licenses > /dev/null || true
@@ -62,7 +62,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: android/.dsh-cache/runtime
-          key: dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
+          key: v2-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
 
       - name: 装配运行时（libnode + dsh）
         run: |

@@ -41,7 +41,6 @@ fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
-  onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -58,7 +57,6 @@ fun SettingsScreen(
     onBack = onBack,
     onOpenProviders = onOpenProviders,
     onOpenConnectors = onOpenConnectors,
-    onOpenTermuxBridge = onOpenTermuxBridge,
     modifier = modifier,
   )
 }
@@ -69,7 +67,6 @@ internal fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
-  onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -98,8 +95,6 @@ internal fun SettingsScreen(
         ExecutionSection(
           accessibilityEnabled = accessibilityEnabled,
           onOpenAccessibility = { context.startActivity(AccessibilityStatus.settingsIntent()) },
-          linuxConfigured = state.linuxConfigured,
-          onOpenTermuxBridge = onOpenTermuxBridge,
         )
         SectionLabel("连接器")
         ConnectorSection(state = state, onOpenConnectors = onOpenConnectors)
@@ -178,8 +173,6 @@ private fun ComingSoonRow(glyph: GlyphKind, title: String, subtitle: String) {
 private fun ExecutionSection(
   accessibilityEnabled: Boolean,
   onOpenAccessibility: () -> Unit,
-  linuxConfigured: Boolean,
-  onOpenTermuxBridge: () -> Unit,
 ) {
   SettingsGroup {
     SettingsRow(
@@ -199,21 +192,17 @@ private fun ExecutionSection(
       )
     }
     SettingsDivider()
+    // Linux 环境（Termux 桥）**功能已在代码里，但还没开发完，所以先按「即将推出」占位** ——
+    // 与上面「助手 / 扩展管理」同一套处理：`enabled = false`、不给 onClick，用户点不进去。
+    // 入口关掉不等于把功能删掉：`TermuxBridgeScreen` 与导航路由都还在，开发完把这段换回
+    // 真入口即可（`git log -S "即将推出" -- SettingsScreen.kt` 能找到这一处）。
     SettingsRow(
       glyph = GlyphKind.Server,
       title = "Linux 环境",
-      subtitle =
-        if (linuxConfigured) {
-          "已配置 —— agent 可在其中的 Debian 里执行命令"
-        } else {
-          "未配置 —— 装上 Termux + Debian 后，agent 能直接读写文件、跑命令"
-        },
-      onClick = onOpenTermuxBridge,
+      subtitle = "agent 可在其中的 Debian 里执行命令（开发中）",
+      enabled = false,
     ) {
-      StatusBadge(
-        text = if (linuxConfigured) "已配置" else "未配置",
-        tone = if (linuxConfigured) BadgeTone.Enabled else BadgeTone.Muted,
-      )
+      StatusBadge("即将推出", BadgeTone.Muted)
     }
   }
 }

@@ -29,7 +29,6 @@ fun MainNavigation() {
             onBack = { backStack.removeLastOrNull() },
             onOpenProviders = { backStack.add(Providers) },
             onOpenConnectors = { backStack.add(Connectors) },
-            onOpenTermuxBridge = { backStack.add(TermuxBridge) },
           )
         }
         entry<Providers> {

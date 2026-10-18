@@ -184,3 +184,22 @@ internal fun CogGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
     }
   }
 }
+
+/** 搜索：圆 + 手柄。 */
+@Composable
+internal fun SearchGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    val radius = size.minDimension * 0.28f
+    val cx = size.width * 0.44f
+    val cy = size.height * 0.44f
+    drawCircle(tint, radius, Offset(cx, cy), style = Stroke(w))
+    drawLine(
+      tint,
+      Offset(cx + radius * 0.72f, cy + radius * 0.72f),
+      Offset(size.width * 0.82f, size.height * 0.82f),
+      strokeWidth = w,
+      cap = StrokeCap.Round,
+    )
+  }
+}

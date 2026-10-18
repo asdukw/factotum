@@ -39,6 +39,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,9 +50,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +71,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -82,6 +88,7 @@ import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
 import com.tappet.app.agent.ChatViewModel
 import com.tappet.app.agent.DshStreamer
+import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
@@ -90,6 +97,7 @@ import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
+import com.tappet.app.ui.components.ProviderModelIcon
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -257,7 +265,14 @@ private fun ChatBody(
   }
 
   Column(modifier.fillMaxSize().safeDrawingPadding()) {
-    ChatTopBar(title = sessionTitle, onOpenSessions = onOpenSessions, onNewSession = onNewSession)
+    val modelSubtitle =
+      listOf(state.providerName, state.model).filter { it.isNotBlank() }.joinToString(" · ")
+    ChatTopBar(
+      title = sessionTitle,
+      subtitle = modelSubtitle,
+      onOpenSessions = onOpenSessions,
+      onNewSession = onNewSession,
+    )
     AccessibilityPrompt()
     if (!state.configured) {
       // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
@@ -281,11 +296,8 @@ private fun ChatBody(
       value = state.input,
       isStreaming = state.isStreaming,
       canSend = state.canSend,
-      modelLabel =
-        listOf(state.providerName, state.model)
-          .filter { it.isNotBlank() }
-          .joinToString(" · ")
-          .ifBlank { state.configSummary },
+      modelPreset = LlmPreset.byId(state.providerId),
+      providerName = state.providerName,
       onValueChange = onInputChange,
       onSend = onSend,
       onStop = onStop,
@@ -295,19 +307,34 @@ private fun ChatBody(
 }
 
 @Composable
-private fun ChatTopBar(title: String, onOpenSessions: () -> Unit, onNewSession: () -> Unit) {
+private fun ChatTopBar(
+  title: String,
+  subtitle: String,
+  onOpenSessions: () -> Unit,
+  onNewSession: () -> Unit,
+) {
   Row(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     IconButton(onClick = onOpenSessions) { MenuGlyph(tint = MaterialTheme.colorScheme.onSurface) }
-    Text(
-      text = title,
-      style = MaterialTheme.typography.titleMedium,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-    )
+    Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
+      Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+      if (subtitle.isNotBlank()) {
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    }
     IconButton(onClick = onNewSession) { PlusGlyph(tint = MaterialTheme.colorScheme.onSurface) }
   }
 }
@@ -693,7 +720,8 @@ private fun ChatInputBar(
   value: String,
   isStreaming: Boolean,
   canSend: Boolean,
-  modelLabel: String,
+  modelPreset: LlmPreset?,
+  providerName: String,
   onValueChange: (String) -> Unit,
   onSend: () -> Unit,
   onStop: () -> Unit,
@@ -707,14 +735,13 @@ private fun ChatInputBar(
       border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
       shadowElevation = 4.dp,
     ) {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.Bottom,
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 4.dp),
       ) {
         BasicTextField(
           value = value,
           onValueChange = onValueChange,
-          modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+          modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
           textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
           cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
           maxLines = 5,
@@ -733,40 +760,30 @@ private fun ChatInputBar(
             }
           },
         )
-        Spacer(Modifier.width(8.dp))
-        SendStopButton(
-          isStreaming = isStreaming,
-          canSend = canSend,
-          onSend = onSend,
-          onStop = onStop,
-          modifier = Modifier.padding(vertical = 4.dp),
-        )
-      }
-    }
-    if (modelLabel.isNotBlank()) {
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .padding(top = 6.dp)
-            .clip(RoundedCornerShape(50))
-            .clickable(enabled = !isStreaming, onClick = onModelSwitchClick)
-            .padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(
-          text = modelLabel,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        if (!isStreaming) {
-          Spacer(Modifier.width(6.dp))
-          Text(
-            text = "切换",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          if (modelPreset != null) {
+            Box(
+              modifier =
+                Modifier.size(40.dp)
+                  .clip(CircleShape)
+                  .clickable(enabled = !isStreaming, onClick = onModelSwitchClick)
+                  .semantics { contentDescription = "切换模型" },
+              contentAlignment = Alignment.Center,
+            ) {
+              ProviderModelIcon(
+                preset = modelPreset,
+                name = providerName,
+                size = 32,
+                shape = RoundedCornerShape(10.dp),
+              )
+            }
+          }
+          Spacer(Modifier.weight(1f))
+          SendStopButton(
+            isStreaming = isStreaming,
+            canSend = canSend,
+            onSend = onSend,
+            onStop = onStop,
           )
         }
       }
@@ -848,10 +865,11 @@ private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"
 
 /**
- * 聊天页的模型切换 sheet：按提供商分组列出「可用模型」。
+ * 模型切换 sheet，对齐 RikkaHub 的样式：顶部胶囊搜索 → 供应商分组（可折叠）→ 圆角模型卡
+ * （选中用 primaryContainer）→ 底部说明。没有大标题，搜索框就是入口。
  *
  * 选中后由 ChatViewModel 落盘并重载 dsh 运行时；重载期间关闭切换（避免并发 remount）。
- * 运行时重载会换掉 dsh 会话命名空间：界面历史保留，但模型上下文从下一条消息重新开始。
+ * 重载会换 dsh 会话命名空间：界面历史保留，但模型上下文从下一条消息重新开始。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -862,75 +880,253 @@ private fun ModelSwitchSheet(
   onSelect: (ModelChoice) -> Unit,
   onDismiss: () -> Unit,
 ) {
+  var query by remember { mutableStateOf("") }
+  var collapsedProviders by remember { mutableStateOf(emptySet<String>()) }
+  val visible = remember(choices, query) {
+    val needle = query.trim()
+    if (needle.isEmpty()) {
+      choices
+    } else {
+      choices.filter {
+        it.model.contains(needle, ignoreCase = true) ||
+          it.providerName.contains(needle, ignoreCase = true)
+      }
+    }
+  }
+
   ModalBottomSheet(onDismissRequest = onDismiss) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-      Text("切换模型", style = MaterialTheme.typography.titleLarge)
-      Spacer(Modifier.height(6.dp))
+    Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).imePadding()) {
+      ModelSearchField(query = query, onQueryChange = { query = it })
       Text(
-        text = "切换会重载运行时（约 1–3 秒）；界面记录保留，新消息使用新的模型上下文。",
-        style = MaterialTheme.typography.bodySmall,
+        text = "切换会重载运行时；界面历史保留，模型上下文从下一条消息重新开始。",
+        style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 6.dp),
       )
       if (switching) {
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
           Spacer(Modifier.width(10.dp))
           Text("切换中…", style = MaterialTheme.typography.bodySmall)
         }
       }
       if (error != null) {
-        Spacer(Modifier.height(12.dp))
         Text(
           text = error,
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.error,
+          modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
         )
       }
-      Spacer(Modifier.height(8.dp))
-      if (choices.isEmpty()) {
+      ModelSwitchList(
+        modifier = Modifier.weight(1f),
+        visible = visible,
+        choicesEmpty = choices.isEmpty(),
+        switching = switching,
+        collapseEnabled = query.isBlank(),
+        collapsedProviders = collapsedProviders,
+        onToggleProvider = { providerId ->
+          collapsedProviders =
+            if (providerId in collapsedProviders) {
+              collapsedProviders - providerId
+            } else {
+              collapsedProviders + providerId
+            }
+        },
+        onSelect = onSelect,
+      )
+    }
+  }
+}
+
+@Composable
+private fun ModelSearchField(query: String, onQueryChange: (String) -> Unit) {
+  Surface(
+    shape = CircleShape,
+    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+  ) {
+    OutlinedTextField(
+      value = query,
+      onValueChange = onQueryChange,
+      singleLine = true,
+      shape = CircleShape,
+      placeholder = { Text("输入模型名称搜索") },
+      leadingIcon = { SearchGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+      colors =
+        TextFieldDefaults.colors(
+          focusedContainerColor = Color.Transparent,
+          unfocusedContainerColor = Color.Transparent,
+          focusedIndicatorColor = Color.Transparent,
+          unfocusedIndicatorColor = Color.Transparent,
+        ),
+      modifier = Modifier.fillMaxWidth(),
+    )
+  }
+}
+
+@Composable
+private fun ModelSwitchList(
+  modifier: Modifier = Modifier,
+  visible: List<ModelChoice>,
+  choicesEmpty: Boolean,
+  switching: Boolean,
+  collapseEnabled: Boolean,
+  collapsedProviders: Set<String>,
+  onToggleProvider: (String) -> Unit,
+  onSelect: (ModelChoice) -> Unit,
+) {
+  LazyColumn(
+    modifier = modifier.fillMaxWidth(),
+    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    if (visible.isEmpty()) {
+      item {
         Text(
-          text = "还没有可用模型。去 设置 → 提供商 从端点添加，再回来切换。",
+          text =
+            if (choicesEmpty) {
+              "还没有可用模型。去 设置 → 提供商 从端点添加，再回来切换。"
+            } else {
+              "没有匹配的模型"
+            },
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(8.dp),
         )
-      } else {
-        LazyColumn(Modifier.heightIn(max = 460.dp)) {
-          choices.groupBy { it.providerId }.forEach { (_, group) ->
-            item(key = "provider-" + group.first().providerId) {
-              Text(
-                text = group.first().providerName,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-              )
-            }
-            items(group, key = { it.providerId + "/" + it.model }) { choice ->
-              Row(
-                modifier =
-                  Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(enabled = !switching) { onSelect(choice) }
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                Text(
-                  text = choice.model,
-                  style = MaterialTheme.typography.bodyMedium,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                  modifier = Modifier.weight(1f),
-                )
-                if (choice.current) {
-                  Text(
-                    text = "当前",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                  )
-                }
-              }
-            }
+      }
+    } else {
+      visible.groupBy { it.providerId }.forEach { (providerId, group) ->
+        val collapsed = collapseEnabled && providerId in collapsedProviders
+        item(key = "provider-" + providerId) {
+          ProviderHeader(
+            name = group.first().providerName,
+            count = group.size,
+            collapsed = collapsed,
+            enabled = collapseEnabled,
+            onClick = { onToggleProvider(providerId) },
+          )
+        }
+        if (!collapsed) {
+          items(group, key = { it.providerId + "/" + it.model }) { choice ->
+            ModelChoiceCard(
+              choice = choice,
+              enabled = !switching,
+              onClick = { onSelect(choice) },
+            )
           }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ProviderHeader(
+  name: String,
+  count: Int,
+  collapsed: Boolean,
+  enabled: Boolean,
+  onClick: () -> Unit,
+) {
+  Row(
+    modifier =
+      Modifier.fillMaxWidth()
+        .clip(RoundedCornerShape(10.dp))
+        .clickable(enabled = enabled, onClick = onClick)
+        .padding(top = 6.dp, bottom = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    ChevronDownGlyph(
+      tint = MaterialTheme.colorScheme.primary,
+      modifier = Modifier.size(14.dp).rotate(if (collapsed) -90f else 0f),
+    )
+    Spacer(Modifier.width(6.dp))
+    Text(
+      text = name,
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.primary,
+      modifier = Modifier.weight(1f),
+    )
+    Text(
+      text = "$count 个模型",
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelChoiceCard(
+  choice: ModelChoice,
+  enabled: Boolean,
+  onClick: () -> Unit,
+) {
+  val preset = LlmPreset.byId(choice.providerId) ?: LlmPreset.Custom
+  Card(
+    onClick = onClick,
+    enabled = enabled,
+    shape = RoundedCornerShape(16.dp),
+    colors =
+      CardDefaults.cardColors(
+        containerColor =
+          if (choice.current) {
+            MaterialTheme.colorScheme.primaryContainer
+          } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+          },
+        contentColor =
+          if (choice.current) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+          } else {
+            MaterialTheme.colorScheme.onSurface
+          },
+      ),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      ProviderModelIcon(
+        preset = preset,
+        name = choice.providerName,
+        size = 40,
+        shape = RoundedCornerShape(12.dp),
+      )
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+          text = choice.model,
+          style = MaterialTheme.typography.titleSmall,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = choice.providerName,
+          style = MaterialTheme.typography.labelSmall,
+          color =
+            if (choice.current) {
+              MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            },
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (choice.current) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)) {
+          Text(
+            text = "当前",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+          )
         }
       }
     }

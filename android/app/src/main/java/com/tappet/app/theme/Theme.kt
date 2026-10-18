@@ -11,6 +11,8 @@ private val LightColorScheme =
   lightColorScheme(
     primary = TappetBlue,
     onPrimary = Color.White,
+    primaryContainer = Color(0xFFE4E9FF),
+    onPrimaryContainer = Color(0xFF14224F),
     secondaryContainer = LightUserBubble,
     onSecondaryContainer = LightUserBubbleText,
     background = LightBackground,
@@ -32,6 +34,8 @@ private val DarkColorScheme =
   darkColorScheme(
     primary = TappetBlueLight,
     onPrimary = Color(0xFF10142E),
+    primaryContainer = Color(0xFF2A3149),
+    onPrimaryContainer = Color(0xFFE7EAF6),
     secondaryContainer = DarkUserBubble,
     onSecondaryContainer = DarkUserBubbleText,
     background = DarkBackground,

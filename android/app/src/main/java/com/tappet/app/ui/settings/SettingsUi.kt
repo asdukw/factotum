@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tappet.app.agent.LlmPreset
+import com.tappet.app.ui.components.ProviderModelIcon
 
 /**
  * 设置页共用的小部件：分组卡片、行、状态徽章、提供商头像、顶栏、底部页签。
@@ -186,35 +187,13 @@ internal fun ProviderAvatar(
   modifier: Modifier = Modifier,
   size: Int = 44,
 ) {
-  val background =
-    when (preset) {
-      LlmPreset.OpenCodeGo -> Color(0xFF4F46E5)
-      LlmPreset.OpenAi -> Color(0xFF059669)
-      LlmPreset.Anthropic -> Color(0xFFD97706)
-      LlmPreset.DeepSeek -> Color(0xFF2563EB)
-      LlmPreset.OpenRouter -> Color(0xFF7C3AED)
-      LlmPreset.Custom -> Color(0xFF64748B)
-    }
-  val monogram =
-    when (preset) {
-      LlmPreset.OpenCodeGo -> "OC"
-      LlmPreset.OpenAi -> "O"
-      LlmPreset.Anthropic -> "A"
-      LlmPreset.DeepSeek -> "D"
-      LlmPreset.OpenRouter -> "R"
-      LlmPreset.Custom -> name.trim().take(1).ifBlank { "+" }.uppercase()
-    }
-  Box(
-    modifier = modifier.size(size.dp).clip(CircleShape).background(background),
-    contentAlignment = Alignment.Center,
-  ) {
-    Text(
-      text = monogram,
-      color = Color.White,
-      fontSize = if (monogram.length > 1) 13.sp else 18.sp,
-      fontWeight = FontWeight.SemiBold,
-    )
-  }
+  ProviderModelIcon(
+    preset = preset,
+    name = name,
+    modifier = modifier,
+    size = size,
+    shape = CircleShape,
+  )
 }
 
 @Composable

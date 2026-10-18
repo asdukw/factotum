@@ -1,5 +1,6 @@
 package com.tappet.app.node
 
+import com.tappet.app.agent.LlmPreset
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -57,6 +58,47 @@ class NodeRuntimeProfileTest {
       "插件的 package.json 里 name 不是 $name",
       manifest.readText().contains("\"name\": \"$name\""),
     )
+  }
+
+  @Test
+  fun `the built-in web search provider is wired and reads the injected endpoint`() {
+    assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
+    val text = profile.readText()
+
+    // 联网搜索用的是 dsh 自带的 `web-search-deepseek`（Anthropic 兼容 Messages + 原生
+    // web_search 服务器工具），不是本仓库另写的插件。它一旦被禁用，`web_search` 工具还会
+    // 挂在模型面前，但每次调用都回 WEB_PROVIDER_UNAVAILABLE —— 看着像「搜索坏了」。
+    assertTrue(
+      "profile 不允许再禁用 web-search-deepseek（联网搜索走的是它）",
+      !text.contains("- id: web-search-deepseek\n  disabled: true"),
+    )
+    assertTrue(
+      "profile 里没有 web-search-deepseek 的配置段",
+      text.contains("- id: web-search-deepseek\n  config:"),
+    )
+    // 端点 / 模型 / 密钥来源都必须由宿主注入：搜索与聊天是两套协议，不能从 TAPPET_LLM_API 推。
+    for (name in listOf("TAPPET_WEB_SEARCH_BASE_URL", "TAPPET_WEB_SEARCH_MODEL", "TAPPET_WEB_SEARCH_KEY_ENV")) {
+      assertTrue("profile 的搜索 provider 没读 $name", text.contains(name))
+    }
+  }
+
+  @Test
+  fun `search endpoints are well formed`() {
+    // 基址不含 /messages：dsh 的搜索 provider 自己追加。写成带 /messages 的基址会得到
+    // `.../messages/messages`，报出来是一个 404，看不出是配置问题。
+    for (preset in LlmPreset.entries) {
+      val search = preset.endpoint.search ?: continue
+      assertTrue("${preset.id} 的搜索基址为空", search.baseUrl.isNotBlank())
+      assertTrue("${preset.id} 的搜索模型为空", search.model.isNotBlank())
+      assertTrue(
+        "${preset.id} 的搜索基址不该以 /messages 结尾（provider 会自己追加）",
+        !search.baseUrl.trimEnd('/').endsWith("/messages"),
+      )
+    }
+    // 真机上唯一验证过会真的搜索的组合。它被改掉时这条会红 —— 想换就先去实测再改这里。
+    val zen = LlmPreset.OpenCodeGo.endpoint.search
+    assertTrue("OpenCode Go 必须配好搜索端点（已验证）", zen != null)
+    assertTrue("OpenCode Go 的搜索端点应指向 zen", zen!!.baseUrl.contains("opencode.ai"))
   }
 
   @Test

@@ -131,7 +131,7 @@ console.log('[initialize]', JSON.stringify(init))
 
 const receipt = await request('session/prompt', {
   sessionId: `probe-${Date.now()}`,
-  contentBlocks: [{ type: 'text', text: 'Reply with exactly: ping' }],
+  contentBlocks: [{ type: 'text', text: process.env.TAPPET_PROBE_PROMPT ?? 'Reply with exactly: ping' }],
 })
 prompted = true
 console.log('[prompt receipt]', JSON.stringify(receipt))

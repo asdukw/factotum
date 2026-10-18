@@ -41,6 +41,9 @@ node (Join-Path $src "patch-runtime.mjs") (Join-Path $cache "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "patch-runtime.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
 Copy-Item -Force (Join-Path $src "launcher.mjs") $cache
+# launcher 的兄弟模块（zen 会话头补丁），必须一起进运行时 —— 漏了会在设备上以
+# 「Cannot find module」起不来，而那是最难查的一类错。
+Copy-Item -Force (Join-Path $src "zen-session-fetch.mjs") $cache
 
 # profile 先过一遍**真解析器**再打包：overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node
 # 与宿主同进程 —— 报错就是整个 App 崩。CI 上没有 dsh 运行时跑不了这一步，所以关口放在这里。

@@ -330,6 +330,34 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   所以走的是**回环重定向** `http://127.0.0.1:<随机端口>`。好处：不改 Manifest、不注册签名
   SHA-1、不绑包名 —— 预置一个 client id 就能对所有人生效。
 
+### 加一个联网搜索提供商 = 一处声明（2026-10-18 起）
+
+联网搜索用的是 **dsh 自带的 web seam**，不是本仓库的插件：
+
+| 位置 | 管什么 |
+|---|---|
+| `agent/LlmPreset.kt` 的 `Endpoint.search` | 该提供商的搜索端点（Anthropic 兼容基址）与模型；`null` = 没验证过 |
+| `node/NodeRuntime.kt` | 注入 `TAPPET_WEB_SEARCH_BASE_URL` / `_MODEL` / `_KEY_ENV`（重载时也写进 runtime-config.json） |
+| `tools/dsh-phone/profile/cordis.patch.yml` | `web-search-deepseek` 的 config 段：`baseURL` / `model` / `apiKeyEnv` 全部读宿主注入 |
+| `tools/dsh-phone/zen-session-fetch.mjs` | 替搜索 provider 补 zen 的 `x-opencode-session`（provider 没有自定义 header 的字段） |
+
+- **`web_search` / `web_fetch` 两个工具与提示词指引来自 `dsh-tool-web`**，由 `dsh-base`
+  默认挂载 —— **不要再写一个自己的搜索插件**（写过一次，删了）。要加能力先看 dsh 有没有。
+- **端点与模型是两套，不能从 `TAPPET_LLM_API` 推**：zen 聊天走 `openai-completions`，
+  而它的原生 `web_search` 在 Anthropic 兼容的 `/messages` 上。基址**不含** `/messages`，
+  provider 自己追加（写成带 `/messages` 的会得到 `.../messages/messages` → 一个看不懂的 404）。
+- **「接受工具」不等于「会真的搜索」**：网关不校验模型是否真支持宿主 `web_search`。
+  实测 zen 的 `deepseek-v4.1-flash` 收下工具、回 200、`input_tokens` 只有 50 —— 一次都没搜，
+  然后给一段凭记忆编的话。所以搜索模型必须**单独指定并实测**，别拿当前聊天模型凑。
+- **换协议比换模型划算**：`claude-haiku-5-5` 在 zen 的 `/responses` 上是 400
+  `ModelProtocolUnsupported`，走 Anthropic 兼容的 `/zen/go/v1/messages` 却完全可用
+  （`web_search_requests: 1`，input ~13k，比 `/responses` 那条的 17k–44k 便宜）。
+- **没有可用 provider 时工具照样挂着**，回结构化的 `WEB_PROVIDER_UNAVAILABLE` ——
+  与连接器同一条理由。可用性检查就是「密钥在不在」，所以不支持的提供商把
+  `TAPPET_WEB_SEARCH_KEY_ENV` 指到一个解析不到的变量名即可，profile 里不需要分支。
+- **不接搜索 API**：Bing Web Search API 已退役、Google Custom Search JSON API 已对新客户关闭
+  （现有客户 2027-01-01 前迁移）。边界与实测见 `docs/web-search.md`。
+
 ### 几条不许碰的约束
 
 - **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile`；换 ROM 只加一个 `OemProfile`。
@@ -497,6 +525,8 @@ tools/
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
+  dsh-phone/zen-session-fetch.mjs  launcher 的兄弟模块：只对 zen 主机补 x-opencode-session（有单测）
+  dsh-phone/test/               工具的离线单测（CI 的「离线自检」跑）
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename、assistant-stream → session.stream）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
   dsh-phone/modality-index.mjs  从 pi-ai 目录生成 assets/model-modalities.json（bundle-dsh.ps1 调用）
@@ -577,6 +607,11 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
 | 助手回复整段蹦出来、没有逐字效果 | 运行时补丁 4 没生效（stdout 上没有 `session.stream` 帧）→ 重跑 `tools/bundle-dsh.ps1` 并重装 APK；Kotlin 侧另有 50ms 合并，纯聊天不涉及无障碍 |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
+| `web_search` 回 `WEB_PROVIDER_UNAVAILABLE` | 当前提供商没有搜索端点（`LlmPreset.Endpoint.search == null`）→ 换 OpenCode Go，或在 `Endpoint.search` 里补一个**实测过**的 |
+| `web_search` 报 400 `MissingSessionID` | zen 的会话头没补上 → 确认 `zen-session-fetch.mjs` 进了运行时（重跑 `bundle-dsh.ps1`；它和 `launcher.mjs` 必须一起拷进 cache） |
+| 装完启动报 `Cannot find module .../zen-session-fetch.mjs` | 同上一类：launcher 的兄弟模块漏拷 → 重跑 `tools/bundle-dsh.ps1` |
+| 搜索回了答案但一个来源都没有 | **真搜门**：模型收下了 `web_search` 但一次都没搜（网关不校验）→ 换实测会搜的模型（zen 上是 claude 系 / gpt-6-luna / grok-4.x） |
+| `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
 
 ## 深度文档
 
@@ -585,6 +620,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
+| `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

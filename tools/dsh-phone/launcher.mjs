@@ -23,6 +23,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { existsSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { installZenSessionFetch } from './zen-session-fetch.mjs'
 
 const runtimeDir = fileURLToPath(new URL('.', import.meta.url))
 const profileDir = join(runtimeDir, 'profiles', 'phone')
@@ -61,6 +62,13 @@ process.stdout.write = (chunk, encoding, callback) => {
   if (typeof done === 'function') done()
   return true
 }
+
+// ── zen 会话头 ──────────────────────────────────────────────────────────────
+// opencode zen 硬要求 `x-opencode-session`。LLM 那条路发得出去（pi-ai 适配器有 headers
+// 配置），但 dsh 自带的搜索 provider 没有自定义 header 的配置项 —— 而 zen 恰好有
+// Anthropic 兼容端点，接上它等于零新增厂商拿到联网搜索。补在这里、只对 zen 的主机名生效，
+// 理由与边界写在 zen-session-fetch.mjs 里。
+installZenSessionFetch()
 
 // ── profile 组合 ────────────────────────────────────────────────────────────
 // 每次 mount 都重新读 profile：重载时可以换掉 provider / models 等 !!js 结果。

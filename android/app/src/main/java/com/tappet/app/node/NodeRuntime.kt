@@ -452,6 +452,18 @@ object NodeRuntime : NodeLineListener {
     "TAPPET_LLM_KEY_" + preset.id.uppercase().replace('-', '_')
 
   /**
+   * 搜索 provider 该从哪个 env 读密钥。
+   *
+   * 没有可用搜索端点的提供商（`LlmPreset.Endpoint.search == null`）返回一个**解析不到的
+   * 变量名**：seam 判断提供方可用性的办法就是「密钥在不在」，于是 `web_search` 会以
+   * `WEB_PROVIDER_UNAVAILABLE` 失败 —— 与连接器「没配就回 NOT_CONNECTED」同一条路数。
+   * 不这么做的话，它会拿聊天那把 key 去打 profile 里的兜底端点（api.deepseek.com），
+   * 报出来是 401，看着像密钥填错了。
+   */
+  private fun webSearchKeyEnv(preset: LlmPreset): String =
+    if (preset.endpoint.search == null) "TAPPET_WEB_SEARCH_UNSUPPORTED" else "TAPPET_LLM_KEY"
+
+  /**
    * 写重载用的**非密配置**（env 名 → 值）。密钥不进来：只写一个指向预置 key env 的引用。
    * launcher 在每次 mount 前读它并覆盖 process.env —— 同一个 Node 进程里这是唯一能改配置的路。
    */
@@ -475,6 +487,9 @@ object NodeRuntime : NodeLineListener {
         )
         put("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "")
         put("TAPPET_LLM_KEY_FROM", keyEnvName(config.preset))
+        put("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
+        put("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
+        put("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))
       }
     File(home, "runtime-config.json").writeText(payload.toString())
   }
@@ -525,6 +540,13 @@ object NodeRuntime : NodeLineListener {
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
     Os.setenv("TAPPET_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("TAPPET_LLM_SESSION", persistentSessionId(app), true)
+    // 联网搜索（模型可见的 web_search 工具）：dsh 自带的 web seam + dsh-web-search-deepseek
+    // provider（Anthropic 兼容 Messages + 原生 web_search 服务器工具）。端点与模型按当前
+    // 提供商注入 —— 注意这与聊天用的 api / baseUrl 是**两套**，不能互相推（zen 聊天走
+    // openai-completions，搜索走 /messages）。见 docs/web-search.md。
+    Os.setenv("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty(), true)
+    Os.setenv("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty(), true)
+    Os.setenv("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset), true)
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)

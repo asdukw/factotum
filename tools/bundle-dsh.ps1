@@ -62,6 +62,7 @@ Copy-Item -Force (Join-Path $src "profile/cordis.patch.yml") $profileOut
 $plugins = @(
   @{ Package = "dsh-plugin-android-tools"; Src = "plugins/android-tools" }
   @{ Package = "dsh-android-attachments"; Src = "android-attachments" }
+  @{ Package = "dsh-plugin-gmail"; Src = "plugins/gmail" }
 )
 
 # chat-tools 已下线：从持久缓存里删掉，避免旧包被 tar 通配符重新打进运行时。

@@ -40,6 +40,7 @@ import com.tappet.app.device.AccessibilityStatus
 fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenConnectors: () -> Unit,
   onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -56,6 +57,7 @@ fun SettingsScreen(
     state = state,
     onBack = onBack,
     onOpenProviders = onOpenProviders,
+    onOpenConnectors = onOpenConnectors,
     onOpenTermuxBridge = onOpenTermuxBridge,
     modifier = modifier,
   )
@@ -66,6 +68,7 @@ internal fun SettingsScreen(
   state: SettingsViewModel.UiState,
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenConnectors: () -> Unit,
   onOpenTermuxBridge: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -98,6 +101,8 @@ internal fun SettingsScreen(
           linuxConfigured = state.linuxConfigured,
           onOpenTermuxBridge = onOpenTermuxBridge,
         )
+        SectionLabel("连接器")
+        ConnectorSection(state = state, onOpenConnectors = onOpenConnectors)
         SectionLabel("关于")
         AboutSection()
       }
@@ -209,6 +214,32 @@ private fun ExecutionSection(
         text = if (linuxConfigured) "已配置" else "未配置",
         tone = if (linuxConfigured) BadgeTone.Enabled else BadgeTone.Muted,
       )
+    }
+  }
+}
+
+/**
+ * 连接器分组。连接器是**另一类数据源**：它不经过无障碍、不依赖屏幕上有什么，
+ * 所以它与「执行层」并列，而不是塞进模型那一组（见 docs/email-connector.md §0）。
+ *
+ * 首页只留**一行入口**通向列表页，不在这里逐个列连接器 —— 每接一个就多一行的话，
+ * 这一组会先于功能长成一棵树。
+ */
+@Composable
+private fun ConnectorSection(state: SettingsViewModel.UiState, onOpenConnectors: () -> Unit) {
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Mail,
+      title = "连接器",
+      subtitle =
+        when {
+          state.gmailAccount != null -> "Gmail：${state.gmailAccount}"
+          state.gmailConnected -> "Gmail 已连接"
+          else -> "Gmail、Outlook 等云端数据源（只读）"
+        },
+      onClick = onOpenConnectors,
+    ) {
+      ChevronRight()
     }
   }
 }

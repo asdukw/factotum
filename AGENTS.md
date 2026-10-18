@@ -14,7 +14,7 @@ Tappet 是**运行在 Android 上的通用 mobile agent**：LLM 通过工具调�
 | 数据 | Room + SQLCipher（会话 / 消息 / 工具调用），API key 由 Android Keystore 封装 |
 | agent runtime | App 内嵌 Node 24（nodejs-mobile fork）+ dsh（DeepSeek Harness）phone profile |
 | 设备执行层 | `AccessibilityService`（控件树优先、截图兜底）+ `DeviceBridgeServer`（127.0.0.1 + token） |
-| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（9 个通用原语），独立公开仓库，经 HTTP 桥 → `DeviceAction` |
+| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（10 个通用原语），独立公开仓库，经 HTTP 桥 → `DeviceAction`；另有只读邮箱连接器 |
 | native | JNI（`app/src/main/cpp/native-lib.cpp`）：Kotlin ↔ `node::Start`，需要 NDK 编译 |
 
 - 开发机：Windows + PowerShell 7；设备：一加 15T（PLZ110，Android 16 / API 36，ColorOS）。
@@ -176,7 +176,8 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 5. SQLCipher 原生库不会自动加载：`TappetDatabaseProvider` 必须显式 `System.loadLibrary("sqlcipher")`
    （删旧代码时丢过一次，表现为 `nativeOpen` 的 UnsatisfiedLinkError、界面「本地存储不可用」）。
 6. **不采集他人数据**：通知采集与聊天记录管线已整体删除；如需重新引入任何采集能力，
-   先在 `docs/` 写清边界与隐私闸门，再动代码。
+   先在 `docs/` 写清边界与隐私闸门，再动代码。**邮箱连接器就是照这条走的** ——
+   边界与闸门在 `docs/email-connector.md`（只读、不落盘、不后台轮询、正文不进日志）。
 
 发布前自检：
 
@@ -203,6 +204,8 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 `capture_frame()` / `tap_target(frame_id,x1,y1,x2,y2)` / `long_press_target(同前+duration_ms)` /
 `type_text` / `press(back|home|recents|enter)` / `launch_app(query)` / `swipe(direction)`。
 工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
+用户连上邮箱后**另有 3 个只读工具**（`mail_list` / `mail_search` / `mail_read`），
+由 `dsh-plugin-gmail` 提供，不经过无障碍（见「加一个连接器」一节）。
 
 桥里另有 `screenshot` 与 `tap_point` 两个**屏幕像素**动作，只给 debug 广播与旧脚本用 ——
 **不在模型工具面里**：模型看到的坐标一律是帧的图像像素（见下），混进屏幕像素就是系统性点偏。
@@ -267,6 +270,56 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 - 清密钥 / 停用：密钥 env 只在 Node 启动时读入，**改 key 需要重启 App**；模型 / 提供商切换
   会 reload，不需要重启。
 
+### 加一个连接器 = 宿主授权 + 本地桥 + 只读工具（2026-10-18 起）
+
+连接器是**第二类数据源**：不经过无障碍，直接从用户的云端账号读数据。首版是 Gmail
+（Gmail API，**只读**）。**动连接器之前先读 `docs/email-connector.md`** ——
+那里写着边界、隐私闸门、提示注入的现状与 Google 侧的注册步骤；
+要加写操作，先补危险动作闸门（roadmap §3.2）。
+
+四处同一件事：
+
+| 位置 | 管什么 |
+|---|---|
+| `connector/GoogleOAuth.kt` | 纯协议：PKCE / 授权 URL / 回环请求行 / 令牌解析。scope 常量 `GMAIL_SCOPE` 在这里 |
+| `connector/GmailAuth.kt` + `ConnectorStore.kt` | 网络与存储：回环监听器 + 浏览器、refresh token 进 SecretVault、access token 只在内存 |
+| `bridge/ConnectorBridgeServer.kt` | 只发短命 access token 的本地桥，**独立于设备桥**（理由见类注释） |
+| `tools/dsh-phone/plugins/gmail/` | 模型可见的三个只读工具；Gmail 的 REST 语义全在这里 |
+
+- **令牌的信任边界**：refresh token 永不离开 Kotlin；插件每次调用向桥要一个 access token
+  （`{"action":"access_token","connector":"gmail"}`）。所以「插件被注入」也拿不到长期凭据。
+- **桥不代理云端请求**：只发令牌。否则一处 API 会被劈成「宿主知道路径、插件知道工具描述」两半。
+- **没配连接器时工具照样挂着**，每次调用回 `NOT_CONNECTED` —— 工具面随配置忽隐忽现会让模型的
+  行为不可预测，如实报错更好。
+- **授权面比能力面宽**（2026-10-18 决定）：申请的是 `gmail.modify`（读 + 写 + 发），
+  而工具面**目前仍然只有只读三个**。理由是 Google 对 installed apps 不支持增量授权，
+  扩权要所有已连接用户重走同意页，所以一次要齐。
+  **代价要记住**：只读 scope 下「插件被攻破也发不出邮件」是 Google 兜的；换成 modify 之后
+  这条边界只剩**插件里那个唯一的 `gmailGet`（出网全是 GET）** 在守。加写操作之前先补
+  危险动作闸门（roadmap §3.2），并同时改插件测试与 `docs/email-connector.md`。
+- **插件名三处逐字相同**：`plugins/gmail/package.json` 的 `name`、profile 的 insert `name`、
+  `bundle-dsh.ps1` 的 `Package`。对不上时运行时少一组工具，报错只有一句「找不到模块」——
+  `NodeRuntimeProfileTest` 钉住了这三处。
+- 插件改动同样要 `bundle-dsh.ps1` + 重装 APK 才生效。新连接器（Outlook 等）= 新的 Keystore
+  别名 + 桥里加一个分支 + 新的插件，**不要复用 Gmail 的别名**。
+- **客户端 id 与密码是预置的，但走构建期注入、不入库**（`ConnectorDefaults.kt` 读 `BuildConfig`）：
+  本地读 `android/local.properties` 的 `tappet.connector.gmailClientId` / `...gmailClientSecret`，
+  发布由 `release.yml` 从 GitHub Actions secret 注入。目标是「装完点一下就授权」，
+  用户不必自己去 Google Cloud 注册应用。留空则退回「要求用户自己填」。
+- **为什么不入库**：**GitHub 的 push protection 把 Google OAuth 的 client id 与 client secret
+  都判成密钥，对管理员一样拦**（实测：`GH013 Repository rule violations ... Push cannot contain
+  secrets`，连 `master` 直推也拦）。私有仓库解决不了 —— 值要参与换码就必须进二进制。
+  注意这是**平台规则**，不是「它们是机密」：客户端 id/密码对桌面应用是公开标识
+  （Google 原话：桌面应用是公共客户端、保不住秘密），真正的保护是 PKCE。
+  `tools/check-sensitive.ps1` 认不出这两个形状（它的 Google 模式是 API key 的 `AIza…`），
+  所以**别把它的「未发现密钥」当成可以推**——远端还有一道。
+- **`master` 的 Ruleset 管理员确实能直推**（bypass actor 是 `RepositoryRole 5` = Maintain，
+  admin 覆盖它）。实测输出是 `Bypassed rule violations ...`。被拒时先看清楚是哪一道：
+  **PR 规则**还是 **push protection** —— 两者都报 "repository rule violations"，很容易看错。
+- **Google 的设备码流程不支持 Gmail 权限**（只支持 Drive / YouTube / Sign-In），
+  所以走的是**回环重定向** `http://127.0.0.1:<随机端口>`。好处：不改 Manifest、不注册签名
+  SHA-1、不绑包名 —— 预置一个 client id 就能对所有人生效。
+
 ### 几条不许碰的约束
 
 - **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile`；换 ROM 只加一个 `OemProfile`。
@@ -318,6 +371,13 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 （`tappet-agent-llm-key-v1-<id>`）都带着 `LlmPreset.id`；改 id = 该提供商的配置与密钥静默读不回来。
 改这几个的后果轻一些（丢的是用户填的 API key，不是聊天库），但同样静默 ——
 表现出来只是「设置页说我配过，但用起来像没配」。
+
+**连接器又是一组**：`tappet_connector_settings`（非密 prefs）、`tappet_connector_secret-<id>`
+（SecretVault 的 prefsName）、`tappet-connector-<id>-v1`（Keystore 别名），以及
+`<id>_client_id` / `<id>_client_secret` / `<id>_account` 三个键，**都带着连接器 id 且带下划线**
+（拼错过一次：`connectorId + "client_id"` 得到的是 `gmailclient_id`，与文档写的对不上 ——
+现在常量本身带前导下划线，别去掉）。改名 = 设备上已完成的 OAuth
+授权静默失效，表现是「设置页说连过，但三个邮件工具全报未连接」。
 
 组件名统一 `com.tappet.app/...`；`OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读
 `BuildConfig.APPLICATION_ID`，会自己跟随。
@@ -410,7 +470,8 @@ android/                        唯一运行时（Kotlin / Compose）
   app/src/main/java/com/tappet/app/
     agent/                      会话状态 + DshStreamer（dsh 事件流→聊天）+ LlmPreset（提供商目录）
     accessibility/              AccessibilityService（执行层实现）
-    bridge/                     DeviceBridgeServer（本地 HTTP 桥）
+    bridge/                     DeviceBridgeServer / ConnectorBridgeServer（两个本地 HTTP 桥）
+    connector/                  云端数据源连接器：OAuth（PKCE + 回环）+ SecretVault 凭据 + 只读边界
     data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/SecretVault 存用户填的 key
     device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
     node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
@@ -426,6 +487,7 @@ tools/
   dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
   dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
+  dsh-phone/plugins/gmail/      邮箱连接器工具（只读 3 个；令牌走本地连接器桥）
   dsh-phone/profile/            phone profile（cordis.patch.yml）
 docs/                           深度文档 + releases/<tag>.md（每个版本的发布说明）
 ```
@@ -480,6 +542,19 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
 | 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
+| 推送被拒 `GH013 Repository rule violations` | 先分清是 PR 规则还是 **push protection**（两者措辞一样）→ 后者是 GitHub 认为提交里有密钥，点它给的 unblock 链接或把值改成构建期注入 |
+| 发布出的包连不上 Gmail | `release.yml` 的 `TAPPET_GMAIL_CLIENT_ID/SECRET` 两个 secret 没配 → 构建期注入是空的，包里就没有预置值 |
+| 授权报 `client_secret is missing` | Google 文档把这项标「Optional」而令牌端点实际要求 → 必须发（桌面应用类型与 Android/iOS 不同） |
+| 同意页写着「读取、撰写和发送你的邮件」 | 正常：申请的是 `gmail.modify`（一次要齐，避免以后重授权），但工具面目前只有只读三个 |
+| 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
+| 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
+| 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |
+| 浏览器点完同意后 App 没反应 | 浏览器没跳到 `127.0.0.1`（部分浏览器拦回环）→ 看 stderr 里监听器有没有收到请求；这是真机未验项之一 |
+| 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
+| 邮件工具整个不见了 / dsh 起不来 | 插件名三处不一致（profile 的 insert / `bundle-dsh.ps1` 的 Package / 插件 `package.json`）→ 有单测钉住；改完重跑 `bundle-dsh.ps1` |
+| 输入框快速打字丢字符 | 每次击键同步 `commit()` 落盘（主线程 fsync）→ 频繁写的字段用 `apply()`，只有需要「写进去没有」答案的凭据才用 `commit` |
+| 点了按钮看不到任何反馈 | 错误文案渲染在页面底部、落在屏幕外 → 反馈贴着触发点放 |
+| 想确认邮件正文没进日志 | `adb logcat -s TappetConnector TappetAudit` —— 只应有动作名与失败码，不该有主题 / 发件人 / 正文 |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
 | `Task '.abis=x86_64' not found` | PowerShell 把 `-Ptappet.abis=x86_64` 拆成两个参数 → 加引号：`"-Ptappet.abis=x86_64"` |
 | 装到手机上 `dlopen libc++_shared.so` 失败（刚跑过模拟器） | jniLibs 停在 x86_64 → `tools/fetch-libnode.ps1` 切回 arm64 再出包 |
@@ -493,6 +568,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 |---|---|
 | `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
+| `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

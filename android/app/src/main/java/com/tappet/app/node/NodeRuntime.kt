@@ -10,6 +10,7 @@ import com.tappet.app.agent.ModelModalities
 import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
+import com.tappet.app.bridge.ConnectorBridgeServer
 import com.tappet.app.bridge.DeviceBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -536,6 +537,11 @@ object NodeRuntime : NodeLineListener {
     // 换来的是「明文配置里永远不会出现凭据」。
     Os.setenv("TAPPET_TERMUX_URL", TermuxBridgeStore.url(app), true)
     Os.setenv("TAPPET_TERMUX_TOKEN", TermuxBridgeStore.token(app).orEmpty(), true)
+    // 连接器桥是**另一个**本地服务（理由见 ConnectorBridgeServer 的类注释）：它只发短命的
+    // access token，不代理云端 API 请求。没配连接器时它照样起着，只是每次调用都回
+    // NOT_CONNECTED —— 「工具在、但会如实报错」比「工具随配置忽隐忽现」对模型更可预测。
+    Os.setenv("TAPPET_CONNECTOR_BRIDGE_URL", ConnectorBridgeServer.start(app), true)
+    Os.setenv("TAPPET_CONNECTOR_BRIDGE_TOKEN", ConnectorBridgeServer.authToken(), true)
     // 第一次 mount 用的非密配置；重载时会重写这个文件。
     writeRuntimeConfig(app, config)
   }

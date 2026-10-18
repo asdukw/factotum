@@ -17,3 +17,9 @@ import kotlinx.serialization.Serializable
 
 /** Linux 环境（Termux 桥）配置：地址 + 访问 token。 */
 @Serializable data object TermuxBridge : NavKey
+
+/** 连接器列表（设置 → 连接器）：Gmail / Outlook…… */
+@Serializable data object Connectors : NavKey
+
+/** Gmail 连接器：客户端 id / 授权 / 断开。 */
+@Serializable data object GmailConnector : NavKey

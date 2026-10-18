@@ -39,6 +39,27 @@ class NodeRuntimeProfileTest {
   }
 
   @Test
+  fun `the gmail connector is wired the same in all three places`() {
+    assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
+    // 插件的名字要在**三处**逐字相同：profile 的 insert、装配脚本的 Package、插件自己的
+    // package.json。对不上时的表现是运行时少一组工具（或整棵 cordis 根 mount 失败），
+    // 而报错里只有一句「找不到模块」—— 与 PROVIDER 那次漏改同一类，所以同样钉住。
+    val name = "dsh-plugin-gmail"
+    assertTrue("profile 里没有插入 $name", profile.readText().contains("name: '$name'"))
+
+    val bundler = File("../../tools/bundle-dsh.ps1")
+    assumeTrue("仓库里没有装配脚本（不是完整检出），跳过", bundler.isFile)
+    assertTrue("bundle-dsh.ps1 的插件清单里没有 $name", bundler.readText().contains(name))
+
+    val manifest = File("../../tools/dsh-phone/plugins/gmail/package.json")
+    assertTrue("插件源码缺失：$manifest", manifest.isFile)
+    assertTrue(
+      "插件的 package.json 里 name 不是 $name",
+      manifest.readText().contains("\"name\": \"$name\""),
+    )
+  }
+
+  @Test
   fun `profile reads the dynamic model list injected by the host`() {
     assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
     val text = profile.readText()

@@ -192,6 +192,7 @@ object TermuxBridgeLauncher {
     }
 
   private const val PROBE_TIMEOUT_MS = 1500
+
   // 窗口给到 ~45 秒：ColorOS 会把后台的 Termux **整个杀掉**（不只是冻结），此时 startService
   // 要先冷启动 Termux（实测光是 `am start` 拉起它就要 ~6 秒，还要加上投递与 bootstrap）。
   private const val POLL_ATTEMPTS = 45

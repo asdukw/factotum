@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.tappet.app.agent.TermuxBridgeLauncher
+import com.tappet.app.agent.TermuxBridgeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -49,6 +51,19 @@ class NodeDebugReceiver : BroadcastReceiver() {
           } catch (throwable: Throwable) {
             Log.e(TAG, "runtime reload failed: ${throwable.message}")
           }
+        }
+      }
+
+      // 等价于设置页那个「启用」按钮：生成 token + 把 Termux 里的桥拉起来。
+      // 留着它是因为**授权弹窗之外的部分都可以无 UI 验证** —— 真机上排「桥为什么没起来」时，
+      // 不必每次都去点界面（授权本身仍必须用户点一次）。
+      "TERMUX" -> {
+        CoroutineScope(Dispatchers.IO).launch {
+          val token = TermuxBridgeStore.ensureToken(app)
+          val url = TermuxBridgeStore.url(app)
+          val status = TermuxBridgeLauncher.ensureStarted(app, url, token)
+          // 只记状态与地址，绝不记 token。
+          Log.i(TAG, "termux bridge: $status url=$url")
         }
       }
 

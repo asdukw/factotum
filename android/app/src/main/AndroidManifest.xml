@@ -13,7 +13,14 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- 包可见性：要能看见并启动 Termux 的 RunCommandService（Android 11+ 默认看不见别的包） -->
+        <package android:name="com.termux" />
     </queries>
+
+    <!-- Termux 定义的权限，用于请它在自己的环境里执行命令（拉起手机上的 Linux 桥）。
+         protectionLevel=dangerous —— 运行时必须由用户在弹窗里点一次同意；adb 代授也会被 ColorOS 拦。
+         没装 Termux 时这条声明是空转，不影响任何东西。 -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
     <application
         android:name=".TappetApplication"

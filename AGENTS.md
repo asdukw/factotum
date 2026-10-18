@@ -14,7 +14,8 @@ Tappet 是**运行在 Android 上的通用 mobile agent**：LLM 通过工具调�
 | 数据 | Room + SQLCipher（会话 / 消息 / 工具调用），API key 由 Android Keystore 封装 |
 | agent runtime | App 内嵌 Node 24（nodejs-mobile fork）+ dsh（DeepSeek Harness）phone profile |
 | 设备执行层 | `AccessibilityService`（控件树优先、截图兜底）+ `DeviceBridgeServer`（127.0.0.1 + token） |
-| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（10 个通用原语），独立公开仓库，经 HTTP 桥 → `DeviceAction`；另有只读邮箱连接器 |
+| 工具接入 | dsh 插件 `dsh-plugin-android-tools`（10 个通用原语 + 可选的 `run_command`），独立公开仓库，经 HTTP 桥 → `DeviceAction`；另有只读邮箱连接器 |
+| 手机上的 Linux | Termux + proot Debian，`tools/termux/bridge.py`（127.0.0.1 + token）→ 插件 `run_command`（不经无障碍） |
 | native | JNI（`app/src/main/cpp/native-lib.cpp`）：Kotlin ↔ `node::Start`，需要 NDK 编译 |
 
 - 开发机：Windows + PowerShell 7；设备：一加 15T（PLZ110，Android 16 / API 36，ColorOS）。
@@ -208,10 +209,11 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 （`ctx.tools` 注册，含给模型看的描述；独立公开仓库，先在插件仓库提交再更新 submodule 指针）。
 插件改完 → `bundle-dsh.ps1` → 重装 APK。
 
-**模型可见的 10 个工具**（插件 v0.4.0）：`read_screen` / `tap_node(ref)` / `long_press(ref,duration_ms)` /
+**模型可见的 10 个工具**（插件 v0.5.0）：`read_screen` / `tap_node(ref)` / `long_press(ref,duration_ms)` /
 `capture_frame()` / `tap_target(frame_id,x1,y1,x2,y2)` / `long_press_target(同前+duration_ms)` /
 `type_text` / `press(back|home|recents|enter)` / `launch_app(query)` / `swipe(direction)`。
 工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
+配了手机上的 Linux 之后**再多一个 `run_command`**（真 shell，见「手机上的 Linux」一节）。
 用户连上邮箱后**另有 3 个只读工具**（`mail_list` / `mail_search` / `mail_read`），
 由 `dsh-plugin-gmail` 提供，不经过无障碍（见「加一个连接器」一节）。
 
@@ -366,6 +368,47 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   `TAPPET_WEB_SEARCH_KEY_ENV` 指到一个解析不到的变量名即可，profile 里不需要分支。
 - **不接搜索 API**：Bing Web Search API 已退役、Google Custom Search JSON API 已对新客户关闭
   （现有客户 2027-01-01 前迁移）。边界与实测见 `docs/web-search.md`。
+### 手机上的 Linux = Termux 桥 + run_command（2026-10-18 起）
+
+agent 能在手机的**文件系统**上干活：Termux 里跑 proot Debian，桥把「执行一条命令、拿回
+stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 打过去。装配见
+`tools/termux/setup.sh`（幂等，跑一次）。**这条路不经过无障碍** —— 它改的是文件，不是屏幕。
+
+- **token 由 Tappet 生成，不是用户抄的**。Tappet 读不到 Termux 的私有目录（跨 uid），
+  但反过来可以 —— 经 Termux 的 `RUN_COMMAND` 把 token 送过去（`TermuxBridgeLauncher`）。
+  token 进 SecretVault、地址进 prefs；**故意不进 `runtime-config.json`**（那个文件是明文），
+  代价是改 token 要重启 App（与换 API key 同一条规矩）。
+- **`RUN_COMMAND` 是 `dangerous` 权限**，必须用户在弹窗点一次，ColorOS 拦 `pm grant`。
+  **`adb install -r` 会把它清掉**，但 **`adb install -r -g` 会带上** —— 开发期重装一律加 `-g`，
+  省掉每次重新授权。
+- **送进 Termux 的那段脚本有三条硬约束**（每条都是实测踩出来的，单测钉住）：
+  ① **不许用 `pkill -f`** —— 脚本是被 `bash -lc <脚本文本>` 拉起的，**脚本文本就在 argv 里**，
+  正文里写的任何模式都会匹配到脚本自己，pkill 把脚本自己杀掉（token 写完了、后面的行一行没跑、
+  日志也没被碰过，外面只看到「桥没起来」——这个坑查了三轮）。要杀旧桥就扫 `/proc` 比命令行，
+  并跳过自己与父进程。② **自己 export `HOME` / `PATH`** —— RUN_COMMAND 是非交互 shell，
+  环境里连 `PREFIX` 都是空的，不摆正的话 `python` 根本找不到。③ **输出重定向到 `~/bridge.log`**
+  —— RUN_COMMAND 的 stdout/stderr 没人接管，任何 traceback 都会消失。
+- **验证这类脚本必须复现真实调用形态**：把脚本放在文件里跑（`bash x.sh`）脚本文本不在 argv 中，
+  pkill 自杀这类问题**复现不出来**。要么按 `bash -lc <文本> name token` 跑，要么直接在真机上验。
+- **ColorOS 会冻结、也会直接杀掉后台的 Termux**，桥跟着一起没。冻结表现为「端口还在 `LISTEN`
+  但连 SYN 都不回」（连接超时）；被杀表现为「连接被拒 + `ServiceRecord` 的 `app=null`」。
+  前者要在系统设置里放开 Termux 的后台运行；后者要靠 startService 冷启动 Termux，
+  所以轮询窗口给到 45 秒（实测 `am start` 拉起它就要 ~6 秒）。`TermuxBridgeLauncher` 把
+  「连接超时」与「没人监听」分成 `FROZEN` / `FAILED` 两种状态 —— 前者重试无用，后者才是配置问题。
+- **换掉旧桥**：先按 pidfile 杀（`bridge.py` 启动时写），再扫 `/proc` 比命令行兜底
+  （早于 pidfile 那版启动的桥没有 pidfile）——**不要用 `pkill -f`**，理由见上。
+- **`/health` 不鉴权、`/ping` 鉴权**：前者回答「端口上有没有人」，后者回答「是不是我这把 token」。
+  桥在跑但 token 不对时**必须重启它**，否则每条命令都 401，现象看起来像「桥坏了」。
+- **`run_command` 只在注入了 `TAPPET_TERMUX_URL` / `_TOKEN` 时才注册**：没配这套的用户不该在
+  工具表里看到一个必然失败的工具（每轮占 schema 预算，还会把模型引向死路）。
+- **桥是无状态的**：每条命令一次独立的 `proot-distro login`（实测 200–430ms），cwd / 环境变量 /
+  后台进程都不保留。要跑常驻服务得自己 `nohup ... > 日志 2>&1 &`（v1 的长驻会话还没做）。
+- **没有 docker / systemd / iptables**（proot 不是真内核）。**AVF 那条路在这台机器上走不通**：
+  OnePlus 15T 的 gunyah 只支持 protected VM，而 Android 16 的「终端」要 non-protected VM，
+  启动即报 `Non-protected VMs are not supported on this device`。
+- 涉及四处：`tools/termux/`（桥 + 装配）、`agent/TermuxBridgeStore|Launcher`、设置页
+  「执行层 → Linux 环境」、插件 `run_command`（先在插件仓库提交再更新 submodule 指针）。
+  **debug 广播 `op TERMUX`** 可在无 UI 的情况下验证启动器 —— 但授权那一下仍要用户点。
 
 ### 几条不许碰的约束
 
@@ -468,6 +511,11 @@ adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
 # 提交任务（可连续多次，不需要 force-stop）；--ez logPayload true 才打印助手正文
 adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op TASK --es task '任务文本'"
 
+# 拉起手机上的 Linux 桥（等价于设置页「启用」；授权弹窗那一步仍要用户点）
+# 结果看 logcat 的 TappetNode: termux bridge: <状态>
+adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
+  -a com.tappet.app.debug.NODE --es op TERMUX
+
 # 直接驱动执行层原子动作（目标 App 在前台时用）
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action READ_SCREEN
@@ -533,6 +581,8 @@ tools/
   bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验与模型模态索引）
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
+  termux/setup.sh               一键装配手机上的 Linux（Termux 侧依赖 + Debian rootfs + 桥）
+  termux/bridge.py              桥本体：127.0.0.1 + token，把「跑一条命令」暴露成 HTTP
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
   dsh-phone/zen-session-fetch.mjs  launcher 的兄弟模块：只对 zen 主机补 x-opencode-session（有单测）
   dsh-phone/preset-diff.mjs     组合对比：把 phone profile 实际 mount 的行与 dsh 官方预置比一遍（移植用）
@@ -628,6 +678,13 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
 | `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ **必须 `useLegacyPackaging = true`** —— Android 10+ 的 W^X 不许应用执行自己可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。别被 `run-as …/rg --version` 骗了：那能跑是因为 run-as 的 SELinux 域还是 shell |
 | 想知道「dsh 官方预置有什么、我们缺什么」 | 用 launcher 同一套 API 把组合打出来比：`loadProfileDirectory` + `readProfilePatches` + `composeEntries`，然后对比 `preset-standard` 与 `preset-phone` 的 `config.plugins`（现成脚本可照 `docs/memory.md` §3 写，10 行） |
+| 设置页「Linux 环境」一直停在「正在启动…」 | Termux 被 ColorOS 冻了（端口在但连不上）→ 把 Termux 拉到前台，并在系统设置里放开它的后台运行 |
+| 启动器报 `NO_PERMISSION`（明明授权过） | `adb install -r` 清掉了 RUN_COMMAND 授权 → **重装用 `adb install -r -g`**，或重新点一次「授权并启用」 |
+| 桥的启动脚本「跑了但什么也没发生」（token 写了、日志没动、python 没起） | 多半是脚本被 `pkill -f` 自杀了（脚本文本在 argv 里）→ 别用 `pkill -f`，扫 `/proc` 并跳过自己 |
+| 脚本里 `python: command not found` 之类看不见 | RUN_COMMAND 的 stdout/stderr 没人接管 → 输出重定向到 `~/bridge.log` 再看 |
+| `run_command` 不出现在工具表里 | 没生成 token（未启用）或 env 没注入 → 设置页点「启用」后**重启 App** |
+| 桥在跑但每条命令都 401 | 是别的 token 起的桥（比如手动跑过 setup.sh）→ 点「重新连接」，让它按 pidfile 换掉 |
+| `run_command` 报连不上 | Termux 里的桥没在跑 → 打开 Termux 执行 `python ~/bridge.py`；日志在 `~/bridge.log` |
 
 ## 深度文档
 

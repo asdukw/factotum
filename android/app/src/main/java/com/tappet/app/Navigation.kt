@@ -10,6 +10,7 @@ import com.tappet.app.ui.settings.GmailConnectorScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.SettingsScreen
+import com.tappet.app.ui.settings.TermuxBridgeScreen
 
 @Composable
 fun MainNavigation() {
@@ -28,6 +29,7 @@ fun MainNavigation() {
             onBack = { backStack.removeLastOrNull() },
             onOpenProviders = { backStack.add(Providers) },
             onOpenConnectors = { backStack.add(Connectors) },
+            onOpenTermuxBridge = { backStack.add(TermuxBridge) },
           )
         }
         entry<Providers> {
@@ -50,6 +52,9 @@ fun MainNavigation() {
             providerId = key.providerId,
             onBack = { backStack.removeLastOrNull() },
           )
+        }
+        entry<TermuxBridge> {
+          TermuxBridgeScreen(onBack = { backStack.removeLastOrNull() })
         }
       },
   )

@@ -89,18 +89,25 @@ jobs:
           set -euo pipefail
           RG=out/bin/rg
           NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          "$NDK_BIN/llvm-readelf" -h "$RG" | grep -q "AArch64"
+          echo "workspace=$PWD"; ls -la out/bin/ || true
+          echo "readelf=$NDK_BIN/llvm-readelf"; ls -la "$NDK_BIN/llvm-readelf" || true
+          READELF="$NDK_BIN/llvm-readelf"
+          [ -x "$READELF" ] || READELF="$(command -v llvm-readelf || command -v readelf)"
+          echo "用 $READELF"
+          echo "--- ELF 头 ---"
+          "$READELF" -h "$RG"
           echo "--- 动态依赖 ---"
-          "$NDK_BIN/llvm-readelf" -d "$RG" | grep NEEDED
+          "$READELF" -d "$RG" | grep -E "NEEDED|RUNPATH|RPATH" || true
+          # 架构必须是 AArch64。
+          "$READELF" -h "$RG" | grep -q "AArch64" || { echo "::error::产物不是 AArch64"; exit 1; }
           # 只允许 bionic 自带的那几个；多一个都不行（多出来的那个 .so 在设备上不存在）。
-          if "$NDK_BIN/llvm-readelf" -d "$RG" | grep -qE "NEEDED.*lib(pcre2|gcc|android-support)"; then
+          if "$READELF" -d "$RG" | grep -qE "NEEDED.*lib(pcre2|gcc|android-support)"; then
             echo "::error::产物带了额外的动态依赖，设备上 exec 会失败"
             exit 1
           fi
-          strip_size=$(stat -c%s "$RG")
-          echo "rg = $strip_size bytes"
-          sha256sum "$RG" > rg-aarch64-linux-android.sha256
+          echo "rg = $(stat -c%s "$RG") bytes"
           cp "$RG" rg-aarch64-linux-android
+          sha256sum rg-aarch64-linux-android > rg-aarch64-linux-android.sha256
           cat rg-aarch64-linux-android.sha256
 
       - name: 发 release 产物

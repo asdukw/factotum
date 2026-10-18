@@ -302,11 +302,20 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   `NodeRuntimeProfileTest` 钉住了这三处。
 - 插件改动同样要 `bundle-dsh.ps1` + 重装 APK 才生效。新连接器（Outlook 等）= 新的 Keystore
   别名 + 桥里加一个分支 + 新的插件，**不要复用 Gmail 的别名**。
-- **客户端 id 是预置在包里的**（`connector/ConnectorDefaults.kt`）：目标是「装完点一下就授权」，
-  用户不必自己去 Google Cloud 注册应用。**这不违反「包里不能有密钥」** —— 客户端 id 不是秘密
-  （公共客户端 + PKCE，**我们根本不申请客户端密码**），本来就要分发给每个安装。
-  **预置的是 id，不是密钥**；哪天有人想顺手预置个别的什么，先回来读这一行。
-  留空则退回「要求用户自己填」。
+- **客户端 id 与密码是预置的，但走构建期注入、不入库**（`ConnectorDefaults.kt` 读 `BuildConfig`）：
+  本地读 `android/local.properties` 的 `tappet.connector.gmailClientId` / `...gmailClientSecret`，
+  发布由 `release.yml` 从 GitHub Actions secret 注入。目标是「装完点一下就授权」，
+  用户不必自己去 Google Cloud 注册应用。留空则退回「要求用户自己填」。
+- **为什么不入库**：**GitHub 的 push protection 把 Google OAuth 的 client id 与 client secret
+  都判成密钥，对管理员一样拦**（实测：`GH013 Repository rule violations ... Push cannot contain
+  secrets`，连 `master` 直推也拦）。私有仓库解决不了 —— 值要参与换码就必须进二进制。
+  注意这是**平台规则**，不是「它们是机密」：客户端 id/密码对桌面应用是公开标识
+  （Google 原话：桌面应用是公共客户端、保不住秘密），真正的保护是 PKCE。
+  `tools/check-sensitive.ps1` 认不出这两个形状（它的 Google 模式是 API key 的 `AIza…`），
+  所以**别把它的「未发现密钥」当成可以推**——远端还有一道。
+- **`master` 的 Ruleset 管理员确实能直推**（bypass actor 是 `RepositoryRole 5` = Maintain，
+  admin 覆盖它）。实测输出是 `Bypassed rule violations ...`。被拒时先看清楚是哪一道：
+  **PR 规则**还是 **push protection** —— 两者都报 "repository rule violations"，很容易看错。
 - **Google 的设备码流程不支持 Gmail 权限**（只支持 Drive / YouTube / Sign-In），
   所以走的是**回环重定向** `http://127.0.0.1:<随机端口>`。好处：不改 Manifest、不注册签名
   SHA-1、不绑包名 —— 预置一个 client id 就能对所有人生效。
@@ -365,7 +374,9 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 
 **连接器又是一组**：`tappet_connector_settings`（非密 prefs）、`tappet_connector_secret-<id>`
 （SecretVault 的 prefsName）、`tappet-connector-<id>-v1`（Keystore 别名），以及
-`<id>_client_id` / `<id>_account` 两个键，**都带着连接器 id**。改名 = 设备上已完成的 OAuth
+`<id>_client_id` / `<id>_client_secret` / `<id>_account` 三个键，**都带着连接器 id 且带下划线**
+（拼错过一次：`connectorId + "client_id"` 得到的是 `gmailclient_id`，与文档写的对不上 ——
+现在常量本身带前导下划线，别去掉）。改名 = 设备上已完成的 OAuth
 授权静默失效，表现是「设置页说连过，但三个邮件工具全报未连接」。
 
 组件名统一 `com.tappet.app/...`；`OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` 读
@@ -531,6 +542,9 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
 | 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
 | 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Ptappet.abis=x86_64` |
+| 推送被拒 `GH013 Repository rule violations` | 先分清是 PR 规则还是 **push protection**（两者措辞一样）→ 后者是 GitHub 认为提交里有密钥，点它给的 unblock 链接或把值改成构建期注入 |
+| 发布出的包连不上 Gmail | `release.yml` 的 `TAPPET_GMAIL_CLIENT_ID/SECRET` 两个 secret 没配 → 构建期注入是空的，包里就没有预置值 |
+| 授权报 `client_secret is missing` | Google 文档把这项标「Optional」而令牌端点实际要求 → 必须发（桌面应用类型与 Android/iOS 不同） |
 | 同意页写着「读取、撰写和发送你的邮件」 | 正常：申请的是 `gmail.modify`（一次要齐，避免以后重授权），但工具面目前只有只读三个 |
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
 | 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |

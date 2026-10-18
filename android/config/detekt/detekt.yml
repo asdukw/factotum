@@ -16,6 +16,10 @@ complexity:
     # 默认 11。服务类 / DAO / 状态机天然是「一个类一组动作」，为凑数拆类只会绕远路。
     thresholdInFiles: 20
     thresholdInClasses: 20
+    # 与 thresholdInClasses 取同一个值：`object` 在本仓库几乎都是「存储门面 / 单例服务」
+    # （ConnectorStore、DeviceBridgeServer、NodeRuntime……），它们的成员就是一组读写动作。
+    # 拆开只会把「一个存储命名空间」的常量与函数散到多处 —— 而那正是最不该散的东西。
+    thresholdInObjects: 20
 naming:
   FunctionNaming:
     # Compose 约定 @Composable 用 PascalCase（与 ktlint 侧同一取舍，见 android/.editorconfig）。

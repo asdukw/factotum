@@ -7,7 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/asdukw/tappet)](https://github.com/asdukw/tappet/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-它把手机交给模型：读屏、点按、输入、滑动、启动应用 —— 一共 9 个通用原语，
+它把手机交给模型：读屏、点按、输入、滑动、启动应用 —— 一共 10 个通用原语，
 模型自己组合它们完成「打开计算器算 37×48」这类任务，而不是给每个 App 写一套脚本。
 agent 运行时是内嵌在 App 里的 Node 24 + dsh（DeepSeek Harness）phone profile，
 执行层走无障碍服务（控件树优先、截图兜底），两者经本机回环上的 HTTP 桥连接。
@@ -64,7 +64,8 @@ cd android
 | agent runtime：内嵌 Node 24 + dsh phone profile，stdio JSON-RPC 驱动，可连续跑任务 | 真机验证 |
 | 聊天界面（Compose：Markdown / 工具卡 / 思考折叠 / 流式事件 / 停止保留半截 / 崩溃恢复） | 真机验证 |
 | LLM 接入：设置页自填端点与 key，预选四家 + 自定义 | 部分验证 —— 只有 OpenCode Go 用真 key 跑通过 |
-| 设备工具插件（`dsh-plugin-android-tools`，9 个通用原语） | 独立公开仓库，见 [AGENTS.md](AGENTS.md) |
+| 设备工具插件（`dsh-plugin-android-tools`，10 个通用原语） | 独立公开仓库，见 [AGENTS.md](AGENTS.md) |
+| 邮箱连接器（Gmail，**只读**：列邮件 / 检索 / 读正文） | PC 侧单测与装配已验证，**真机未验**（需要你自己的 Google Cloud OAuth 客户端） |
 
 ## 工作原理
 
@@ -74,13 +75,24 @@ Compose UI ── Room/SQLCipher 落库
     ▼
 内嵌 Node 24（宿主机进程内单实例）
     └─ dsh phone profile
-         └─ dsh-plugin-android-tools（模型能看见的 9 个工具）
+         ├─ dsh-plugin-android-tools（模型能看见的 10 个设备工具）
+         │    │  HTTP POST /action（127.0.0.1 + 每进程随机 token）
+         │    ▼
+         │  DeviceBridgeServer（App 内）
+         │    ▼
+         │  AccessibilityService：控件树优先、截图兜底
+         │
+         └─ dsh-plugin-gmail（用户连上邮箱后另有 3 个只读邮件工具）
               │  HTTP POST /action（127.0.0.1 + 每进程随机 token）
               ▼
-        DeviceBridgeServer（App 内）
+            ConnectorBridgeServer（App 内）—— 只发一个短命的 access token
               ▼
-        AccessibilityService：控件树优先、截图兜底
+            Gmail API（用户自己的邮箱，只读）
 ```
+
+连接器这条**不经过无障碍**：无障碍被关掉时设备工具全失效，而邮件工具照常可用。
+代价是它是仓库里第一条直接读云端个人数据的通道，所以边界与隐私闸门单独写了一份：
+[docs/email-connector.md](docs/email-connector.md)。
 
 几个刻意的选择：
 
@@ -102,6 +114,9 @@ Compose UI ── Room/SQLCipher 落库
   构建期注入那条路已删除（`AGENT_API_KEY` 这个 BuildConfig 字段不存在了）。
 - **屏幕与聊天正文不落日志**：日志只记计数 / 类名 / 坐标 / 错误码；读屏内容只出现在
   给模型的工具结果里。发往云端的是**你自己配置的那个端点**。
+- **邮箱连接器首版只读，且本机不保存邮箱副本**：只申请 `gmail.readonly`（没有 `gmail.send` /
+  `gmail.modify`），不落盘、不落日志、不做后台轮询 —— 所以「卸载后 Tappet 里还留着你的邮件」
+  在结构上不可能发生。refresh token 进 Keystore 封装的 `SecretVault`，插件只拿短命的 access token。
 - **会话库** `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：
   **卸载即永久丢失，外部不可解、不可拷**。
 - 发布前自检：`tools\check-sensitive.ps1`（扫工作树 + 全部 git 历史，可选连 APK 一起扫；

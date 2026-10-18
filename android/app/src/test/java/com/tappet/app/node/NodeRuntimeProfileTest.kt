@@ -92,6 +92,28 @@ class NodeRuntimeProfileTest {
   }
 
   @Test
+  fun `long-term memory is wired`() {
+    assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
+    val text = profile.readText()
+
+    // dsh 没有独立的「记忆」插件：长期记忆 = 指令文件（AGENTS.md 那一套）。
+    // 两条行缺一不可 —— agent-instructions 负责**读**进上下文，tool-fs 负责让模型**写**。
+    // 两条都同样被 dsh-web-app 在宿主层禁掉，且都必须在宿主层重新启用（放进 preset 不管用）。
+    assertTrue(
+      "profile 没有在宿主层启用 agent-instructions —— 记忆文件读不进上下文",
+      text.contains("- id: agent-instructions\n  disabled: false"),
+    )
+    assertTrue(
+      "profile 没有启用 tool-fs —— 模型没有写记忆文件的手段",
+      text.contains("- id: tool-fs\n  disabled: false"),
+    )
+    assertTrue(
+      "agent-instructions 必须有 maxBytes（默认没有兜底值，缺了整棵根 mount 不起来）",
+      text.contains("maxBytes:"),
+    )
+  }
+
+  @Test
   fun `search endpoints are well formed`() {
     // 基址不含 /messages：dsh 的搜索 provider 自己追加。写成带 /messages 的基址会得到
     // `.../messages/messages`，报出来是一个 404，看不出是配置问题。

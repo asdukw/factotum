@@ -48,6 +48,10 @@ enum class LlmPreset(
         defaultModel = "deepseek-v4.1-flash",
         thinkingFormat = "deepseek",
         zenSessionHeader = true,
+        // 真机实测（2026-10-18）：/zen/go/v1/messages + web_search_20250305 能搜
+        // （web_search_requests: 1，input ~13k）。同一个 claude-haiku-5-5 在 zen 的
+        // /responses 上是 400 ModelProtocolUnsupported —— 所以走 Anthropic 形状更宽。
+        search = SearchEndpoint(baseUrl = "https://opencode.ai/zen/go/v1", model = "claude-haiku-5-5"),
       ),
     verified = true,
   ),
@@ -74,6 +78,8 @@ enum class LlmPreset(
         baseUrl = "https://api.anthropic.com",
         defaultModel = "claude-sonnet-5",
         thinkingFormat = null,
+        // 形状按官方文档写，**没有用真 key 跑过**（本仓库手上只有 zen 的 key）。
+        search = SearchEndpoint(baseUrl = "https://api.anthropic.com/v1", model = "claude-haiku-5-5"),
       ),
   ),
   DeepSeek(
@@ -86,6 +92,9 @@ enum class LlmPreset(
         baseUrl = "https://api.deepseek.com",
         defaultModel = "deepseek-flash",
         thinkingFormat = "deepseek",
+        // dsh 的搜索 provider 自带这组默认值（它本来就是给 DeepSeek 写的），
+        // 所以这里只是把它显式写出来 —— 仍然**没有用真 key 跑过**。
+        search = SearchEndpoint(baseUrl = "https://api.deepseek.com/anthropic/v1", model = "deepseek-v4-flash"),
       ),
   ),
   OpenRouter(
@@ -138,6 +147,29 @@ enum class LlmPreset(
     val zenSessionHeader: Boolean = false,
     /** 该端点是否支持 Responses API 与 Chat Completions 两种调用风格（界面「Response API」开关）。 */
     val supportsResponseApi: Boolean = false,
+    /**
+     * 联网搜索（`web_search` 工具）走的 Anthropic 兼容端点；null = 该提供商没有**验证过**的。
+     *
+     * 与 [api] / [baseUrl] 是**两套独立的东西**：聊天用哪套协议，跟搜索用哪套协议没有关系。
+     * zen 就是例子 —— 聊天走 `openai-completions`，而它的原生 `web_search` 在
+     * Anthropic 兼容的 `/messages` 上（`/responses` 那条反而把 claude 系模型挡在协议门外）。
+     * 所以这里必须单独声明，不能从 [api] 推。
+     */
+    val search: SearchEndpoint? = null,
+  )
+
+  /**
+   * 联网搜索的端点与模型。基址**不含** `/messages` —— dsh 的搜索 provider 自己追加。
+   *
+   * 走的是「模型自带的服务器端搜索」而不是某家搜索 API：Bing Web Search API 已退役、
+   * Google Custom Search JSON API 已对新客户关闭，而模型服务商自己的端点就带这个能力
+   * —— 零新增厂商、零新增凭据（用的还是同一把 key）。见 docs/web-search.md。
+   */
+  data class SearchEndpoint(
+    /** Anthropic 兼容基址，provider 会追加 `/messages`。 */
+    val baseUrl: String,
+    /** Anthropic 格式的模型名。**必须是实测会真的搜索的那个** —— 见 docs/web-search.md 的「真搜门」。 */
+    val model: String,
   )
 
   val api: String

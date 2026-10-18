@@ -5,6 +5,32 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
+## [未发布]
+
+### 新增
+
+- **联网搜索（`web_search`）**：接的是 **dsh 自带的 web 能力 seam**（`dsh-web` + `dsh-tool-web`
+  + `dsh-web-search-deepseek`），不是另写一个插件 —— 模型拿到 `web_search` 与 `web_fetch`
+  两个工具，附提示词指引、来源上限、超时，网页正文被标成**外部不可信数据**。
+- **不接搜索 API**：Bing Web Search API 已退役（替代品要 Azure 订阅）、Google Custom Search
+  JSON API 已对新客户关闭。走模型服务商自己的服务器端搜索：**零新增厂商、零新增凭据**
+  （用的还是用户已经配好的那把 key）。
+- **换协议比换模型划算**：zen 的 Anthropic 兼容端点 `/zen/go/v1/messages` 支持原生
+  `web_search_20250305`，同一个 `claude-haiku-5-5` 在 zen 的 `/responses` 上是被协议门挡掉的。
+  实测一次搜索 input 约 13k token，比 `/responses` 那条（17k–44k）便宜。
+- 没有可用搜索端点的提供商（OpenRouter / 自定义）**工具照样挂着**，每次调用回结构化的
+  `WEB_PROVIDER_UNAVAILABLE` —— 与连接器「没配就回 `NOT_CONNECTED`」同一条路数。
+
+### 已知限制
+
+- **「接受工具」不等于「会真的搜索」**：网关不校验模型是否真支持宿主 `web_search`。
+  实测 zen 的 `deepseek-v4.1-flash` 收下工具、回 200，然后一次都没搜（`input_tokens` 只有 50）
+  —— 所以搜索模型是**单独指定**的（OpenCode Go 用 `claude-haiku-5-5`），不是当前聊天模型。
+- **Anthropic 官方端点与 DeepSeek 官方端点未验**（没有对应的 key），形状按官方文档写。
+- 一次搜索约 13k input token（zen + `claude-haiku-5-5`）。
+
+边界、两道门的实测与真机验证步骤见 [docs/web-search.md](docs/web-search.md)。
+
 ## [0.5.0] - 2026-10-18
 
 ### 新增

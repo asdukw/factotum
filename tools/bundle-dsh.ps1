@@ -41,6 +41,9 @@ node (Join-Path $src "patch-runtime.mjs") (Join-Path $cache "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "patch-runtime.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
 Copy-Item -Force (Join-Path $src "launcher.mjs") $cache
+# launcher 的兄弟模块（zen 会话头补丁），必须一起进运行时 —— 漏了会在设备上以
+# 「Cannot find module」起不来，而那是最难查的一类错。
+Copy-Item -Force (Join-Path $src "zen-session-fetch.mjs") $cache
 
 # profile 先过一遍**真解析器**再打包：overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node
 # 与宿主同进程 —— 报错就是整个 App 崩。CI 上没有 dsh 运行时跑不了这一步，所以关口放在这里。
@@ -63,6 +66,7 @@ $plugins = @(
   @{ Package = "dsh-plugin-android-tools"; Src = "plugins/android-tools" }
   @{ Package = "dsh-android-attachments"; Src = "android-attachments" }
   @{ Package = "dsh-plugin-gmail"; Src = "plugins/gmail" }
+  @{ Package = "dsh-plugin-user-questions"; Src = "plugins/user-questions" }
 )
 
 # chat-tools 已下线：从持久缓存里删掉，避免旧包被 tar 通配符重新打进运行时。
@@ -84,11 +88,24 @@ foreach ($plugin in $plugins) {
   }
   $pluginOut = Join-Path $cache "node_modules/$($plugin.Package)"
   New-Item -ItemType Directory -Force -Path $pluginOut | Out-Null
+  # cordis.patch.yml 是**可选**的（有的插件需要自带的 patch 层，有的不需要）。
+  # 早先这里无条件拷三个文件，结果一个没有那个文件的插件会让装配整个失败 ——
+  # 报的是「找不到路径」，看着像插件缺文件，其实是脚本假设太强。
   foreach ($file in "package.json", "index.mjs", "cordis.patch.yml") {
-    Copy-Item -Force (Join-Path $pluginDir $file) $pluginOut
+    $source = Join-Path $pluginDir $file
+    if (Test-Path -LiteralPath $source) { Copy-Item -Force $source $pluginOut }
   }
 }
 
+# 顶掉真的 @vscode/ripgrep：它**没有 android 平台产物**（12 个 optional dep 只有
+# darwin / win32 / linux），而 dsh-tool-fs-search 靠 `(await import("@vscode/ripgrep")).rgPath`
+# 拿二进制 —— 不换掉的话模型侧的 glob / grep 一调用就炸。桩包只做一件事：把 rgPath 指向
+# 我们交叉编译的那份（tools/fetch-rg.ps1 拉进 jniLibs，NodeRuntime 注入 TAPPET_RG_PATH）。
+$rgStub = Join-Path $cache "node_modules/@vscode/ripgrep"
+if (Test-Path -LiteralPath $rgStub) { Remove-Item -LiteralPath $rgStub -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $rgStub | Out-Null
+Copy-Item -Force (Join-Path $src "ripgrep-stub/package.json") $rgStub
+Copy-Item -Force (Join-Path $src "ripgrep-stub/index.js") $rgStub
 $assets = Split-Path -Parent $zipOut
 New-Item -ItemType Directory -Force -Path $assets | Out-Null
 if (Test-Path -LiteralPath $zipOut) { Remove-Item -LiteralPath $zipOut }
@@ -110,5 +127,22 @@ Write-Host "packing $zipOut ..."
 $head = [System.IO.File]::ReadAllBytes($zipOut)[0..3]
 if ($head[0] -ne 0x50 -or $head[1] -ne 0x4B -or $head[2] -ne 0x03 -or $head[3] -ne 0x04) {
   throw "打出来的不是 zip（头四字节不是 PK）：$zipOut"
+}
+
+# 再验条目名的分隔符：**必须是正斜杠**。
+# Windows PowerShell 5.1（.NET Framework）的 ZipFile::CreateFromDirectory 会按
+# Path.DirectorySeparatorChar 写成 ``，而那是**不合规的 zip**：App 侧的 ZipInputStream
+# 会把它当成一个扁平文件名，解出来是 `node_modules.bincordis` 这样的文件而不是目录树，
+# 于是运行时起不来，报的是 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'`
+# —— 看着像依赖没装，其实是包写坏了。pwsh 7（.NET Core）没这个问题，所以「在谁家 shell 下跑的」
+# 决定了产物对不对；这条检查就是为了不让它取决于这个。实测踩过一次（2026-10-18）。
+$archive = [System.IO.Compression.ZipFile]::OpenRead($zipOut)
+try {
+  $bad = $archive.Entries | Where-Object { $_.FullName.Contains([char]92) } | Select-Object -First 1
+  if ($null -ne $bad) {
+    throw "zip 条目名用了反斜杠（$($bad.FullName)）—— 这个包在设备上解不出目录树。请用 pwsh 7 重跑本脚本。"
+  }
+} finally {
+  $archive.Dispose()
 }
 Write-Host "done: $([math]::Round((Get-Item $zipOut).Length/1MB,1))MB"

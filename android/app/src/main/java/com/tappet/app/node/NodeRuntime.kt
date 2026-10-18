@@ -12,6 +12,7 @@ import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
 import com.tappet.app.bridge.ConnectorBridgeServer
 import com.tappet.app.bridge.DeviceBridgeServer
+import com.tappet.app.bridge.UserQuestionBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -453,6 +454,18 @@ object NodeRuntime : NodeLineListener {
     "TAPPET_LLM_KEY_" + preset.id.uppercase().replace('-', '_')
 
   /**
+   * 搜索 provider 该从哪个 env 读密钥。
+   *
+   * 没有可用搜索端点的提供商（`LlmPreset.Endpoint.search == null`）返回一个**解析不到的
+   * 变量名**：seam 判断提供方可用性的办法就是「密钥在不在」，于是 `web_search` 会以
+   * `WEB_PROVIDER_UNAVAILABLE` 失败 —— 与连接器「没配就回 NOT_CONNECTED」同一条路数。
+   * 不这么做的话，它会拿聊天那把 key 去打 profile 里的兜底端点（api.deepseek.com），
+   * 报出来是 401，看着像密钥填错了。
+   */
+  private fun webSearchKeyEnv(preset: LlmPreset): String =
+    if (preset.endpoint.search == null) "TAPPET_WEB_SEARCH_UNSUPPORTED" else "TAPPET_LLM_KEY"
+
+  /**
    * 写重载用的**非密配置**（env 名 → 值）。密钥不进来：只写一个指向预置 key env 的引用。
    * launcher 在每次 mount 前读它并覆盖 process.env —— 同一个 Node 进程里这是唯一能改配置的路。
    */
@@ -476,6 +489,9 @@ object NodeRuntime : NodeLineListener {
         )
         put("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "")
         put("TAPPET_LLM_KEY_FROM", keyEnvName(config.preset))
+        put("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
+        put("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
+        put("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))
       }
     File(home, "runtime-config.json").writeText(payload.toString())
   }
@@ -526,6 +542,21 @@ object NodeRuntime : NodeLineListener {
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
     Os.setenv("TAPPET_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("TAPPET_LLM_SESSION", persistentSessionId(app), true)
+    // 联网搜索（模型可见的 web_search 工具）：dsh 自带的 web seam + dsh-web-search-deepseek
+    // provider（Anthropic 兼容 Messages + 原生 web_search 服务器工具）。端点与模型按当前
+    // 提供商注入 —— 注意这与聊天用的 api / baseUrl 是**两套**，不能互相推（zen 聊天走
+    // openai-completions，搜索走 /messages）。见 docs/web-search.md。
+    Os.setenv("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty(), true)
+    Os.setenv("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty(), true)
+    Os.setenv("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset), true)
+    // 模型的 glob / grep（dsh-tool-fs-search）要 exec 的 ripgrep。它没有 android 产物，
+    // 我们交叉编译了一份（.github/workflows/rg.yml），经 tools/fetch-rg.ps1 与
+    // bundle-dsh.ps1 打进运行时 zip，解压后在 files/dsh-runtime/rg 上加了可执行位。
+    // 顶掉真 @vscode/ripgrep 的桩包读这个变量（tools/dsh-phone/ripgrep-stub）。
+    //
+    // **不要改用 jniLibs / nativeLibraryDir**：现代 AGP 默认 extractNativeLibs=false，
+    // 原生库直接从 APK mmap，那个目录下没有文件可 exec（实测 `lib/arm64/` 是空的）。
+    Os.setenv("TAPPET_RG_PATH", File(app.applicationInfo.nativeLibraryDir, "librg.so").absolutePath, true)
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)
@@ -542,6 +573,11 @@ object NodeRuntime : NodeLineListener {
     // NOT_CONNECTED —— 「工具在、但会如实报错」比「工具随配置忽隐忽现」对模型更可预测。
     Os.setenv("TAPPET_CONNECTOR_BRIDGE_URL", ConnectorBridgeServer.start(app), true)
     Os.setenv("TAPPET_CONNECTOR_BRIDGE_TOKEN", ConnectorBridgeServer.authToken(), true)
+    // 第三个桥：`ask_user_question` 的问题进 UI、答案回插件（见 UserQuestionBridgeServer 的
+    // 类注释）。它同样只监听 127.0.0.1 + 每进程随机 token。**没配这个桥时插件会让路**，
+    // 问题交给下一个 answerer —— 而不是编一个答案。
+    Os.setenv("TAPPET_QUESTION_BRIDGE_URL", UserQuestionBridgeServer.start(), true)
+    Os.setenv("TAPPET_QUESTION_BRIDGE_TOKEN", UserQuestionBridgeServer.authToken(), true)
     // 第一次 mount 用的非密配置；重载时会重写这个文件。
     writeRuntimeConfig(app, config)
   }

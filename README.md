@@ -1,37 +1,46 @@
-# Tappet
+<p align="center">
+  <img src="android/app/src/main/res/drawable-nodpi/tappet_mascot.jpg" width="120" alt="Tappet mascot">
+</p>
 
-> 运行在 Android 上的通用 mobile agent：LLM 通过工具调用操作手机界面完成任务，
-> 不做单一 App 的专用适配。
+<h1 align="center">Tappet</h1>
 
-[![CI](https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg)](https://github.com/asdukw/tappet/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/asdukw/tappet)](https://github.com/asdukw/tappet/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <em>运行在 Android 上的通用 mobile agent：LLM 通过工具调用操作手机界面完成任务，不做单一 App 的专用适配。</em>
+</p>
 
-它把手机交给模型：读屏、点按、输入、滑动、启动应用 —— 一共 10 个通用原语，
+<p align="center">
+  <a href="https://github.com/asdukw/tappet/actions/workflows/ci.yml"><img src="https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/asdukw/tappet/releases"><img src="https://img.shields.io/github/v/release/asdukw/tappet" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+</p>
+
+它把手机交给模型：读屏、点按、长按、输入、滑动、启动应用 —— 一共 10 个通用原语，
 模型自己组合它们完成「打开计算器算 37×48」这类任务，而不是给每个 App 写一套脚本。
 agent 运行时是内嵌在 App 里的 Node 24 + dsh（DeepSeek Harness）phone profile，
 执行层走无障碍服务（控件树优先、截图兜底），两者经本机回环上的 HTTP 桥连接。
 
+v0.5.0 起它多了**第二条获取信息的通道**：连接器（首版 Gmail，只读），不经过无障碍，
+直接读用户自己云端账号里的数据。
+
 > [!IMPORTANT]
-> 装完要做两件事才能用：**填自己的 LLM API key**（设置页，支持 OpenAI / Anthropic /
-> DeepSeek / OpenCode Go / 自定义），**开启无障碍服务**（ColorOS 首次会弹「保持开启」，
-> 不点可能被关掉）。装之前请读 [v0.1.0 的发布说明](docs/releases/v0.1.0.md) ——
-> 里面写清了**哪些路径真机验证过、哪些只是「配置对得上」**。
+> 装完要做三件事才能用：**填自己的 LLM API key**（设置 → 提供商，预选 OpenAI / Anthropic /
+> DeepSeek / OpenCode Go / OpenRouter，也可自定义端点）、**开启无障碍服务**（只能由你手动开，
+> ColorOS 首次会弹「保持开启」，不点可能被关掉）、**（可选）连接 Gmail**（设置 → 连接器）。
+> 哪些路径真机验证过、哪些只是「配置对得上」，看下面的能力表与对应版本的发布说明。
 
 ## 快速开始
 
 ### 装现成的（arm64-v8a）
 
-[Releases](https://github.com/asdukw/tappet/releases) 里有签名 APK 与 `.sha256`：
+[Releases](https://github.com/asdukw/tappet/releases) 里有签名 APK、`.sha256` 与发布说明：
 
 ```bash
-adb install -r tappet-v0.3.0-arm64-v8a.apk
-
-# 可选：确认包没被换过（证书指纹应与这里一致）
-apksigner verify --print-certs tappet-v0.3.0-arm64-v8a.apk
-# SHA-256: 746ed551c2b70a6957bf43c4aa8ecba0308f62556390f38045a5ba1b54f504dd
+adb install -r tappet-v0.5.0-arm64-v8a.apk
+sha256sum -c tappet-v0.5.0-arm64-v8a.apk.sha256   # 可选：确认包没被换过
+apksigner verify --print-certs tappet-v0.5.0-arm64-v8a.apk
 ```
 
+`adb install -r` 会摘掉已启用的无障碍服务，装完重新开一次即可。
 APK 由 CI 在 `v*` tag 上用 release keystore 签名；密钥不参与构建，
 包内不含、也不可能含编译进去的 API key。
 
@@ -51,8 +60,9 @@ cd android
 ```
 
 两个装配脚本按 pinned 版本现拉运行时（产物不入库），代理跟随 `HTTPS_PROXY` / `HTTP_PROXY`，
-没有就走直连。**真机安装不要走 Gradle 的自动安装通道** —— ColorOS 会拦全新安装，
-挂几分钟后失败；正确流程是产包后手动 `adb install -r`，再单独跑测试任务。
+没有就走直连。跑模拟器要先取 x86_64 的 libnode 并切 ABI（`.\tools\fetch-libnode.ps1 -Abi x86_64`
++ `"-Ptappet.abis=x86_64"`，**用完切回 arm64**）。**真机安装不要走 Gradle 的自动安装通道** ——
+ColorOS 会拦全新安装，挂几分钟后失败；正确流程是产包后手动 `adb install -r`，再单独跑测试任务。
 细节与重装注意事项见 [AGENTS.md](AGENTS.md)。
 
 ## 现在能做什么
@@ -60,12 +70,15 @@ cd android
 | 能力 | 状态 |
 |---|---|
 | 会话 / 消息 / 工具调用持久化（Room + SQLCipher） | 真机验证 |
-| 无障碍执行层原子动作（读屏 / 截图 / 点按 / 长按 / 输入 / 按键 / 启动应用 / 滑动） | 真机验证（一加 15T，ColorOS） |
-| agent runtime：内嵌 Node 24 + dsh phone profile，stdio JSON-RPC 驱动，可连续跑任务 | 真机验证 |
+| 无障碍执行层原子动作（读屏 / 截图 / 点按 / 长按 / 输入 / 按键 / 启动应用 / 滑动） | 真机验证（一加 15T / ColorOS） |
+| agent runtime：内嵌 Node 24 + dsh phone profile，stdio JSON-RPC，可连续跑任务 | 真机验证 |
 | 聊天界面（Compose：Markdown / 工具卡 / 思考折叠 / 流式事件 / 停止保留半截 / 崩溃恢复） | 真机验证 |
-| LLM 接入：设置页自填端点与 key，预选四家 + 自定义 | 部分验证 —— 只有 OpenCode Go 用真 key 跑通过 |
+| 设置页与提供商管理（启停互斥、密钥逐家隔离、模型从端点拉取或手填、按需重载运行时） | UI 与数据迁移真机验证；**真机上切换模型并发任务只在模拟器验过** |
+| LLM 接入：5 个预选 + 自定义端点 | 部分验证 —— 只有 OpenCode Go 用真 key 跑通过 |
+| 视觉路径（空树时 `capture_frame` → `tap_target`，坐标是帧的图像像素） | 坐标换算有单测钉住；**模型在图上估坐标准不准未在真机验证** |
 | 设备工具插件（`dsh-plugin-android-tools`，10 个通用原语） | 独立公开仓库，见 [AGENTS.md](AGENTS.md) |
-| 邮箱连接器（Gmail，**只读**：列邮件 / 检索 / 读正文） | PC 侧单测与装配已验证，**真机未验**（需要你自己的 Google Cloud OAuth 客户端） |
+| 邮箱连接器（Gmail，**只读** 3 个工具：列邮件 / 检索 / 读正文） | 真机验证（完整授权流程 + 真实读到邮件），**只在一个账号上验过** |
+| 联网搜索（`web_search` / `web_fetch`，走模型服务商自带的服务器端搜索） | 真机验证（一加 15T：模型真的调用并拿到带来源的答案）；仅 OpenCode Go 实测可用 |
 
 ## 工作原理
 
@@ -100,8 +113,10 @@ Compose UI ── Room/SQLCipher 落库
   换 ROM 只加一个 `OemProfile`，不写 App 专用逻辑 —— QQ / 微信只是试验任务的目标 App。
 - **stdout 是协议独占**：`session.event` / `session.status` 走 stdout，诊断一律 stderr，
   否则 JSON-RPC 会被日志污染。
-- **不做热重载**：设置页改完**下次启动生效**（内嵌 Node 的 env 与 profile 只在启动时读一次，
-  重拉进程会把整个 App 带崩）。
+- **配置切换走运行时重载，不是重启进程**：切提供商 / 模型时宿主写一份**非密**的运行时配置，
+  让 launcher 卸载整棵 cordis 根后重新 mount（实测约 0.2–1 秒，同一 pid），密钥不落盘。
+  只有**换 API key** 需要重启 App —— key 只在 Node 启动时读入 env。
+- **每轮只做一个原子动作**：工具描述统一要求「先读屏、操作后再确认」，避免模型连着盲点。
 
 ## 隐私与密钥
 
@@ -114,9 +129,17 @@ Compose UI ── Room/SQLCipher 落库
   构建期注入那条路已删除（`AGENT_API_KEY` 这个 BuildConfig 字段不存在了）。
 - **屏幕与聊天正文不落日志**：日志只记计数 / 类名 / 坐标 / 错误码；读屏内容只出现在
   给模型的工具结果里。发往云端的是**你自己配置的那个端点**。
-- **邮箱连接器首版只读，且本机不保存邮箱副本**：只申请 `gmail.readonly`（没有 `gmail.send` /
-  `gmail.modify`），不落盘、不落日志、不做后台轮询 —— 所以「卸载后 Tappet 里还留着你的邮件」
-  在结构上不可能发生。refresh token 进 Keystore 封装的 `SecretVault`，插件只拿短命的 access token。
+- **视觉路径的感知面更大**：树不可读时改走截图，交给模型的是**整屏图像**（含屏幕上的一切正文），
+  比结构化读屏大得多 —— 这一步就是把屏幕内容发给模型服务商。它和读屏 payload 同级：
+  只进给模型的工具结果，不落日志、不落盘。
+- **邮箱连接器本机不保存邮箱副本**：不落盘、不落日志、不做后台轮询 ——
+  所以「卸载后 Tappet 里还留着你的邮件」在结构上不可能发生。refresh token 进 Keystore 封装的
+  `SecretVault`，插件只拿短命的 access token，从不接触长期凭据。
+- **授权面比能力面宽（刻意的）**：申请的是 `gmail.modify`（读 + 写 + 发），而工具面**只有只读三个**。
+  理由是 Google 对已安装应用不支持增量授权，扩权要所有已连接用户重走同意页，所以一次要齐。
+  代价说清楚：只读 scope 下「插件被攻破也发不出邮件」这条边界是 **Google 兜的**，
+  换成 `gmail.modify` 之后只剩**插件里那个唯一的只读出网函数**在守。
+  完整取舍见 [docs/email-connector.md](docs/email-connector.md) §1.1。
 - **会话库** `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：
   **卸载即永久丢失，外部不可解、不可拷**。
 - 发布前自检：`tools\check-sensitive.ps1`（扫工作树 + 全部 git 历史，可选连 APK 一起扫；
@@ -134,12 +157,15 @@ Compose UI ── Room/SQLCipher 落库
   Android 专有检查见 `android/app/lint.xml`。
 - **真机测试**（`androidTest/`，覆盖 Room/SQLCipher 与 Compose UI）：先 `adb install -r`，
   重新启用无障碍服务，再 `.\gradlew.bat :app:connectedDebugAndroidTest`。
-- **任务审计回路**：`tools/audit/run-suite.mjs` 跑固定任务集并采集轨迹，
+- **任务审计回路**：`node tools/audit/run-suite.mjs` 跑固定任务集并自动采集轨迹，
   判断交给 `tappet-auditor` 子 agent。产物（含屏幕正文）按敏感数据对待，不入库。
+- 改了 `tools/dsh-phone/` 下的 launcher / profile / 插件，必须重跑 `bundle-dsh.ps1` 并重装 APK
+  才生效（运行时打包在 assets 里）；插件本身在独立公开仓库，先在那边提交再更新 submodule 指针。
 
 CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`assemble.yml`（装配 libnode/dsh
 并出包，**只在装配相关路径变动时**跑，且验产物结构 —— native 库齐不齐、运行时资产是不是真 zip）、
-`codeql.yml`（语义级安全扫描）、`release.yml`（推 `v*` tag：先过门禁 → 出签名包 → 发 release）。
+`codeql.yml`（语义级安全扫描）、`release.yml`（推 `v*` tag：先过门禁 → 出签名包 → 验签 +
+扫包内密钥 → 发 release）。
 
 > [!WARNING]
 > **CI 绿 ≠ 能用**。无障碍执行层、内嵌 Node 的启动、真实任务只能在真机上验证。
@@ -147,13 +173,20 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
 
 ## 已知限制
 
-- 只带 **arm64-v8a**（内嵌 Node 运行时就占 65MB，多一个 ABI 体积翻倍）；截图能力要求 Android 11+。
-- 四个预选里**只有 OpenCode Go 用真 key 跑通过**；OpenAI / Anthropic / DeepSeek 是「端点、
-  调用风格、模型三件套对得上运行时目录」，尚未用真 key 发过请求。
+- 只带 **arm64-v8a**（内嵌 Node 运行时就占 65MB，多一个 ABI 体积翻倍）；截图能力要求 Android 11+
+  （minSdk 28，低版本没有 `takeScreenshot`）。
+- 五个预选里**只有 OpenCode Go 用真 key 跑通过**；其余是「端点、调用风格、模型三件套对得上
+  运行时目录」，尚未用真 key 发过请求。真机上切换模型并发任务也还没做完（模拟器已跑通）。
 - 部分 App（实测微信 8.0.78）对无障碍隐藏控件树。这时会走**视觉路径**：截一张图，
   模型在图上找到目标、给出外框，由执行层换算成屏幕坐标点击。**但树不可读时输入不了文字** ——
   「发一条消息」这类任务目前做不到（缺一条不依赖控件树的输入通道）。
 - 视觉路径的坐标换算有单测钉住，**模型在图上估坐标准不准还没在真机上验证过**。
+- 切换提供商 / 模型会换 dsh 会话命名空间：界面历史保留，但模型上下文从下一条消息重新开始
+  （dsh SDK 只有 create、没有 resume）。
+- **Gmail 的预置 OAuth 客户端停在 Google 测试模式**：只有白名单里的测试账号能授权，
+  且 refresh token 寿命受限（实测 7 天，到期需重连）。别人装这个包想用 Gmail，
+  得在设置里换成自己的 OAuth 客户端 ID 与密码。授权期间还要求 App 进程活着
+  （最长 10 分钟持有回环 socket），进程被杀就得重来。
 - 跨 App 长任务依赖前台服务保活，ColorOS 的后台冻结仍有边界情况。
 - 项目原名 Memex，2026-10-12 更名（含 `applicationId`）。旧包 `com.memex.app` 若还在设备上，
   其数据新包读不到，卸载即可。
@@ -164,6 +197,8 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
 |---|---|
 | [AGENTS.md](AGENTS.md) | 给 coding agent 的项目记忆：硬规则、命令、常见坑、发版流程 |
 | [docs/dsh-android.md](docs/dsh-android.md) | agent runtime 选型（内嵌 dsh + libnode）与各阶段实测 |
-| [docs/android-accessibility.md](docs/android-accessibility.md) | 执行层系统探测与实测记录 |
+| [docs/android-accessibility.md](docs/android-accessibility.md) | 执行层系统探测与实测记录（含视觉路径的坐标契约） |
+| [docs/email-connector.md](docs/email-connector.md) | 连接器的边界、隐私闸门、OAuth 注册步骤 |
 | [docs/roadmap.md](docs/roadmap.md) | 技术路线畅想（未验证的假设） |
-| [CHANGELOG.md](CHANGELOG.md) | 对外可见的变化；每个版本的说明在 `docs/releases/` |
+| [docs/releases/](docs/releases/) | 每个版本的发布说明与「验到什么程度」 |
+| [CHANGELOG.md](CHANGELOG.md) | 对外可见的变化 |

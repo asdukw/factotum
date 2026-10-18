@@ -8,6 +8,9 @@ all_keys.json
 
 # --- 本地工具 ---
 .workbuddy-ai/
+# Claude Code 的本地状态：worktrees 是完整检出（不是源码）、settings.local.json 是本机设置。
+# 注意 `.claude/agents/` 下已入库的子 agent 定义不受影响 —— gitignore 管不到已跟踪文件。
+.claude/
 
 # --- 审计产物（tools/audit/collect.mjs 产出）---
 # 含屏幕正文与工具结果原文，属敏感数据：工具与任务集入库，产物不入库。
@@ -34,6 +37,10 @@ keystore.properties
 
 # --- 内嵌 Node 运行时（tools/fetch-libnode.ps1 按 pinned 版本拉取） ---
 android/.libnode-cache/
+# 交叉编译的 ripgrep（tools/fetch-rg.ps1 按 pinned 版本拉；产物由 .github/workflows/rg.yml 出）
+android/.rg-cache/
+# fetch-rg.ps1 取来的 rg（bundle-dsh.ps1 的输入，不进 APK 源树）
+tools/dsh-phone/.bin/
 android/app/libnode/
 android/app/src/main/jniLibs/
 # vendored dsh 运行时（tools/bundle-dsh.ps1 产出）；hello 脚本仍在 nodejs-project/ 里入库

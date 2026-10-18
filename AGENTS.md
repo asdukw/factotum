@@ -44,6 +44,9 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 
 - **代理必须放 `GRADLE_OPTS` 环境变量** —— 行内 `-D` 会被 `gradlew.bat` 拆坏。
   依赖下载不通时改阿里云镜像 `https://maven.aliyun.com/repository/public`（实测秒下）。
+- **跑 `.ps1` 脚本用 `pwsh`（PowerShell 7），不要用 `powershell`（5.1）**：5.1 跑在 .NET
+  Framework 上，`bundle-dsh.ps1` 打的 zip 条目名会变成反斜杠，装到设备上解不出目录树、
+  App 直接起不来（报的是 `ERR_MODULE_NOT_FOUND`，看着像依赖没装）。脚本末尾现在有自检。
 - `tools/` 下的装配脚本只认 `HTTP_PROXY` / `HTTPS_PROXY`（默认跟随本机 127.0.0.1:7897），
   没有就走直连（CI 如此）。代理没开时 npm 会 `ECONNREFUSED 127.0.0.1:7897` ——
   临时绕过：当前 shell 清空这两个变量再跑。
@@ -147,8 +150,13 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   （Linux 的 GNU tar 写不了 zip，产物是改了后缀的 tar），第二次又缺 `libc++_shared.so`。
   `assemble.yml` 就是为这两次教训加的。
 
-**发版**：打 `v*` tag → `release.yml` 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
-版本说明写在 `docs/releases/<tag>.md`（有就用它，没有就 `--generate-notes`）。
+**发版**（顺序不能反，`release.yml` 在 tag 上一次性把包与说明发出去）：
+
+1. 改 `android/app/build.gradle.kts` 的 `versionCode` / `versionName` —— **包内版本号来自这里，
+   不是来自 tag**，漏改会打出「tag 叫 `v0.6.0`、装到设备上却报 `0.5.0`」的包；
+2. 写 `docs/releases/<tag>.md` 并更新 `CHANGELOG.md`，**先提交再打 tag** —— `release.yml` 只读
+   仓库里已有的那份说明文件，没有就退回 `--generate-notes`；
+3. 打 `v*` tag → 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
 
 | 签名材料 | 位置 |
 |---|---|
@@ -288,6 +296,11 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 | `bridge/ConnectorBridgeServer.kt` | 只发短命 access token 的本地桥，**独立于设备桥**（理由见类注释） |
 | `tools/dsh-phone/plugins/gmail/` | 模型可见的三个只读工具；Gmail 的 REST 语义全在这里 |
 
+- **状态（2026-10-18，v0.5.0）**：授权全流程（浏览器同意 → 回环回调 → 落库）与 `mail_list`
+  真实读到邮件都在一加 15T 上跑通，但**只在一个账号上验过**。两个已知边界：预置的 OAuth 客户端
+  停在 Google **测试模式**（只有白名单账号能授权，refresh token 实测 7 天到期），发布包给别人用
+  仍得让对方填自己的客户端 id；授权期间 App 进程必须活着（最长 10 分钟持有回环 socket），
+  被杀就得重来。
 - **令牌的信任边界**：refresh token 永不离开 Kotlin；插件每次调用向桥要一个 access token
   （`{"action":"access_token","connector":"gmail"}`）。所以「插件被注入」也拿不到长期凭据。
 - **桥不代理云端请求**：只发令牌。否则一处 API 会被劈成「宿主知道路径、插件知道工具描述」两半。
@@ -322,6 +335,39 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   所以走的是**回环重定向** `http://127.0.0.1:<随机端口>`。好处：不改 Manifest、不注册签名
   SHA-1、不绑包名 —— 预置一个 client id 就能对所有人生效。
 
+### 加一个联网搜索提供商 = 一处声明（2026-10-18 起）
+
+联网搜索用的是 **dsh 自带的 web seam**，不是本仓库的插件：
+
+| 位置 | 管什么 |
+|---|---|
+| `agent/LlmPreset.kt` 的 `Endpoint.search` | 该提供商的搜索端点（Anthropic 兼容基址）与模型；`null` = 没验证过 |
+| `node/NodeRuntime.kt` | 注入 `TAPPET_WEB_SEARCH_BASE_URL` / `_MODEL` / `_KEY_ENV`（重载时也写进 runtime-config.json） |
+| `tools/dsh-phone/profile/cordis.patch.yml` | ① `web-search-deepseek` 的 config 段（端点 / 模型 / 密钥来源全部读宿主注入）；② **宿主层 `- id: tool-web` + `disabled: false`** |
+| `tools/dsh-phone/zen-session-fetch.mjs` | 替搜索 provider 补 zen 的 `x-opencode-session`（provider 没有自定义 header 的字段） |
+
+- **工具行必须挂在宿主层，不能放进 agent preset 的 `plugins:`**：`dsh-web-app`（本 profile 的
+  第二个 bundle）把 `dsh-base` 的宿主级 `tool-web` 行禁用了，改成「按 preset 组合」。照它的样子
+  放进 `preset-phone` 里**组合结果里有那一行，但工具进不了模型的工具表**，而且日志里一个错都没有
+  （2026-10-18 真机踩过）。宿主层 `disabled: false` 才对。
+- **`task done ... tools=N` 的 `N` 是这一轮的工具调用次数，不是注册了几个工具** —— `tools=0`
+  只说明模型没调工具。别拿它当可用工具数（我误判过一次）。
+- **`web_search` / `web_fetch` 两个工具与提示词指引来自 `dsh-tool-web`** ——
+  **不要再写一个自己的搜索插件**（写过一次，删了）。要加能力先看 dsh 有没有。
+- **端点与模型是两套，不能从 `TAPPET_LLM_API` 推**：zen 聊天走 `openai-completions`，
+  而它的原生 `web_search` 在 Anthropic 兼容的 `/messages` 上。基址**不含** `/messages`，
+  provider 自己追加（写成带 `/messages` 的会得到 `.../messages/messages` → 一个看不懂的 404）。
+- **「接受工具」不等于「会真的搜索」**：网关不校验模型是否真支持宿主 `web_search`。
+  实测 zen 的 `deepseek-v4.1-flash` 收下工具、回 200、`input_tokens` 只有 50 —— 一次都没搜，
+  然后给一段凭记忆编的话。所以搜索模型必须**单独指定并实测**，别拿当前聊天模型凑。
+- **换协议比换模型划算**：`claude-haiku-5-5` 在 zen 的 `/responses` 上是 400
+  `ModelProtocolUnsupported`，走 Anthropic 兼容的 `/zen/go/v1/messages` 却完全可用
+  （`web_search_requests: 1`，input ~13k，比 `/responses` 那条的 17k–44k 便宜）。
+- **没有可用 provider 时工具照样挂着**，回结构化的 `WEB_PROVIDER_UNAVAILABLE` ——
+  与连接器同一条理由。可用性检查就是「密钥在不在」，所以不支持的提供商把
+  `TAPPET_WEB_SEARCH_KEY_ENV` 指到一个解析不到的变量名即可，profile 里不需要分支。
+- **不接搜索 API**：Bing Web Search API 已退役、Google Custom Search JSON API 已对新客户关闭
+  （现有客户 2027-01-01 前迁移）。边界与实测见 `docs/web-search.md`。
 ### 手机上的 Linux = Termux 桥 + run_command（2026-10-18 起）
 
 agent 能在手机的**文件系统**上干活：Termux 里跑 proot Debian，桥把「执行一条命令、拿回
@@ -502,8 +548,11 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 - **完成一个可验证的里程碑时自行提交**，不要攒大改动等用户开口。判据：构建 / 单测通过，
   或真机验证完成，即提交一个内聚的 commit。
 - **master 已开启分支保护，改动走 PR**：从 master 拉分支 → 提交 → 开 PR → CI 三项检查
-  （静态检查 / 单元测试 / 离线自检）通过 → 合并。直接 push master 会被远端拒绝；
-  `v*` tag 的 release 不受影响。仓库默认分支叫 **master**（不是 main）。
+  （静态检查 / 单元测试 / 离线自检）通过 → 合并。保护是 GitHub **Ruleset**（不是旧版 branch
+  protection）：禁删除 / 禁 force push / 要求 PR / 要求三项 CI 且 strict。**仓库管理员被显式
+  列为 bypass actor（`bypass_mode: always`），可以直推 master** —— 这是个人项目的刻意选择；
+  非 admin 的贡献者仍会被远端拒绝。`v*` tag 的 release 不受影响。
+  仓库默认分支叫 **master**（不是 main）。
 - **合并 PR 与 push 一样，必须由用户逐次明确授权**：「改完就提交」是默认动作，
   「开 PR / 合并 / 推上去」不是。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、
@@ -535,10 +584,17 @@ tools/
   termux/setup.sh               一键装配手机上的 Linux（Termux 侧依赖 + Debian rootfs + 桥）
   termux/bridge.py              桥本体：127.0.0.1 + token，把「跑一条命令」暴露成 HTTP
   dsh-phone/launcher.mjs        绕开 dsh boot()/CLI loader 的启动器（含按需 reload：卸载 cordis 根后 remount）
-  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename）
+  dsh-phone/zen-session-fetch.mjs  launcher 的兄弟模块：只对 zen 主机补 x-opencode-session（有单测）
+  dsh-phone/preset-diff.mjs     组合对比：把 phone profile 实际 mount 的行与 dsh 官方预置比一遍（移植用）
+  dsh-phone/test/               工具的离线单测（CI 的「离线自检」跑）
+  dsh-phone/patch-runtime.mjs   Android 适配补丁（flock 放行、jsonl 发布改 rename、assistant-stream → session.stream）
   dsh-phone/check-profile.mjs   profile 的真解析器校验（bundle 与 CI 都跑）
+  dsh-phone/modality-index.mjs  从 pi-ai 目录生成 assets/model-modalities.json（bundle-dsh.ps1 调用）
+  dsh-phone/rpc-probe.mjs       PC 侧探针：以 SDK client 身份直连 launcher 的 JSON-RPC（验 initialize 与事件通道）
+  dsh-phone/android-attachments/  附件存储的纯 JS 实现（替掉依赖 sharp 的 attachment-local）
   dsh-phone/plugins/android-tools/  git submodule（独立公开仓库，10 个模型可见工具）
   dsh-phone/plugins/gmail/      邮箱连接器工具（只读 3 个；令牌走本地连接器桥）
+  dsh-phone/plugins/user-questions/  ask_user_question 的 answerer（问题经本地桥进 UI）
   dsh-phone/profile/            phone profile（cordis.patch.yml）
 docs/                           深度文档 + releases/<tag>.md（每个版本的发布说明）
 ```
@@ -600,7 +656,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
 | 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
 | 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |
-| 浏览器点完同意后 App 没反应 | 浏览器没跳到 `127.0.0.1`（部分浏览器拦回环）→ 看 stderr 里监听器有没有收到请求；这是真机未验项之一 |
+| 浏览器点完同意后 App 没反应 | 授权全流程真机已跑通；遇到时先看 stderr 里回环监听器有没有收到请求（部分浏览器拦 `127.0.0.1`）。另：授权期间 App 进程被杀就得重来（最长 10 分钟持有 socket） |
 | 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
 | 邮件工具整个不见了 / dsh 起不来 | 插件名三处不一致（profile 的 insert / `bundle-dsh.ps1` 的 Package / 插件 `package.json`）→ 有单测钉住；改完重跑 `bundle-dsh.ps1` |
 | 输入框快速打字丢字符 | 每次击键同步 `commit()` 落盘（主线程 fsync）→ 频繁写的字段用 `apply()`，只有需要「写进去没有」答案的凭据才用 `commit` |
@@ -612,6 +668,16 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
 | 助手回复整段蹦出来、没有逐字效果 | 运行时补丁 4 没生效（stdout 上没有 `session.stream` 帧）→ 重跑 `tools/bundle-dsh.ps1` 并重装 APK；Kotlin 侧另有 50ms 合并，纯聊天不涉及无障碍 |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |
+| `web_search` 回 `WEB_PROVIDER_UNAVAILABLE` | 当前提供商没有搜索端点（`LlmPreset.Endpoint.search == null`）→ 换 OpenCode Go，或在 `Endpoint.search` 里补一个**实测过**的 |
+| `web_search` 报 400 `MissingSessionID` | zen 的会话头没补上 → 确认 `zen-session-fetch.mjs` 进了运行时（重跑 `bundle-dsh.ps1`；它和 `launcher.mjs` 必须一起拷进 cache） |
+| 装完启动报 `Cannot find module .../zen-session-fetch.mjs` | 同上一类：launcher 的兄弟模块漏拷 → 重跑 `tools/bundle-dsh.ps1` |
+| 搜索回了答案但一个来源都没有 | **真搜门**：模型收下了 `web_search` 但一次都没搜（网关不校验）→ 换实测会搜的模型（zen 上是 claude 系 / gpt-6-luna / grok-4.x） |
+| `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
+| 模型调了 `ask_user_question` 之后整轮卡住、会话一直 running | 没有 answerer 接手（或 answerer 排在 `dsh-api-remotes` 后面被它吃掉 —— 它把请求推进没人消费的 remote 队列）。我们的 answerer 用 `{ prepend: true }` 注册；见 `docs/user-questions.md` §2.2 |
+| 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
+| 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
+| `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ **必须 `useLegacyPackaging = true`** —— Android 10+ 的 W^X 不许应用执行自己可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。别被 `run-as …/rg --version` 骗了：那能跑是因为 run-as 的 SELinux 域还是 shell |
+| 想知道「dsh 官方预置有什么、我们缺什么」 | 用 launcher 同一套 API 把组合打出来比：`loadProfileDirectory` + `readProfilePatches` + `composeEntries`，然后对比 `preset-standard` 与 `preset-phone` 的 `config.plugins`（现成脚本可照 `docs/memory.md` §3 写，10 行） |
 | 设置页「Linux 环境」一直停在「正在启动…」 | Termux 被 ColorOS 冻了（端口在但连不上）→ 把 Termux 拉到前台，并在系统设置里放开它的后台运行 |
 | 启动器报 `NO_PERMISSION`（明明授权过） | `adb install -r` 清掉了 RUN_COMMAND 授权 → **重装用 `adb install -r -g`**，或重新点一次「授权并启用」 |
 | 桥的启动脚本「跑了但什么也没发生」（token 写了、日志没动、python 没起） | 多半是脚本被 `pkill -f` 自杀了（脚本文本在 argv 里）→ 别用 `pkill -f`，扫 `/proc` 并跳过自己 |
@@ -627,6 +693,9 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
+| `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
+| `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |
+| `docs/user-questions.md` | 动 `ask_user_question` / 任何「模型等用户回答」的功能之前：waterfall 的注册顺序坑、答案的三条语义、为什么不能只开工具不做 UI |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

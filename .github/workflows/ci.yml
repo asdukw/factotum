@@ -119,3 +119,13 @@ jobs:
         run: |
           cd tools/dsh-phone/plugins/gmail
           npm test
+      # zen 会话头补丁作用在**所有**出网请求上（它包了 globalThis.fetch），边界必须钉住：
+      # 只有 zen 的主机名加头、已经带了头的不覆盖、重复安装只装一层。
+      - name: zen 会话头补丁测试
+        run: node tools/dsh-phone/test/zen-session-fetch.test.mjs
+      # 提问 answerer 的边界：**接不了必须让路**（桥没配 / 用户关掉 / 桥报错 / 超时四种）。
+      # 它唯一危险的地方是「编一个答案」—— waterfall 的返回值会被宿主当成用户说的。
+      - name: 提问 answerer 测试（不编答案）
+        run: |
+          cd tools/dsh-phone/plugins/user-questions
+          npm test

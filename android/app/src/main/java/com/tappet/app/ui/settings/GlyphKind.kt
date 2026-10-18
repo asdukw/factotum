@@ -39,6 +39,7 @@ internal enum class GlyphKind {
   Mic,
   Hub,
   Server,
+  Mail,
   Accessibility,
   Key,
   Info,
@@ -85,6 +86,7 @@ private fun DrawScope.drawGlyph(kind: GlyphKind, tint: Color, u: Float) {
     GlyphKind.Mic,
     GlyphKind.Hub,
     GlyphKind.Server,
+    GlyphKind.Mail,
     -> drawObjectGlyph(kind, tint, u)
 
     GlyphKind.Key,
@@ -193,6 +195,14 @@ private fun DrawScope.drawShapeGlyph(kind: GlyphKind, tint: Color, u: Float) {
 
 private fun DrawScope.drawObjectGlyph(kind: GlyphKind, tint: Color, u: Float) {
   when (kind) {
+    // 信封：一个圆角矩形 + 两条折线当封口。连接器那一组用它，比复用 Globe 好认
+    // （Globe 已经被「搜索服务」占着，两行同样的图标在同一个设置页里会看着像重复项）。
+    GlyphKind.Mail -> {
+      roundRect(tint, u, 3f, 6f, 21f, 18f, 2f)
+      line(tint, u, 3.5f, 7f, 12f, 13f)
+      line(tint, u, 12f, 13f, 20.5f, 7f)
+    }
+
     GlyphKind.Chip -> {
       roundRect(tint, u, 6f, 6f, 18f, 18f, 2.5f)
       roundRect(tint, u, 9.5f, 9.5f, 14.5f, 14.5f, 1.2f)

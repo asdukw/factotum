@@ -112,3 +112,10 @@ jobs:
           npm install --no-save --no-audit --no-fund 'js-yaml@^4'
 
           node tools/dsh-phone/check-profile.mjs tools/dsh-phone/profile/cordis.patch.yml node_modules
+      # 连接器的「只读」与「令牌不外泄」两条承诺靠插件测试守住（docs/email-connector.md §6）。
+      # 它是本地插件、没有自己的 CI 仓库，所以在这里跑 —— 否则这两条只有人记得时才被验。
+      # real-schema 找不到 dsh 运行时会自己 skip（CI 上没有），失败才是真失败。
+      - name: 连接器插件测试（只读边界 / 令牌不外泄）
+        run: |
+          cd tools/dsh-phone/plugins/gmail
+          npm test

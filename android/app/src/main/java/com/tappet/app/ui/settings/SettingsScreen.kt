@@ -40,6 +40,7 @@ import com.tappet.app.device.AccessibilityStatus
 fun SettingsScreen(
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenConnectors: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -55,6 +56,7 @@ fun SettingsScreen(
     state = state,
     onBack = onBack,
     onOpenProviders = onOpenProviders,
+    onOpenConnectors = onOpenConnectors,
     modifier = modifier,
   )
 }
@@ -64,6 +66,7 @@ internal fun SettingsScreen(
   state: SettingsViewModel.UiState,
   onBack: () -> Unit,
   onOpenProviders: () -> Unit,
+  onOpenConnectors: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -93,6 +96,8 @@ internal fun SettingsScreen(
           accessibilityEnabled = accessibilityEnabled,
           onOpenAccessibility = { context.startActivity(AccessibilityStatus.settingsIntent()) },
         )
+        SectionLabel("连接器")
+        ConnectorSection(state = state, onOpenConnectors = onOpenConnectors)
         SectionLabel("关于")
         AboutSection()
       }
@@ -182,6 +187,32 @@ private fun ExecutionSection(accessibilityEnabled: Boolean, onOpenAccessibility:
         text = if (accessibilityEnabled) "已开启" else "未开启",
         tone = if (accessibilityEnabled) BadgeTone.Enabled else BadgeTone.Disabled,
       )
+    }
+  }
+}
+
+/**
+ * 连接器分组。连接器是**另一类数据源**：它不经过无障碍、不依赖屏幕上有什么，
+ * 所以它与「执行层」并列，而不是塞进模型那一组（见 docs/email-connector.md §0）。
+ *
+ * 首页只留**一行入口**通向列表页，不在这里逐个列连接器 —— 每接一个就多一行的话，
+ * 这一组会先于功能长成一棵树。
+ */
+@Composable
+private fun ConnectorSection(state: SettingsViewModel.UiState, onOpenConnectors: () -> Unit) {
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Mail,
+      title = "连接器",
+      subtitle =
+        when {
+          state.gmailAccount != null -> "Gmail：${state.gmailAccount}"
+          state.gmailConnected -> "Gmail 已连接"
+          else -> "Gmail、Outlook 等云端数据源（只读）"
+        },
+      onClick = onOpenConnectors,
+    ) {
+      ChevronRight()
     }
   }
 }

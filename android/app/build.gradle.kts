@@ -66,8 +66,8 @@ android {
     applicationId = "com.tappet.app"
     minSdk = 28
     targetSdk = 36
-    versionCode = 4
-    versionName = "0.4.0"
+    versionCode = 5
+    versionName = "0.5.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -86,6 +86,15 @@ android {
     // 要发包之前仍建议跑一遍 tools/check-sensitive.ps1 -ApkPath <包> 兜底。
     buildConfigField("String", "AGENT_MODEL", buildConfigString(agentValue("tappet.agent.model", "TAPPET_AGENT_MODEL", "deepseek-v4.1-flash")))
     buildConfigField("String", "AGENT_REASONING_EFFORT", buildConfigString(agentValue("tappet.agent.reasoningEffort", "TAPPET_AGENT_REASONING_EFFORT", "low")))
+    // 连接器的 OAuth 客户端凭据：**构建期注入，不入库**。
+    // GitHub 的 push protection 把这两个值都判成密钥（对管理员一样拦），而且它们本来就
+    // 只该出现在**发布产物**里、不该出现在源码树里。发布由 CI 从 GitHub Actions secret 注入，
+    // 本地开发放 android/local.properties（gitignored）。两处都没有 → 空串，
+    // 设置页退回「要求用户自己填客户端 ID / 密码」的行为。
+    // 这不是密钥泄漏防护（它们不是机密，见 docs/email-connector.md §4.1b），
+    // 是**别让仓库和平台规则对着干**：值与源码分开，谁构建谁负责注入。
+    buildConfigField("String", "GMAIL_CLIENT_ID", buildConfigString(agentValue("tappet.connector.gmailClientId", "TAPPET_GMAIL_CLIENT_ID", "")))
+    buildConfigField("String", "GMAIL_CLIENT_SECRET", buildConfigString(agentValue("tappet.connector.gmailClientSecret", "TAPPET_GMAIL_CLIENT_SECRET", "")))
     buildConfigField("String", "AGENT_PROXY_HOST", buildConfigString(agentValue("tappet.agent.proxyHost", "TAPPET_AGENT_PROXY_HOST", "")))
     buildConfigField("int", "AGENT_PROXY_PORT", agentProxyPort.toString())
   }

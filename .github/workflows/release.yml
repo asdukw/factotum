@@ -90,6 +90,11 @@ jobs:
           TAPPET_KEYSTORE_PASSWORD: ${{ secrets.TAPPET_KEYSTORE_PASSWORD }}
           TAPPET_KEY_ALIAS: ${{ secrets.TAPPET_KEY_ALIAS }}
           TAPPET_KEY_PASSWORD: ${{ secrets.TAPPET_KEY_PASSWORD }}
+          # 连接器的 OAuth 客户端凭据由这里注入 —— 它们不入库（GitHub 的 push protection
+          # 把这两个值都判成密钥，对管理员一样拦），但**必须进发布产物**，
+          # 否则新装用户要自己去 Google Cloud 注册应用。见 docs/email-connector.md §4.1b。
+          TAPPET_GMAIL_CLIENT_ID: ${{ secrets.TAPPET_GMAIL_CLIENT_ID }}
+          TAPPET_GMAIL_CLIENT_SECRET: ${{ secrets.TAPPET_GMAIL_CLIENT_SECRET }}
         run: ./gradlew :app:assembleRelease --console=plain
 
       - name: 验签 + 包里不该有密钥

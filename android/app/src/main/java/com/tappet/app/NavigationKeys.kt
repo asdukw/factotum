@@ -14,3 +14,9 @@ import kotlinx.serialization.Serializable
 
 /** 单个提供商的详情：配置 / 模型 / 高级设置。id 是 [com.tappet.app.agent.LlmPreset.id]。 */
 @Serializable data class ProviderDetail(val providerId: String) : NavKey
+
+/** 连接器列表（设置 → 连接器）：Gmail / Outlook…… */
+@Serializable data object Connectors : NavKey
+
+/** Gmail 连接器：客户端 id / 授权 / 断开。 */
+@Serializable data object GmailConnector : NavKey

@@ -1,0 +1,4 @@
+// dsh bundle 层：安装后把 Gmail 邮件工具插入运行时（只读，令牌走本地连接器桥）。
+- insert:
+    - id: dsh-gmail
+      name: 'dsh-plugin-gmail'

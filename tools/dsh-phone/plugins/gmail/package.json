@@ -1,0 +1,14 @@
+{
+  "name": "dsh-plugin-gmail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only Gmail tools for the Tappet phone runtime (Gmail API, token via the local connector bridge)",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/gmail.mjs && node test/real-schema.mjs"
+  }
+}

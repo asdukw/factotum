@@ -128,7 +128,63 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
 > 也就是说这个失败**可能出在 llama.cpp 的 `mtmd` 视觉路径，而不是 2B 模型本身**。
 > 在排除它之前，不要把结论下成「2B 不够用」。
 
-## 6. LiteRT-LM 的现状（查证，未实测）
+**但先别下结论** —— 上面这个失败有个更可能的解释：llama.cpp 有一个**至今未关闭**的 issue，
+*「Qwen3-VL: mtmd vision embeddings carry ~5× HF precision-floor noise → reproducible accuracy
+drop vs transformers（quant/backend/version-independent）」*。也就是说问题**可能出在引擎的视觉路径**。
+下面第 6 节就是为排除它而做的实验。
+
+## 6. 判别实验：同一个引擎换 Gemma 4 E2B
+
+设计：**同设备、同引擎（llama.cpp `mtmd` + HTP0）、同截图、同提示词**，只换模型。
+`gemma-4-E2B-it-Q4_0.gguf`（2.84 GB）+ `mmproj-gemma-4-E2B-it-Q8_0.gguf`（0.56 GB）。
+
+### 读屏文字（决定性）
+
+问「这屏上的处理器与存储是多少」，与 `uiautomator dump` 的真值比对：
+
+| 模型 | 输出 | 判定 |
+|---|---|---|
+| Qwen3-VL-2B Q4_K_M | `处理器是: 100000000000000...`（一长串 0） | **失败** |
+| **Gemma 4 E2B Q4_0** | 「处理器是第五代骁龙®8至尊版移动平台，存储空间 270 GB / 512 GB」 | ✅ **逐字正确** |
+
+Gemma 4 甚至把整屏元素**完整列了出来**：`手机名称/一加15T`、`存储空间/270 GB / 512 GB`、
+`一加15T/PLZ110_17.0.0.107(CN01B110P02)`、`处理器/第五代骁龙®8至尊版移动平台` —— 四项文字全对。
+
+**结论：视觉路径本身没坏（Gemma 4 读中文 UI 文字完全准确），问题在 Qwen3-VL + mtmd 这个组合。**
+那条 upstream issue 的描述与这里的现象一致。
+
+### grounding（归一化 0-1000，真值来自 uiautomator）
+
+| 目标 | 真值 y 区间 | Qwen3-VL-2B | Gemma 4 E2B |
+|---|---|---|---|
+| 手机名称 | 616–645 | `[0,0,1000,1000]` ❌ | `[30,600,970,660]` ✅ |
+| 存储空间 | 682–711 | `[248,688,300,720]` ⚠️ 偏右 | `[30,600,970,750]` ✅ |
+| 处理器 | 904–931 | `[288,788,328,818]` ❌ | `[30,880,970,960]` ✅ |
+| 运行内存 | 992–1000 | `[300,785,500,820]` ❌ | `[30,600,970,740]` ❌ |
+
+Gemma **3/4 命中**（区间覆盖真值行），Qwen3-VL 约 **1/4**。
+但要注意 Gemma 给的是**整行**的粗框（`[30, y1, 970, y2]`），不是标签本身；
+而且「手机名称」与「存储空间」它给到了几乎同一区域（都从 y=600 起），**说明它也在猜行号而不是精确指认**。
+按「能不能点中」的标准算可用，按「grounding 精度」的标准还不合格。
+
+### 视觉编码耗时（同一张 1216×2640 截图）
+
+| 模型 | 全分辨率 | 长边 1024 |
+|---|---|---|
+| Qwen3-VL-2B（mmproj Q8） | 6385 ms | 484 ms |
+| **Gemma 4 E2B（mmproj Q8）** | **2746 ms** | **324 ms** |
+
+Gemma 在两个分辨率上都更快。
+
+### 两个操作上的坑
+
+- **Gemma 4 必须加 `--jinja`**：不加直接 `libc++abi: terminating ... this custom template is not
+  supported, try using --jinja` 然后 Aborted。
+- **Gemma 4 是推理模型**：默认会先吐一大段 thinking，`-n 64` 会让它**还没给出答案就截断**。
+  问坐标时要给到 `-n 2000` 左右，并在提示词里明确「No explanation / Output only ...」。
+  实际使用时要考虑这部分 token 成本。
+
+## 7. LiteRT-LM 的现状（查证，未实测）
 
 - Kotlin API 标为 **stable**，Android 是一等公民；原生 vision + audio；带约束解码的 function calling；
   自带 OpenAI 兼容的 `litert-lm serve`。
@@ -137,7 +193,7 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
   Android 要自己 `bazel build --config=android_arm64 //runtime/engine:litert_lm_main`，
   需要 Bazel 7.6.1 + NDK r28b。文档里 Android 只写了 Linux/macOS 宿主的步骤（Windows 宿主未验证）。
 
-## 7. 复现步骤
+## 8. 复现步骤
 
 ```powershell
 # 1. 拿官方 Snapdragon 构建（不需要 Qualcomm 工具链）
@@ -173,12 +229,20 @@ adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell c
 > `uiautomator dump` 会把 Tappet 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
 > 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
 
-## 8. 下一步（按性价比排序）
+## 9. 下一步（按性价比排序）
 
-1. **判别实验**：同一台机器、同一套提示词与截图，换 Gemma 4 E2B 再跑一遍 grounding。
-   若它也读不对字 → 倾向于引擎（`mtmd`）或 2B 级别；若它读得对 → 问题在 Qwen3-VL + mtmd 这个组合。
-2. 若确认是引擎问题，试 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建）。
-3. 若确认是 2B 级别不够，试 GUI 专门微调的 2B（UI-TARS-2B-SFT / ShowUI-2B），
+已完成的判别实验（第 6 节）把范围收窄到：**问题在 Qwen3-VL + mtmd，不在「2B 级别」本身**。
+所以下一步不是换引擎，而是**换模型** —— 通用 2B 的 grounding 本来就不是强项。
+
+1. **UI-TARS-2B-SFT**（已确认基座 = `Qwen2VLForConditionalGeneration` / `qwen2_vl`，28 层、
+   hidden 1536；llama.cpp 原生支持 Qwen2-VL）。它是 GUI agent 端到端微调的，官方还带
+   Android 的 `MOUSE_USE` 提示词模板。GGUF 现成：
+   `lmstudio-community/UI-TARS-2B-SFT-GGUF` 的 `Q4_K_M`（1.12 GB）+ `mmproj-model-f16.gguf`（1.33 GB）。
+   **注意**：它输出的是**动作**（`click(start_box='<|box_start|>(x,y)<|box_end|>')` 这类），
+   动作空间与 Tappet 现有的 10 个工具**不对齐**，要映射。
+2. **ShowUI-2B**（同样是 Qwen2-VL-2B 基座）—— 它的**视觉 token 剪枝**直接打在本文第 4 节那个
+   瓶颈上（论文称相对基线减少 33%–75% 的视觉 token），是「更准且更快」的少数候选。
+3. 若这两个都不行，再考虑 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建 Bazel+NDK），
    或接受「端侧只做粗筛、精细动作仍走云端」的混合方案。
 
 **未验证的假设**（别当结论用）：端侧在真实网络下究竟比云端快多少，取决于用户的实际网速；

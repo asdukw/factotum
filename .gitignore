@@ -39,6 +39,8 @@ keystore.properties
 android/.libnode-cache/
 # 交叉编译的 ripgrep（tools/fetch-rg.ps1 按 pinned 版本拉；产物由 .github/workflows/rg.yml 出）
 android/.rg-cache/
+# sherpa-onnx 预编译库（tools/fetch-sherpa.ps1；本地引擎用）
+android/.sherpa-cache/
 # fetch-rg.ps1 取来的 rg（bundle-dsh.ps1 的输入，不进 APK 源树）
 tools/dsh-phone/.bin/
 android/app/libnode/

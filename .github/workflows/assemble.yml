@@ -70,6 +70,9 @@ jobs:
           # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
           # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
           pwsh -NoProfile -File tools/fetch-rg.ps1
+          # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
+          # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
+          pwsh -NoProfile -File tools/fetch-sherpa.ps1
           pwsh -NoProfile -File tools/bundle-dsh.ps1
 
       - name: 出包
@@ -106,7 +109,7 @@ jobs:
           # librg.so 是 v0.6.0 第一次出包时漏掉的那个：打包方式从「塞进运行时 zip」改成
           # 「放 jniLibs」时，bundle-dsh 里那条「缺 rg 就 throw」的检查被一起删了，
           # 而把 rg 放进 jniLibs 的 fetch-rg.ps1 没进 CI —— 于是构建成功、包是坏的。
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so; do
+          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
             unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
           done
           # 运行时资产必须是真 zip（头两个字节 PK）；v0.1.0 那次是 tar 冒充 zip，而构建是成功的

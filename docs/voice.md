@@ -79,11 +79,51 @@ I AppsFilter: interaction: PackageSetting{com.tappet.app} ->
 （国产 ROM 常见：引擎装了但要用户先去系统设置里选一次）回调可能**永远不来**，
 不设超时就是静默卡死。
 
-## 4. 本地引擎
+## 4. 本地引擎（sherpa-onnx）
 
-待接：sherpa-onnx（预编译 Android 库）+ 中文 VITS 模型，模型在设置页里按需下载。
-`LocalTtsEngine` 现在是占位实现，如实报「还没下载模型 / 推理还没接上」——
-比静默退回系统引擎好：用户明确选了本地引擎，就不该在背后被换成另一个声音。
+模型跑在 Tappet 自己的进程里，不依赖 ROM 装了什么引擎。四处：
+
+| 位置 | 管什么 |
+|---|---|
+| `tools/fetch-sherpa.ps1` | 拉官方预编译的 `libsherpa-onnx-jni.so` → `jniLibs/<abi>/`（不入库） |
+| `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 Kotlin/JNI 绑定，与 `fetch-sherpa.ps1` 的版本必须同 tag |
+| `voice/TtsModelCatalog.kt` | 可下载模型的目录（地址 / 文件布局 / **授权**） |
+| `voice/TtsModelDownloader.kt` + `TtsArchive.kt` | 下载（复用更新那套续传）、解 tar.bz2、原子换目录 |
+| `voice/LocalTtsEngine.kt` | 合成 + 播放 |
+
+**为什么是 static-link 变体**：官方有两个 Android 包。默认的 `sherpa-onnx-<ver>-android.tar.bz2`
+是 `jni + c-api + cxx-api + libonnxruntime.so` 四个 .so（arm64 合计约 32MB）；`-static-link-onnxruntime`
+只有一个 `libsherpa-onnx-jni.so`（24MB，AGP strip 后 23MB），还省掉「四个 .so 必须配套」。
+它也不依赖 `libc++_shared.so`（动态段里查不到这个名字），所以与 libnode 那份 STL 无关。
+
+**vendor 的文件只删了一个函数**：官方 `Tts.kt` 末尾的 `getOfflineTtsConfig(...)` 便捷函数
+（20 个参数，给示例用的）删掉了，配置在 `LocalTtsEngine` 里自己拼。其余部分**不要手改**：
+JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会在 native 层崩。
+
+**模型目录只有两条，都是 13MB 的 Piper int8**：
+`chaowen`（CC0，默认）与 `xiao_ya`（数据集 BZNSYP，**非商用**）。选择标准是「小 + 授权说得清」。
+**MeloTTS 没进来**不是授权问题（它是 MIT），是产物问题：GitHub 归档里的 `model.int8.onnx`
+是个 133 字节的 **git-lfs 指针**（真身在 HF，53MB），归档里能用的只有 170MB 的 fp32，
+手机上又大又慢。要收它得改从 HF 下载，那会引入第二个下载域，而 HF 墙内直连不通。
+
+**下载复用 `UpdateDownloader.fetchInto`**，不是重写一套：断点续传的三条细节（`If-Range`
+而不是裸 `Range`、206 的 `Content-Length` 是剩余长度、416 要丢掉本地重来）没必要写第二遍。
+归档留在 `cacheDir` 的 `.part` 里跨进程存活。
+
+**装的过程是「解到 staging → rename 成正式目录」**：直接解到正式目录的话，解到一半被杀
+会留下一个「看起来装好了」的目录，`isInstalled` 放行，然后在 native 层崩。
+`isInstalled` 的判据是**关键文件都在**，不是「目录存在」。
+
+**解包有两道闸**：剥掉归档的顶层目录（否则运行时拼不对路径）；**挡住路径穿越**
+（tar 条目名可以是 `../../databases/tappet.db`，越界的条目直接跳过）。都用
+`TtsArchiveTest` 里自造的 tar.bz2 钉住了 —— 不需要设备，也不需要下真模型。
+
+**合成与播放是流水的**：`generateWithCallback` 一边算一边往 AudioTrack 里写，
+不是「算完一整段再播」（后者要等一两秒才出声）。停止靠回调里看一眼 `stopped` 标志
+让 native 收手，外加 `pause + flush` 立刻静音。
+
+**依赖代价**：`commons-compress`（+ commons-io / codec / lang3）。Android 的 `java.util.zip`
+不认 bzip2，而这些模型只有 `.tar.bz2` 一种分发格式。四个纯 Java jar，Apache-2.0。
 
 ## 5. 已知边界
 

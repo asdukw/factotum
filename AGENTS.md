@@ -34,6 +34,7 @@ Android SDK（compileSdk 36）、`ndk;29.0.14206865`、`cmake;3.31.6`（后三�
 # 首次准备：libnode（含 NDK 里的 libc++_shared.so）与 vendored dsh
 git submodule update --init --recursive   # 设备工具插件在独立仓库
 .\tools\fetch-libnode.ps1
+.\tools\fetch-sherpa.ps1      # 本地朗读引擎的 native 库（24MB；不跑则本地引擎不可用）
 .\tools\bundle-dsh.ps1
 
 # 构建 + 单测（在 android/ 下执行）
@@ -455,7 +456,9 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 | `voice/SpeakableText.kt` | 纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测钉住） |
 | `voice/TtsEngine.kt` | 引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
 | `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
-| `voice/LocalTtsEngine.kt` | 本地开源引擎（**占位，推理还没接上**） |
+| `voice/LocalTtsEngine.kt` | 本地引擎：sherpa-onnx 合成 + AudioTrack 流式播放 |
+| `voice/TtsModel*.kt` + `TtsArchive.kt` | 模型目录 / 下载（复用更新那套续传）/ 解 tar.bz2 |
+| `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 JNI 绑定；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
 | `voice/VoiceReader.kt` | 单例：唯一状态源、一次只读一条、音频焦点 |
 | `voice/VoiceSettings.kt` | 偏好：引擎 / 自动朗读 / 语速 / 音色（**非密**） |
 | `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」 |
@@ -475,6 +478,15 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 - **`initialize()` 必须有超时**：设备上一个 TTS 引擎都没有时（国产 ROM 常见：引擎装了但要
   用户先去系统设置里选一次）回调**可能永远不来**，不设超时就是静默卡死。
 - **焦点被抢走就停，不自动续读**；**不在后台继续读**（没有前台服务，退到后台可能被冻住）。
+- **本地引擎要跑 `tools/fetch-sherpa.ps1`**（拉 24MB 的 `libsherpa-onnx-jni.so`，不入库）；
+  用 static-link 变体，单个 .so，不依赖 `libc++_shared.so`。
+- **模型只有 `chaowen`（CC0）与 `xiao_ya`（非商用）两条**：目录里不许放授权不明的权重，
+  界面必须把授权显示在下载按钮旁边。MeloTTS（MIT）因为 GitHub 归档里 int8 是 LFS 指针、
+  fp32 又 170MB 而没收 —— 细节见 `docs/voice.md` §4。
+- **解包是「解到 staging → rename」**，且必须挡路径穿越：直接解到正式目录，解到一半被杀会
+  留下「看起来装好了」的目录，然后在 native 层崩。`TtsArchiveTest` 用自造的 tar.bz2 钉住。
+- **vendor 的 `Tts.kt` 不要手改**：JNI 按字段名取值，少一个字段不报编译错、会在 native 层崩。
+  升级时与 `fetch-sherpa.ps1` 的版本一起换。
 - 正文**不进日志**：`TappetVoice` 只记引擎名、段数、失败原因。
 
 ### 几条不许碰的约束
@@ -646,6 +658,7 @@ android/                        唯一运行时（Kotlin / Compose）
   app/src/test/                 JVM 单测      app/src/androidTest/  真机测试
 tools/
   fetch-libnode.ps1             拉 pinned libnode + 从 NDK sysroot 复制 libc++_shared 到 jniLibs
+  fetch-sherpa.ps1              拉 sherpa-onnx 的预编译 Android 库（static-link 变体，单个 .so）
   bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验与模型模态索引）
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）

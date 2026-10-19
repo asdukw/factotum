@@ -15,11 +15,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,15 +35,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tappet.app.voice.TtsModel
+import com.tappet.app.voice.TtsModelDownloader
+import com.tappet.app.voice.TtsModelInstaller
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
 
 /**
- * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色。
+ * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色，以及本地模型的下载管理。
  *
  * 两个引擎是**两种取舍**，不是新旧关系：系统 TTS 装完就能用、离线、不要流量，但音色随 ROM；
- * 本地引擎（sherpa-onnx + 中文模型）音色好，代价是几十 MB 的模型要下。
- * 所以这一页不做「推荐哪个」，只把两者的状态与代价写清楚。
+ * 本地引擎音色可选可换，代价是下一个十几 MB 的模型。所以这一页不做「推荐哪个」，
+ * 只把两者的状态与代价写清楚。
+ *
+ * 模型的**授权写在下载按钮旁边**：这些权重训练自不同来源的数据集，授权各不相同
+ * （小雅那份明确写着非商用）。用户点之前就该知道自己在下什么，而不是等装完了去翻仓库。
  */
 @Composable
 fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -57,6 +65,10 @@ fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     onRateChange = viewModel::setRate,
     onSelectVoice = viewModel::selectVoice,
     onPreview = viewModel::preview,
+    onSelectModel = viewModel::selectModel,
+    onInstallModel = viewModel::installModel,
+    onCancelInstall = viewModel::cancelInstall,
+    onDeleteModel = viewModel::deleteModel,
     modifier = modifier,
   )
 }
@@ -71,6 +83,10 @@ internal fun VoiceScreen(
   onRateChange: (Float) -> Unit,
   onSelectVoice: (String?) -> Unit,
   onPreview: () -> Unit,
+  onSelectModel: (TtsModel) -> Unit,
+  onInstallModel: (TtsModel) -> Unit,
+  onCancelInstall: () -> Unit,
+  onDeleteModel: (TtsModel) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   var voiceSheetOpen by remember { mutableStateOf(false) }
@@ -86,6 +102,16 @@ internal fun VoiceScreen(
           .padding(horizontal = 16.dp),
     ) {
       EngineSection(state = state, onSelectEngine = onSelectEngine)
+      // 模型列表只在选了本地引擎时出现：没选它的时候，这一组只是噪音。
+      if (state.engineId == VoiceEngines.LOCAL) {
+        ModelSection(
+          state = state,
+          onSelectModel = onSelectModel,
+          onInstallModel = onInstallModel,
+          onCancelInstall = onCancelInstall,
+          onDeleteModel = onDeleteModel,
+        )
+      }
 
       SectionLabel("朗读")
       SettingsGroup {
@@ -120,14 +146,10 @@ internal fun VoiceScreen(
 
   if (voiceSheetOpen) {
     ModalBottomSheet(onDismissRequest = { voiceSheetOpen = false }, sheetState = sheetState) {
-      VoiceList(
-        voices = state.voices,
-        selected = state.selectedVoice,
-        onSelect = {
-          onSelectVoice(it)
-          voiceSheetOpen = false
-        },
-      )
+      VoiceList(voices = state.voices, selected = state.selectedVoice, onSelect = {
+        onSelectVoice(it)
+        voiceSheetOpen = false
+      })
     }
   }
 }
@@ -147,13 +169,147 @@ private fun EngineSection(state: VoiceViewModel.UiState, onSelectEngine: (String
     SettingsDivider()
     EngineRow(
       title = "本地引擎",
-      subtitle = "开源模型在手机上推理：音色更好，要先下一个几十 MB 的模型",
+      subtitle = "模型在手机上推理：音色可选可换，要先下一个十几 MB 的模型",
       selected = state.engineId == VoiceEngines.LOCAL,
       unavailableReason = state.engineReasons[VoiceEngines.LOCAL],
       onClick = { onSelectEngine(VoiceEngines.LOCAL) },
     )
   }
 }
+
+/** 本地模型：下载 / 选中 / 删除。下载中的那一条把进度画在原地。 */
+@Composable
+private fun ModelSection(
+  state: VoiceViewModel.UiState,
+  onSelectModel: (TtsModel) -> Unit,
+  onInstallModel: (TtsModel) -> Unit,
+  onCancelInstall: () -> Unit,
+  onDeleteModel: (TtsModel) -> Unit,
+) {
+  SectionLabel("本地模型")
+  SettingsGroup {
+    state.models.forEachIndexed { index, model ->
+      if (index > 0) SettingsDivider()
+      ModelRow(
+        model = model,
+        selected = model.model.id == state.selectedModelId,
+        installing = state.installing?.takeIf { it.modelId == model.model.id },
+        onSelect = { onSelectModel(model.model) },
+        onInstall = { onInstallModel(model.model) },
+        onCancel = onCancelInstall,
+        onDelete = { onDeleteModel(model.model) },
+      )
+    }
+  }
+}
+
+@Composable
+private fun ModelRow(
+  model: VoiceViewModel.ModelUi,
+  selected: Boolean,
+  installing: TtsModelInstaller.State?,
+  onSelect: () -> Unit,
+  onInstall: () -> Unit,
+  onCancel: () -> Unit,
+  onDelete: () -> Unit,
+) {
+  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f)) {
+        Text(
+          text = model.model.label,
+          style = MaterialTheme.typography.bodyLarge,
+          color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+          text = modelSubtitle(model),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+          text = "授权：${model.model.license} —— ${model.model.licenseNote}",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Spacer(Modifier.width(12.dp))
+      ModelAction(
+        model = model,
+        installing = installing,
+        selected = selected,
+        onInstall = onInstall,
+        onCancel = onCancel,
+        onDelete = onDelete,
+        onSelect = onSelect,
+      )
+    }
+    if (installing != null) {
+      Spacer(Modifier.height(8.dp))
+      ModelProgress(installing)
+    }
+    installing?.error?.let { reason ->
+      Spacer(Modifier.height(6.dp))
+      Text(text = "下载失败：$reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+  }
+}
+
+@Composable
+private fun ModelAction(
+  model: VoiceViewModel.ModelUi,
+  installing: TtsModelInstaller.State?,
+  selected: Boolean,
+  onInstall: () -> Unit,
+  onCancel: () -> Unit,
+  onDelete: () -> Unit,
+  onSelect: () -> Unit,
+) {
+  when {
+    installing != null -> TextButton(onClick = onCancel) { Text("取消") }
+
+    !model.installed ->
+      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.model.sizeBytes)}") }
+
+    selected -> TextButton(onClick = onDelete) { Text("删除") }
+
+    else -> Button(onClick = onSelect) { Text("使用") }
+  }
+}
+
+@Composable
+private fun ModelProgress(installing: TtsModelInstaller.State) {
+  val progress = installing.progress
+  when (progress) {
+    is TtsModelDownloader.Progress.Downloading ->
+      if (progress.known) {
+        LinearProgressIndicator(
+          progress = { progress.percent / 100f },
+          modifier = Modifier.fillMaxWidth(),
+        )
+      } else {
+        // 服务器没给 Content-Length：显示不确定进度条，不编一个假百分比。
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+      }
+
+    TtsModelDownloader.Progress.Extracting -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+
+    null -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+  }
+}
+
+private fun modelSubtitle(model: VoiceViewModel.ModelUi): String {
+  val size =
+    when {
+      model.installed -> "已下载 ${formatMegabytes(model.installedBytes)}"
+      model.partialBytes > 0 -> "已下载 ${formatMegabytes(model.partialBytes)}，会接着下"
+      else -> "需要下载 ${formatMegabytes(model.model.sizeBytes)}"
+    }
+  return "${model.model.summary} · $size"
+}
+
+private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
 
 /** 音色行。本地引擎的音色由模型决定，所以那一档不给点。 */
 @Composable
@@ -221,11 +377,7 @@ private fun RateRow(rate: Float, label: String, onRateChange: (Float) -> Unit) {
 }
 
 @Composable
-private fun VoiceList(
-  voices: List<TtsVoice>,
-  selected: String?,
-  onSelect: (String?) -> Unit,
-) {
+private fun VoiceList(voices: List<TtsVoice>, selected: String?, onSelect: (String?) -> Unit) {
   Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
     Text(
       text = "音色",

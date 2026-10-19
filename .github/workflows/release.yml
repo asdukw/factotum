@@ -89,6 +89,9 @@ jobs:
           # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
           # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
           pwsh -NoProfile -File tools/fetch-rg.ps1
+          # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
+          # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
+          pwsh -NoProfile -File tools/fetch-sherpa.ps1
           pwsh -NoProfile -File tools/bundle-dsh.ps1
 
       - name: 还原签名材料

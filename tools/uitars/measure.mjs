@@ -16,7 +16,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { parseAction, toDeviceAction } from "./adapt.mjs";
+import {
+  GUI_OWL_SYSTEM_PROMPT,
+  GUI_OWL_TOOLS,
+  normalizeGuiOwl,
+  parseAction,
+  toDeviceAction,
+} from "./adapt.mjs";
 
 // 字节跳动官方 MOBILE_USE 模板（codes/ui_tars/prompt.py 的 MOBILE_USE_DOUBAO）。
 // **不要随手改**：UI-TARS-2B-SFT 是在这个格式上微调的，换了措辞它会退化成泛泛的描述。
@@ -53,6 +59,9 @@ const url = args.url ?? "http://127.0.0.1:18080";
 const maxSteps = Number(args["max-steps"] ?? 8);
 const task = args.task;
 const component = args.component ?? "com.tappet.app/.accessibility.DeviceActionReceiver";
+// uitars：自由文本动作（`Action: click(point=...)`）
+// guiowl：标准 tool call（`<tool_call>{"name":"mobile_use",...}</tool_call>`）
+const protocol = args.protocol ?? "uitars";
 if (!task) fail("缺少 --task");
 
 const adb = (adbArgs, opts = {}) =>
@@ -92,28 +101,45 @@ function screenshot() {
 
 async function ask(imageB64, prompt) {
   const started = Date.now();
+  const messages =
+    protocol === "guiowl"
+      ? [
+          { role: "system", content: GUI_OWL_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/png;base64,${imageB64}` } },
+            ],
+          },
+        ]
+      : [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/png;base64,${imageB64}` } },
+            ],
+          },
+        ];
+
   const response = await fetch(`${url}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "uitars",
+      model: protocol === "guiowl" ? "guiowl" : "uitars",
       temperature: 0,
       max_tokens: 256,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${imageB64}` } },
-          ],
-        },
-      ],
+      ...(protocol === "guiowl" ? { tools: GUI_OWL_TOOLS } : {}),
+      messages,
     }),
   });
   if (!response.ok) fail(`推理失败 HTTP ${response.status}: ${await response.text()}`);
   const body = await response.json();
+  const message = body.choices?.[0]?.message ?? {};
   return {
-    content: body.choices?.[0]?.message?.content ?? "",
+    content: message.content ?? "",
+    toolCalls: message.tool_calls ?? null,
     timings: body.timings ?? {},
     wallMs: Date.now() - started,
   };
@@ -145,11 +171,22 @@ async function main() {
   const steps = [];
   for (let step = 1; step <= maxSteps; step++) {
     const image = screenshot();
-    const prompt = PROMPT.replace("{instruction}", task) +
-      (history.length ? `\n\n## Action History\n${history.map((h, i) => `${i + 1}. ${h}`).join("\n")}` : "");
+    // 两条协议的提示词格式不同 —— 这是 2B SFT 模型最敏感的地方，不要混用。
+    const prompt =
+      protocol === "guiowl"
+        ? "Please generate the next move according to the UI screenshot, instruction and previous actions.\n\n" +
+          `Instruction: ${task}\n\n` +
+          "Previous actions:\n" +
+          (history.length ? history.map((h, i) => `Step${i + 1}: ${h}`).join("\n") : "No previous action.")
+        : PROMPT.replace("{instruction}", task) +
+          (history.length ? `\n\n## Action History\n${history.map((h, i) => `${i + 1}. ${h}`).join("\n")}` : "");
 
-    const { content, timings, wallMs } = await ask(image.toString("base64"), prompt);
-    const { thought, action } = parseAction(content);
+    const { content, toolCalls, timings, wallMs } = await ask(image.toString("base64"), prompt);
+    // 两条协议在这里汇合：都归一成同一个内部动作形状，后面共用一套映射。
+    const { thought, action } =
+      protocol === "guiowl"
+        ? { thought: content.trim(), action: normalizeGuiOwl(toolCalls?.[0]?.function?.arguments) }
+        : parseAction(content);
 
     if (!action) {
       console.log(`[${step}] 解析不出动作，停止。原始输出:\n${content.slice(0, 400)}\n`);

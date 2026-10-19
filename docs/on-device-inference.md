@@ -333,7 +333,59 @@ UI-TARS 的训练格式里，history 是**带截图**的（官方 prompt 原话�
 **「能指对位置」和「能完成任务」是两件事** —— 前面几节的 grounding 成绩不能外推成
 「这个模型能用」。
 
-## 8. LiteRT-LM 的现状（查证，未实测）
+## 8. GUI-Owl-1.5-2B：协议层可用，速度可调，但行为仍是短板
+
+`tools/uitars/` 已支持两种协议（`--protocol uitars|guiowl`），模型换成
+`GUI-Owl-1.5-2B-Instruct.Q4_K_M`（1.11 GB）+ `mmproj-Q8_0`（0.45 GB）。
+
+### 协议：**dsh 在协议层是接得住的**
+
+GUI-Owl 输出的是**标准 tool call**，不是 UI-TARS 那种自由文本：
+
+```
+Action: <一句话>
+<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[x,y]}}</tool_call>
+```
+
+`llama-server --jinja` 实测能把它解析成 OpenAI 的 `tool_calls`
+（`finish_reason: "tool_calls"`，`arguments` 是 JSON 字符串）。
+**所以「dsh 不能沿用」这个判断要修正** —— 协议不是障碍；障碍会在 system prompt 与工具集上。
+
+### 时延拆解（这是端侧唯一真正的卖点，必须逐项看）
+
+同一步、同一张图，改 `--image-max-tokens`：
+
+| 图像 token | prefill | decode | 合计 wall |
+|---|---|---|---|
+| 1024 | 1668 ms（1001 tok） | 1042 ms（34 tok） | **3.03 s** |
+| 256 | 657 ms（719 tok） | 776 ms（34 tok） | **1.63 s** |
+
+完整任务里（4–5 步）每步平均：1024 档 **3.7 s**、256 档 **2.2 s**。
+
+三条从数字里读出来的东西：
+
+1. **prefill 可调、decode 不可调**。prefill 随图像 token 数走（有 `--image-max-tokens` 这个旋钮）；
+   decode 是**逐 token 生成**，实测 **~33 tok/s**，34 个 token 就是 1 秒。
+2. **「Action: …」那句不是主要成本** —— 实测加不加都是 ~34 token。真正的大头是
+   **模型啰嗦**：分辨率一降，它看不清就开始写长句子猜（45–61 token），decode 反而涨到 1.3–1.8 s。
+3. **所以 decode 的下一个杠杆是「限制输出」而不是「限制图像」**。llama.cpp 有 GBNF grammar
+   与 `--grammar`，可以把输出钉死成只有 tool_call 的 JSON（十几 token ≈ 0.4 s）。
+   **这一步还没做**，是当前最便宜的时延优化。
+
+### 行为：和 UI-TARS 同一个短板 —— 判定不了「做完了没有」
+
+两个模型都在**任务实际已经成功之后**继续动作。最典型的一次：计算器已经打开
+（截图确认），模型却连续输出 `interact`（「与用户互动」）并声称「有阻塞窗口」，
+甚至说出 `CancellationToken` 这种与界面无关的词。
+
+这不是格式问题（协议解析正常）、也不是分辨率问题（1024 档同样如此），
+是**任务完成判定**这个能力本身缺失。AutoDroid 的 README 也把
+「not good at determining task completion」列为已知限制，是这个领域的通病。
+
+**对我们的直接含义**：端侧模型不能自己决定「什么时候停」。停止条件必须由外层给出
+（云端 planner 判定，或按步数/状态机兜底）。
+
+## 9. LiteRT-LM 的现状（查证，未实测）
 
 - Kotlin API 标为 **stable**，Android 是一等公民；原生 vision + audio；带约束解码的 function calling；
   自带 OpenAI 兼容的 `litert-lm serve`。
@@ -342,7 +394,7 @@ UI-TARS 的训练格式里，history 是**带截图**的（官方 prompt 原话�
   Android 要自己 `bazel build --config=android_arm64 //runtime/engine:litert_lm_main`，
   需要 Bazel 7.6.1 + NDK r28b。文档里 Android 只写了 Linux/macOS 宿主的步骤（Windows 宿主未验证）。
 
-## 9. 复现步骤
+## 10. 复现步骤
 
 ```powershell
 # 1. 拿官方 Snapdragon 构建（不需要 Qualcomm 工具链）
@@ -378,19 +430,25 @@ adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell c
 > `uiautomator dump` 会把 Tappet 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
 > 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
 
-## 10. 下一步（按性价比排序）
+## 11. 下一步（按性价比排序）
 
-**当前位置**：速度已经不是问题（1024 档 4.5 s/步，执行层只占 0.1 s），
-**拦路虎是任务级行为** —— UI-TARS-2B-SFT 在两个任务、两档分辨率下都完不成。
+**约束**：端侧的卖点是**时延**，用户对「停在某一页好几秒」非常敏感。
+当前每步 2.2–3.7 s，**还不到能用**。所以下一步全部围绕时延排，同时盯住行为。
 
-1. **排除 history 截图这个混淆**（唯一还没排除的解释）。UI-TARS 训练时 history 是带截图的，
-   `measure.mjs` 只给了文字。改成把历史截图也发进去重跑 —— 若行为变好，说明是这个；
-   若没变，就可以确定是模型能力问题，直接进 2。**成本明确**：每张历史图 ~1000 token。
-2. **换模型**：UI-TARS-2B-SFT 之外，候选是 ShowUI-2B（视觉 token 剪枝，打在编码瓶颈上）
-   与 UI-TARS-1.5-7B（ScreenSpot-Pro 61.6 / Android World 64.2，但 ~4.5 GB 装不下）。
-3. **若 2B 档普遍不行**，接受混合方案：端侧只做**粗筛 / 定位**（这一档它确实行，4/4），
-   多步规划仍走云端。这需要在 Tappet 里把「感知」和「决策」拆成两段 ——
-   现在的架构是合在一起的。
-4. **动作空间映射**仍然要做（UI-TARS 输出 `click(start_box=…)`，与现有 10 个工具不对齐）——
-   `tools/uitars/adapt.mjs` 是这一层的最小实现，正式接进产品时可以直接搬。
-5. 边缘方案：LiteRT-LM（NPU 走 EAP、Android 要自建 Bazel+NDK）。
+1. **限制输出token（最便宜的时延优化，还没做）**。decode 实测 ~33 tok/s，
+   模型现在每步吐 34–61 个 token。用 llama.cpp 的 GBNF grammar / `--grammar`
+   把输出钉死成只有 tool_call 的 JSON（十几 token），decode 能从 1.0–1.8 s 降到 ~0.4 s。
+   **这是唯一一个「只改配置就能省一秒」的动作。**
+2. **树可读时不走视觉（最大的结构性优化）**。`read_screen` 产出的是文本，
+   没有图像 token —— 2B 纯文本 prefill 是 3411 t/s 量级，一步可能 0.3 s 级。
+   视觉应该只作为「树不可读」的兜底。现在所有优化都花在兜底路径上，主路径没测过。
+3. **停止条件外置**。两个模型都判定不了「做完了没有」（见第 8 节）。
+   端侧模型只做单步执行，**由外层（云端 planner / 状态机 / 步数上限）决定何时停**。
+4. **dsh vs 官方 agent loop 对比**。协议层已经通了（第 8 节），可以做。
+   三个可测假设：
+   - A. system prompt 分布不匹配（2B SFT 对提示词极敏感）—— 比格式合规率与成功率
+   - B. 每步 token 税（dsh 会把注册的全部工具 schema 塞进每轮）—— 比 `prompt_n`
+   - C. 链路开销（插件桥 / 附件 / 流式）—— 比「模型耗时」与「端到端耗时」的差
+5. **换模型**：ShowUI-2B（视觉 token 剪枝）与 GUI-Owl-1.5-4B；
+   9B 的 AutoGLM（AndroidWorld 80.2，人类水平）在 Q4 下 6.17 GB，**这台机器装不下**。
+6. 边缘方案：LiteRT-LM（NPU 走 EAP、Android 要自建 Bazel+NDK）。

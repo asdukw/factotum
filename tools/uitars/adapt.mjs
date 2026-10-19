@@ -166,3 +166,121 @@ export function toDeviceAction(action, screen) {
       return { unsupported: action?.type ?? "unknown" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// GUI-Owl 1.5 的协议：标准 tool call，不是自由文本。
+//
+//   Action: <一句话>
+//   <tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[x,y]}}</tool_call>
+//
+// llama-server 会把它解析成 OpenAI 的 `tool_calls`（实测 `--jinja` 下可用），
+// 所以这一层只负责把 `arguments` 归一成和 UI-TARS 相同的内部形状 ——
+// 之后 `toDeviceAction` 两条协议共用一份映射，不会各自漂移。
+// ---------------------------------------------------------------------------
+
+/** GUI-Owl 的系统提示词（官方 SYSTEM_PROMPT 的尾部）。2B 模型靠这段硬约束稳住输出格式。 */
+export const GUI_OWL_SYSTEM_PROMPT = [
+  "# Tools",
+  "",
+  "You may call one or more functions to assist with the user query.",
+  "",
+  "For each function call, return a json object with function name and arguments within",
+  "<tool_call></tool_call> XML tags:",
+  "<tool_call>",
+  '{"name": <function-name>, "arguments": <args-json-object>}',
+  "</tool_call>",
+  "",
+  "# Response format",
+  "Response format for every step:",
+  "1) Action: a short imperative describing what to do in the UI.",
+  "2) A single <tool_call>...</tool_call> block containing only the JSON.",
+  "Rules:",
+  "- Output exactly in the order: Action, <tool_call>.",
+  "- Be brief: one sentence for Action.",
+  "- Do not output anything else outside those two parts.",
+  "- If finishing, use action=terminate in the tool call.",
+].join("\n");
+
+/** GUI-Owl 的 `mobile_use` 工具定义（坐标是 1000x1000 网格）。 */
+export const GUI_OWL_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "mobile_use",
+      description:
+        "Use a touchscreen to interact with a mobile device, and take screenshots. " +
+        "The screen's resolution is 1000x1000.",
+      parameters: {
+        type: "object",
+        required: ["action"],
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "key", "click", "long_press", "swipe", "type",
+              "system_button", "open", "wait", "answer", "interact", "terminate",
+            ],
+            description: "The action to perform.",
+          },
+          coordinate: { type: "array", description: "(x, y) in the 1000x1000 grid." },
+          coordinate2: { type: "array", description: "(x2, y2) for swipe." },
+          text: { type: "string" },
+          time: { type: "number" },
+          button: { type: "string", enum: ["Back", "Home", "Menu", "Enter"] },
+          status: { type: "string", enum: ["success", "failure"] },
+        },
+      },
+    },
+  },
+];
+
+/**
+ * GUI-Owl 的 `arguments` → 与 UI-TARS 共用的内部动作形状。
+ *
+ * 认不出来或 Tappet 执行层做不了的，如实标 `unsupported` —— 与 `toDeviceAction` 同一条原则：
+ * **不近似**。`key`（音量/电源等 keyevent）与 `interact`（要人介入）都没有对应的执行层动作。
+ */
+export function normalizeGuiOwl(argumentsJson) {
+  let args = argumentsJson;
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
+  }
+  if (!args || typeof args !== "object") return null;
+
+  const point = Array.isArray(args.coordinate)
+    ? { x: Number(args.coordinate[0]), y: Number(args.coordinate[1]) }
+    : null;
+
+  switch (args.action) {
+    case "click":
+      return point && Number.isFinite(point.x) ? { type: "click", ...point } : null;
+    case "long_press":
+      return point && Number.isFinite(point.x) ? { type: "long_press", ...point } : null;
+    case "type":
+      return { type: "type", content: String(args.text ?? "") };
+    case "open":
+      return { type: "open_app", appName: String(args.text ?? "").trim() || null };
+    case "swipe": {
+      const to = Array.isArray(args.coordinate2)
+        ? { x: Number(args.coordinate2[0]), y: Number(args.coordinate2[1]) }
+        : null;
+      return point && to ? { type: "drag", start: point, end: to } : null;
+    }
+    case "system_button": {
+      const map = { Back: "press_back", Home: "press_home" };
+      const mapped = map[args.button];
+      return mapped ? { type: mapped } : { type: "unsupported", reason: `system_button:${args.button}` };
+    }
+    case "wait":
+      return { type: "wait", seconds: Number(args.time ?? 1) };
+    case "terminate":
+    case "answer":
+      return { type: "finished", content: String(args.text ?? args.status ?? "") };
+    default:
+      return { type: "unsupported", reason: `action:${args.action}` };
+  }
+}

@@ -12,6 +12,7 @@ import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.ScheduledTasksScreen
 import com.tappet.app.ui.settings.SettingsScreen
 import com.tappet.app.ui.settings.TermuxBridgeScreen
+import com.tappet.app.ui.settings.VoiceScreen
 
 @Composable
 fun MainNavigation() {
@@ -31,6 +32,7 @@ fun MainNavigation() {
             onOpenProviders = { backStack.add(Providers) },
             onOpenConnectors = { backStack.add(Connectors) },
             onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
+            onOpenVoice = { backStack.add(Voice) },
           )
         }
         entry<Providers> {
@@ -59,6 +61,9 @@ fun MainNavigation() {
         }
         entry<TermuxBridge> {
           TermuxBridgeScreen(onBack = { backStack.removeLastOrNull() })
+        }
+        entry<Voice> {
+          VoiceScreen(onBack = { backStack.removeLastOrNull() })
         }
       },
   )

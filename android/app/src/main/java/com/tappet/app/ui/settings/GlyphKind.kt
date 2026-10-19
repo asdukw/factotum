@@ -47,6 +47,7 @@ internal enum class GlyphKind {
   EyeOff,
   Sliders,
   Cog,
+  Speaker,
 }
 
 @Composable
@@ -95,6 +96,7 @@ private fun DrawScope.drawGlyph(kind: GlyphKind, tint: Color, u: Float) {
     GlyphKind.EyeOff,
     GlyphKind.Sliders,
     GlyphKind.Cog,
+    GlyphKind.Speaker,
     -> drawActionGlyph(kind, tint, u)
   }
 }
@@ -310,6 +312,8 @@ private fun DrawScope.drawActionGlyph(kind: GlyphKind, tint: Color, u: Float) {
       fillCircle(tint, u, 8f, 18f, 2f)
     }
 
+    GlyphKind.Speaker -> drawSpeakerGlyph(tint, u)
+
     GlyphKind.Cog -> {
       circle(tint, u, 12f, 12f, 3.2f)
       repeat(8) { index ->
@@ -327,6 +331,38 @@ private fun DrawScope.drawActionGlyph(kind: GlyphKind, tint: Color, u: Float) {
 
     else -> Unit
   }
+}
+
+/** 喇叭：箱体 + 两道声波。与聊天页那个 16dp 的是同一形状，尺寸不同而已。 */
+private fun DrawScope.drawSpeakerGlyph(tint: Color, u: Float) {
+  strokePath(tint, u) {
+    moveTo(3.5f * u, 9f * u)
+    lineTo(7f * u, 9f * u)
+    lineTo(11.5f * u, 4.5f * u)
+    lineTo(11.5f * u, 19.5f * u)
+    lineTo(7f * u, 15f * u)
+    lineTo(3.5f * u, 15f * u)
+    close()
+  }
+  // 两道弧线一近一远：只有一道时小尺寸下像个「旗子」。
+  drawArc(
+    tint,
+    startAngle = -50f,
+    sweepAngle = 100f,
+    useCenter = false,
+    topLeft = Offset(10f * u, 8.5f * u),
+    size = Size(6f * u, 7f * u),
+    style = Stroke(LINE_WIDTH * u, cap = StrokeCap.Round),
+  )
+  drawArc(
+    tint,
+    startAngle = -50f,
+    sweepAngle = 100f,
+    useCenter = false,
+    topLeft = Offset(10f * u, 5f * u),
+    size = Size(11f * u, 14f * u),
+    style = Stroke(LINE_WIDTH * u, cap = StrokeCap.Round),
+  )
 }
 
 private fun DrawScope.line(

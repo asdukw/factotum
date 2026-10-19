@@ -47,6 +47,7 @@ fun SettingsScreen(
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
+  onOpenVoice: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -64,6 +65,7 @@ fun SettingsScreen(
     onOpenProviders = onOpenProviders,
     onOpenConnectors = onOpenConnectors,
     onOpenScheduledTasks = onOpenScheduledTasks,
+    onOpenVoice = onOpenVoice,
     modifier = modifier,
   )
 }
@@ -75,6 +77,7 @@ internal fun SettingsScreen(
   onOpenProviders: () -> Unit,
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
+  onOpenVoice: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -96,7 +99,7 @@ internal fun SettingsScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 24.dp),
       ) {
-        GeneralSection()
+        GeneralSection(autoRead = state.voiceAutoRead, onOpenVoice = onOpenVoice)
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
         SectionLabel("执行层")
@@ -115,7 +118,7 @@ internal fun SettingsScreen(
 }
 
 @Composable
-private fun GeneralSection() {
+private fun GeneralSection(autoRead: Boolean, onOpenVoice: () -> Unit) {
   SettingsGroup {
     SettingsRow(
       glyph = GlyphKind.Person,
@@ -134,6 +137,20 @@ private fun GeneralSection() {
     ) {
       StatusBadge("即将推出", BadgeTone.Muted)
     }
+    SettingsDivider()
+    // 朗读的开关在这里，不在聊天页：聊天页那个喇叭是「这一次读给我听」，
+    // 而「每次都读」是个偏好 —— 两件事放两个地方，各自都只有一种含义。
+    SettingsRow(
+      glyph = GlyphKind.Speaker,
+      title = "语音",
+      subtitle =
+        if (autoRead) {
+          "回复完自动朗读"
+        } else {
+          "点回复下方的喇叭朗读"
+        },
+      onClick = onOpenVoice,
+    )
   }
 }
 

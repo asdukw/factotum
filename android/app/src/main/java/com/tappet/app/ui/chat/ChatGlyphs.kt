@@ -8,7 +8,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 
@@ -200,6 +202,44 @@ internal fun SearchGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp))
       Offset(size.width * 0.82f, size.height * 0.82f),
       strokeWidth = w,
       cap = StrokeCap.Round,
+    )
+  }
+}
+
+/** 朗读：喇叭（梯形箱体 + 两道声波）。 */
+@Composable
+internal fun SpeakerGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    val box =
+      Path().apply {
+        moveTo(size.width * 0.12f, size.height * 0.36f)
+        lineTo(size.width * 0.3f, size.height * 0.36f)
+        lineTo(size.width * 0.52f, size.height * 0.16f)
+        lineTo(size.width * 0.52f, size.height * 0.84f)
+        lineTo(size.width * 0.3f, size.height * 0.64f)
+        lineTo(size.width * 0.12f, size.height * 0.64f)
+        close()
+      }
+    drawPath(box, tint, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    // 两道弧线一近一远：只有一道时小尺寸下像个「旗子」。
+    drawArc(
+      color = tint,
+      startAngle = -52f,
+      sweepAngle = 104f,
+      useCenter = false,
+      topLeft = Offset(size.width * 0.5f, size.height * 0.32f),
+      size = Size(size.width * 0.28f, size.height * 0.36f),
+      style = Stroke(w, cap = StrokeCap.Round),
+    )
+    drawArc(
+      color = tint,
+      startAngle = -52f,
+      sweepAngle = 104f,
+      useCenter = false,
+      topLeft = Offset(size.width * 0.5f, size.height * 0.16f),
+      size = Size(size.width * 0.46f, size.height * 0.68f),
+      style = Stroke(w, cap = StrokeCap.Round),
     )
   }
 }

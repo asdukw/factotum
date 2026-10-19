@@ -26,3 +26,6 @@ import kotlinx.serialization.Serializable
 
 /** Gmail 连接器：客户端 id / 授权 / 断开。 */
 @Serializable data object GmailConnector : NavKey
+
+/** 语音设置（设置 → 语音）：朗读引擎 / 自动朗读 / 语速 / 音色。 */
+@Serializable data object Voice : NavKey

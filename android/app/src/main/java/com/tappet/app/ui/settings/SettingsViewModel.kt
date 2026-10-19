@@ -6,6 +6,7 @@ import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.connector.ConnectorStore
 import com.tappet.app.connector.GMAIL_CONNECTOR_ID
+import com.tappet.app.voice.VoiceSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,8 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
     /** 连接器是否已授权。只读「有没有凭据」，读不到凭据本体。 */
     val gmailConnected: Boolean = false,
     val gmailAccount: String? = null,
+    /** 回复完自动朗读。读偏好，不读任何正文。 */
+    val voiceAutoRead: Boolean = false,
   )
 
   private val _state = MutableStateFlow(UiState())
@@ -41,6 +44,7 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
     // 所以它们在**两条返回路径上都要写进去** —— 没有启用任何提供商时同样要显示。
     val linux = TermuxBridgeStore.state(appContext).enabled
     val connector = ConnectorStore.status(appContext, GMAIL_CONNECTOR_ID)
+    val voiceAutoRead = VoiceSettings.autoRead(appContext)
     val preset = AgentConfigStore.enabledPreset(appContext)
     if (preset == null) {
       _state.value =
@@ -50,6 +54,7 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
           linuxConfigured = linux,
           gmailConnected = connector.connected,
           gmailAccount = connector.account,
+          voiceAutoRead = voiceAutoRead,
         )
       return
     }
@@ -62,6 +67,7 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
         linuxConfigured = linux,
         gmailConnected = connector.connected,
         gmailAccount = connector.account,
+        voiceAutoRead = voiceAutoRead,
       )
   }
 }

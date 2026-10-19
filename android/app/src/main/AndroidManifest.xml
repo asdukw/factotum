@@ -28,6 +28,14 @@
         </intent>
         <!-- 包可见性：要能看见并启动 Termux 的 RunCommandService（Android 11+ 默认看不见别的包） -->
         <package android:name="com.termux" />
+        <!-- 朗读：Android 11+ 的包可见性**默认看不见 TTS 引擎服务**，不声明这一条时
+             `TextToSpeech` 的初始化立刻失败（实测 ColorOS：logcat 里
+             `AppsFilter: com.tappet.app -> com.oplus.ttsaccessibilityengine BLOCKED`，
+             OnInitListener 直接回 ERROR）。这类「两处必须一致、错了不报错」的约束由
+             SystemIntentsManifestTest 钉住。 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <!-- Termux 定义的权限，用于请它在自己的环境里执行命令（拉起手机上的 Linux 桥）。

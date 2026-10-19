@@ -445,6 +445,38 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   「执行层 → Linux 环境」、插件 `run_command`（先在插件仓库提交再更新 submodule 指针）。
   **debug 广播 `op TERMUX`** 可在无 UI 的情况下验证启动器 —— 但授权那一下仍要用户点。
 
+### 朗读（TTS）= 引擎接口 + 可朗读文本 + 单一状态源（2026-10-19 起）
+
+把助手回复读出来。**只做出声这一侧**，语音输入（STT）不在这一版里。深度说明见
+`docs/voice.md`；这里只列动手时必须知道的。
+
+| 位置 | 管什么 |
+|---|---|
+| `voice/SpeakableText.kt` | 纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测钉住） |
+| `voice/TtsEngine.kt` | 引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
+| `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
+| `voice/LocalTtsEngine.kt` | 本地开源引擎（**占位，推理还没接上**） |
+| `voice/VoiceReader.kt` | 单例：唯一状态源、一次只读一条、音频焦点 |
+| `voice/VoiceSettings.kt` | 偏好：引擎 / 自动朗读 / 语速 / 音色（**非密**） |
+| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」 |
+
+- **两种引擎是取舍，不是新旧关系**：系统 TTS 装完就能用、离线、不要流量，但音色随 ROM；
+  本地引擎音色好，代价是下一个几十 MB 的模型。所以做成**用户的一个设置**，默认系统 TTS。
+- **都不走云端 TTS**（提供商的 `/audio/speech`）：那会把回复正文发给另一个服务，
+  与「正文只进给模型的工具结果」这条红线冲突。多一条出网路径要有明确理由，音色好还不是。
+- **不能把正文直接交给 TTS**：`**粗体**`、代码围栏、链接的 URL、emoji 读出来是噪音或灾难。
+  朗读走与渲染**同一条** Markdown 解析（`ui/chat/Markdown`），只把标记摊平；代码块与分隔线
+  整个丢掉。换行是**强制**断点（列表项合并成一段就读没了）。
+- **切段上限 320 字符**（`getMaxSpeechInputLength()` 是 4000）：切得短才有得停 ——
+  一段读完才检查一次取消，长段会让「停止」等好几秒。
+- **`<queries>` 里必须有 `TTS_SERVICE`**：Android 11+ 的包可见性默认看不见 TTS 引擎服务，
+  不声明时 `OnInitListener` 直接回 ERROR，现象是「点了朗读没反应」（真机实测：
+  `AppsFilter ... com.oplus.ttsaccessibilityengine BLOCKED`）。`SystemIntentsManifestTest` 钉住。
+- **`initialize()` 必须有超时**：设备上一个 TTS 引擎都没有时（国产 ROM 常见：引擎装了但要
+  用户先去系统设置里选一次）回调**可能永远不来**，不设超时就是静默卡死。
+- **焦点被抢走就停，不自动续读**；**不在后台继续读**（没有前台服务，退到后台可能被冻住）。
+- 正文**不进日志**：`TappetVoice` 只记引擎名、段数、失败原因。
+
 ### 几条不许碰的约束
 
 - **契约与 ROM 解耦**：执行层只依赖 `DeviceBridge` 与 `OemProfile`；换 ROM 只加一个 `OemProfile`。
@@ -608,6 +640,7 @@ android/                        唯一运行时（Kotlin / Compose）
     data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/SecretVault 存用户填的 key
     device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
     node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
+    voice/                      朗读：Markdown → 可朗读文本、引擎接口（系统 TTS / 本地）、单一状态源
     ui/                         Compose 界面（聊天 / 首页 / 设置）
   app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
   app/src/test/                 JVM 单测      app/src/androidTest/  真机测试
@@ -728,6 +761,10 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `run_command` 不出现在工具表里 | 没生成 token（未启用）或 env 没注入 → 设置页点「启用」后**重启 App** |
 | 桥在跑但每条命令都 401 | 是别的 token 起的桥（比如手动跑过 setup.sh）→ 点「重新连接」，让它按 pidfile 换掉 |
 | `run_command` 报连不上 | Termux 里的桥没在跑 → 打开 Termux 执行 `python ~/bridge.py`；日志在 `~/bridge.log` |
+| 点「朗读」没反应、提示几秒就消失 | 清单缺 `TTS_SERVICE` 查询意图 → Android 11+ 包可见性把 TTS 引擎判成 BLOCKED（`adb logcat \| grep AppsFilter`）；修法见 `docs/voice.md` §3 |
+| 朗读报「没有可用的文字转语音引擎」 | 设备上真没有可用引擎（或引擎装了但没被选为默认）→ 系统设置 → 无障碍 → 文字转语音里选一个 |
+| 朗读念出「星号星号」「横杠」 | `SpeakableText` 没摊平那种 Markdown 结构 → 在 `SpeakableTextTest` 里补一条再改 |
+| 点「停止」要等好几秒才停 | 切段太长（一段读完才检查取消）→ 调小 `TtsEngine.maxChunk` |
 
 ## 深度文档
 
@@ -739,6 +776,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
 | `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |
 | `docs/scheduled-tasks.md` | 动定时任务之前：Android 没有 cron、精确/不精确两档、错过不补跑、隐私边界 |
+| `docs/voice.md` | 动朗读 / TTS 之前：两个引擎的取舍、Markdown 摊平、包可见性那个坑 |
 | `docs/user-questions.md` | 动 `ask_user_question` / 任何「模型等用户回答」的功能之前：waterfall 的注册顺序坑、答案的三条语义、为什么不能只开工具不做 UI |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |

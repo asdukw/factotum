@@ -101,6 +101,8 @@ import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.ui.components.ProviderModelIcon
+import com.tappet.app.voice.VoiceReader
+import com.tappet.app.voice.VoiceSettings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -179,6 +181,9 @@ internal fun ChatScreen(
     if (state.isStreaming) {
       keyboard?.hide()
       focus.clearFocus()
+      // 新的任务开始了，上一条还在念的话立刻停 —— 用户接下来要看的是新回复，
+      // 旧回复的声音会和新的正文抢注意力。
+      VoiceReader.stop()
     }
   }
 
@@ -257,6 +262,53 @@ internal fun ChatScreen(
   }
 }
 
+/**
+ * 朗读失败的提示只在屏幕上停一会儿：它是提示，不是需要用户处理的错误。
+ *
+ * 单独一个 composable 是为了让它没有布局职责 —— 效果与界面混在一起时，
+ * 「这个分支到底影响布局还是只影响副作用」读不出来。
+ */
+@Composable
+private fun VoiceErrorLinger(error: String?) {
+  LaunchedEffect(error) {
+    if (error != null) {
+      delay(VOICE_ERROR_LINGER_MS)
+      VoiceReader.clearError()
+    }
+  }
+}
+
+/**
+ * 回复读完时自动朗读。
+ *
+ * 判据是「**这一条刚刚流式结束**」，不能是「最后一条是助手且不在流式中」——
+ * 切会话、重启 App、重载运行时之后历史消息也长这样，那会让用户一进聊天页就被念一段旧回答。
+ * 所以先记住「哪一条在流式」，等它停下来才读。
+ */
+@Composable
+private fun AutoReadOnFinish(messages: List<ChatMessage>, sessionId: String?) {
+  val context = LocalContext.current
+  var pending by remember(sessionId) { mutableStateOf<String?>(null) }
+  LaunchedEffect(messages) {
+    val last = messages.lastOrNull() ?: return@LaunchedEffect
+    if (last.role == ChatRole.Assistant && last.streaming) {
+      pending = last.id
+      return@LaunchedEffect
+    }
+    if (!isReadableAnswer(last, pending)) return@LaunchedEffect
+    pending = null
+    if (VoiceSettings.autoRead(context)) VoiceReader.speak(context, last.id, last.content)
+  }
+}
+
+/** 这条助手消息是不是「刚刚读完、值得朗读」的那一条。 */
+private fun isReadableAnswer(message: ChatMessage, pendingId: String?): Boolean =
+  pendingId != null &&
+    message.id == pendingId &&
+    !message.streaming &&
+    message.content.isNotBlank() &&
+    message.error == null
+
 @Composable
 private fun ChatBody(
   state: ChatUiState,
@@ -273,6 +325,12 @@ private fun ChatBody(
     state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
 
   val lastMessage = state.messages.lastOrNull()
+
+  val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
+  val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
+
+  VoiceErrorLinger(voiceError)
+  AutoReadOnFinish(messages = state.messages, sessionId = state.sessionId)
 
   // 新消息 / 流式增量都跟着滚到底部
   LaunchedEffect(
@@ -302,6 +360,7 @@ private fun ChatBody(
       BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
     }
     state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
+    voiceError?.let { reason -> BannerText("朗读失败：$reason") }
 
     LazyColumn(
       state = listState,
@@ -312,7 +371,9 @@ private fun ChatBody(
       if (state.messages.isEmpty()) {
         item { EmptyHint() }
       }
-      items(items = state.messages, key = { it.id }) { message -> MessageBubble(message) }
+      items(items = state.messages, key = { it.id }) { message ->
+        MessageBubble(message, speakingId = voiceState?.messageId)
+      }
     }
 
     ChatInputBar(
@@ -619,8 +680,12 @@ private fun EmptyHint() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
-  if (message.role == ChatRole.User) UserBubble(message.content) else AssistantMessage(message)
+private fun MessageBubble(message: ChatMessage, speakingId: String? = null) {
+  if (message.role == ChatRole.User) {
+    UserBubble(message.content)
+  } else {
+    AssistantMessage(message, speaking = message.id == speakingId)
+  }
 }
 
 /** 用户消息：右侧浅色气泡，无头像，对齐 ChatGPT / DeepSeek。 */
@@ -644,7 +709,7 @@ private fun UserBubble(content: String) {
 
 /** 助手消息：全宽正文（无气泡），上面依次挂思考折叠与工具卡，末尾一行操作。 */
 @Composable
-private fun AssistantMessage(message: ChatMessage) {
+private fun AssistantMessage(message: ChatMessage, speaking: Boolean = false) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
     ProcessBlock(message)
@@ -662,8 +727,37 @@ private fun AssistantMessage(message: ChatMessage) {
     }
 
     if (message.content.isNotBlank() && !message.streaming && error == null) {
-      CopyAction(text = message.content)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        SpeakAction(messageId = message.id, markdown = message.content, speaking = speaking)
+        Spacer(Modifier.width(2.dp))
+        CopyAction(text = message.content)
+      }
     }
+  }
+}
+
+/**
+ * 朗读助手正文。正在读这一条时按钮变成「停止」——
+ * 否则用户看到的是「点了没反应」（其实是在读别的段落，或者已经读完了）。
+ */
+@Composable
+private fun SpeakAction(messageId: String, markdown: String, speaking: Boolean) {
+  val context = LocalContext.current
+  val tint = if (speaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier =
+      Modifier.clip(RoundedCornerShape(8.dp))
+        .clickable { VoiceReader.toggle(context, messageId, markdown) }
+        .padding(horizontal = 8.dp, vertical = 6.dp),
+  ) {
+    SpeakerGlyph(tint = tint)
+    Spacer(Modifier.width(6.dp))
+    Text(
+      text = if (speaking) "停止" else "朗读",
+      style = MaterialTheme.typography.labelSmall,
+      color = tint,
+    )
   }
 }
 
@@ -875,6 +969,9 @@ private val USER_BUBBLE_MAX_WIDTH = 300.dp
 
 private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"
+
+/** 朗读失败的提示在屏幕上停留多久（毫秒）。 */
+private const val VOICE_ERROR_LINGER_MS = 5_000L
 
 /**
  * 模型切换 sheet，对齐 RikkaHub 的样式：顶部胶囊搜索 → 供应商分组（可折叠）→ 圆角模型卡

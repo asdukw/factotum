@@ -14,6 +14,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 设置闹钟（set_alarm → AlarmClock.ACTION_SET_ALARM）。AOSP / Pixel 的 DeskClock 把
+         处理这个 action 的 HandleSetApiCalls 声明成 android:permission=...SET_ALARM，
+         不声明就 SecurityException（模拟器实测）。protectionLevel=normal，装包即授，
+         不弹框。厂商时钟（ColorOS 等）不校验它，所以真机上不声明也「碰巧」能用。 -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
     <!-- 让启动器类 App 对 launch_app 可见（不针对任何具体 App） -->
     <queries>
         <intent>

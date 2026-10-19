@@ -615,6 +615,9 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 任务结束 App 崩溃（FORTIFY/SIGABRT） | 内嵌 Node 调了 `process.exit()`（含 SDK 的 `shutdown`）→ 只记录、不退出 |
 | 广播 TASK 后 App 被 ANR 杀 | 别用 `goAsync` 等任务完成（Broadcast Timeout 60s）→ 广播立即返回，任务异步跑 |
 | 广播 START/TASK 没反应 | ColorOS defer 后台广播 → 先 `monkey` 拉起 App 再广播 |
+| 广播后卡在 `debug task start`、再没有下文 | **cached app freezer 把进程冻住了**（Android 11+，约 10 秒）。首次启动要解压 dsh 运行时（模拟器实测 **122 秒**），期间没有前台服务就必冻 → 先 `am start` 把 App 拉到前台再广播。广播**不在前台的 FGS 白名单里**，`startForegroundService` 会抛 `ForegroundServiceStartNotAllowedException`，所以接收器里那一步是尽力而为（AlarmManager 那条路有白名单，不受影响） |
+| `set_alarm` 报 SecurityException | AOSP / Pixel 的 DeskClock 把 `HandleSetApiCalls` 声明成 `android:permission=com.android.alarm.permission.SET_ALARM`（protectionLevel `normal`）→ 清单里必须声明这条权限；厂商时钟不校验它，所以真机上不声明也「碰巧」能用。`SystemIntentsManifestTest` 钉住 |
+| 新建日程时 logcat 出现 `Permission Denial: opening provider ...CalendarProvider2` | `ACTION_INSERT` 只给 `data` 不给 type 时，AMS 会拿**我们进程的身份**去问 provider 要 MIME（我们没有 `READ_CALENDAR`）→ intent 里显式 `type = vnd.android.cursor.dir/event` 就不查了 |
 | JSON-RPC 偶发不响应 | stdout 混入了日志 → phone profile 不得挂 stdout logger；诊断一律 stderr |
 | `adb shell am broadcast --es task "a b"` 丢参数 | 整条命令再包一层引号：`adb shell "am broadcast ... 'a b'"` |
 | dsh 启动报 `node-addon-require-builtin` | 用了 `boot()`/loader → 改用 `launcher.mjs` |

@@ -21,6 +21,12 @@ import android.provider.CalendarContract
  *    不是「已创建」；返回文案必须这么说，否则模型会以为事情办完了。
  */
 object SystemIntents {
+  /**
+   * `CalendarContract` 里没有公开这个常量（`Events` 只有 `CONTENT_URI`），但日历 App 的
+   * `ACTION_INSERT` intent-filter 就是按这个 MIME 声明的（实测 Google 日历、Etar 都是）。
+   */
+  private const val EVENT_CONTENT_TYPE = "vnd.android.cursor.dir/event"
+
   fun setAlarm(context: Context, action: DeviceAction.SetAlarm): DeviceActionResult {
     if (action.hour !in 0..23 || action.minute !in 0..59) {
       return DeviceActionResult(ok = false, summary = "时间不合法：小时 0–23、分钟 0–59", code = "BAD_TIME")
@@ -52,6 +58,10 @@ object SystemIntents {
     val intent =
       Intent(Intent.ACTION_INSERT).apply {
         data = CalendarContract.Events.CONTENT_URI
+        // 显式给 MIME：不给的话 AMS 解析时会拿**我们进程的身份**去问日历 provider 要类型，
+        // 而我们没有 READ_CALENDAR → 每次都在 logcat 里留一条 Permission Denial，
+        // 解析只能靠 scheme 兜底。给了类型就不查 provider（模拟器实测）。
+        type = EVENT_CONTENT_TYPE
         putExtra(CalendarContract.Events.TITLE, action.title)
         putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, action.beginMillis)
         putExtra(CalendarContract.EXTRA_EVENT_END_TIME, action.endMillis)

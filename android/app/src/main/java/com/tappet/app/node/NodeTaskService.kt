@@ -49,8 +49,15 @@ class NodeTaskService : Service() {
     private val holders = AtomicInteger(0)
 
     fun start(context: Context) {
-      if (holders.incrementAndGet() != 1) return
-      ContextCompat.startForegroundService(context, Intent(context, NodeTaskService::class.java))
+      // 计数只在服务**真的起来了**之后才加：Android 12+ 从后台广播里 startForegroundService
+      // 会抛 ForegroundServiceStartNotAllowedException，先加后调的话计数会永久偏一位，
+      // 之后那次 stop 就停不掉正在跑的服务。
+      synchronized(holders) {
+        if (holders.get() == 0) {
+          ContextCompat.startForegroundService(context, Intent(context, NodeTaskService::class.java))
+        }
+        holders.incrementAndGet()
+      }
     }
 
     fun stop(context: Context) {

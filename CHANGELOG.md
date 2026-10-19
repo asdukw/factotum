@@ -5,6 +5,17 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
+## [Unreleased]
+
+### 修复
+
+- **设置闹钟在 AOSP / Pixel 时钟上直接失败**：DeskClock 把处理 `ACTION_SET_ALARM` 的
+  activity 声明成需要 `com.android.alarm.permission.SET_ALARM`，不声明就 `SecurityException`。
+  该权限是普通级（装包即授、不弹框），清单里补上即可。厂商时钟不校验它，
+  所以真机上一直「碰巧」能用，换台设备就静默失效。
+- **新建日程会在 logcat 里留下一条 `Permission Denial`**：intent 只给 `data` 不给 MIME 时，
+  系统解析会拿应用身份去问日历 provider 要类型（应用没有 `READ_CALENDAR`）。显式给 MIME 即可。
+
 ## [0.8.0] - 2026-10-19
 
 ### 新增

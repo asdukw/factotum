@@ -35,6 +35,7 @@ class NodeDebugReceiver : BroadcastReceiver() {
       "START" -> {
         CoroutineScope(Dispatchers.IO).launch {
           try {
+            bestEffortForegroundService(app)
             val info = NodeRuntime.initialize(app)
             Log.i(TAG, "runtime ready: ${info["serverInfo"]}")
           } catch (throwable: Throwable) {
@@ -79,8 +80,8 @@ class NodeDebugReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
           try {
             Log.i(TAG, "debug task start (${task.length} chars) session=$sessionId")
+            bestEffortForegroundService(app)
             NodeRuntime.initialize(app)
-            NodeTaskService.start(app)
             val outcome = NodeRuntime.runTask(sessionId, task)
             Log.i(
               TAG,
@@ -100,6 +101,24 @@ class NodeDebugReceiver : BroadcastReceiver() {
 
       else -> Log.w(TAG, "unknown op=$op")
     }
+  }
+
+  /**
+   * 尽量先把前台服务拉起来，再干长活。
+   *
+   * 广播进来的进程是 cached 状态，Android 11+ 的 cached app freezer 约十秒就把它冻住；
+   * 而首次 `initialize` 要解压 dsh 运行时（模拟器实测 **122 秒**），顺序反了就会冻在解压
+   * 中途 —— 表现是「广播没反应」，日志只停在 `debug task start`。界面路径（`DshStreamer`）
+   * 本来就是先起服务后 initialize。
+   *
+   * **但广播不在前台的 FGS 白名单里**（AlarmManager 那种才有），App 不在前台时
+   * `startForegroundService` 会抛 `ForegroundServiceStartNotAllowedException` ——
+   * 初版没包这一层，`START` 直接死在第一行。所以是尽力而为：起得来就受保护，
+   * 起不来就退回原来的行为，不把整条任务带崩。
+   */
+  private fun bestEffortForegroundService(app: Context) {
+    runCatching { NodeTaskService.start(app) }
+      .onFailure { Log.i(TAG, "foreground service not allowed from broadcast: ${it.javaClass.simpleName}") }
   }
 
   companion object {

@@ -272,7 +272,68 @@ llama-quantize mmproj-model-f16.gguf mmproj-model-q8_0.gguf Q8_0
   `decode: failed to find a memory slot for batch of size 1` 并把回答截断。加 `-c 8192` 解决。
   （高分辨率截图本身就要吃掉几千个视觉 token，默认上下文很容易不够。）
 
-## 7. LiteRT-LM 的现状（查证，未实测）
+## 7. UI-TARS 适配与端侧 GUI 任务实测
+
+代码在 `tools/uitars/`（纯测量工具，不是产品代码），细节与坑见那里的 `README.md`。
+这一节只记结论。
+
+### 适配的实质
+
+UI-TARS 是**动作策略**模型，不是会调工具的对话模型。它输出自己的格式，与 Tappet 的
+`DeviceAction` 没有交集，中间必须有一层翻译：
+
+```
+模型:  Action: click(start_box='(611,899)')      # 归一化 0–1000
+  ↓ adapt.mjs
+执行层: TAP_POINT x=743 y=2373                    # 屏幕像素
+```
+
+**实测发现的第一个坑：实际 checkpoint 的动作格式与官方模板不一致。**
+官方 `codes/ui_tars/prompt.py` 的 `MOBILE_USE_DOUBAO` 写的是
+`click(point='<point>x y</point>')`，而 UI-TARS-2B-SFT 实际输出
+`click(start_box='(611,899)')` 或 `click(start_box='<|box_start|>(x,y)<|box_end|>')`。
+只按文档写解析器，真机上表现为「解析不出动作」—— 第一次跑就是这么挂的。
+
+### 速度（一加 15T，同一任务只改 `IMAGE_MAX_TOKENS`）
+
+| `IMAGE_MAX_TOKENS` | 每步平均 | 5 步任务 |
+|---|---|---|
+| 1024 | **4.5 s** | ~22 s |
+| 4096（≈原图） | **24.3 s** | ~97 s |
+
+单步拆解（1024 档）：视觉+prefill **2.2 s**、decode **1.8 s**、动作执行 **0.1 s**。
+
+两点：
+
+- **执行层几乎不花时间**（0.1 s）—— 瓶颈 100% 在模型侧，这也意味着**优化执行层没有意义**。
+- 速度随图像 token 数**超线性**（token 数 4.3×、时间 5.4×），与第 6 节一致。
+
+### 但任务级行为不合格
+
+两个任务（「打开设置」「打开计算器」）在 1024 与 4096 两档下**都完不成**：
+
+- 它会在 `press_home` 上循环：一边说「当前屏幕显示的是设置应用的主界面」，
+  一边按 home 键说要「回到主屏幕再重新打开」。
+- 会把别的 App 图标当成通往目标的第一步（把「Clash」当成打开计算器的第一步）。
+- 找不到目标时不去搜索，而是反复点屏幕底部同一片区域。
+
+**关键对照**：把分辨率提到 4096（≈原图）**行为并没有变好**。所以「行为差是因为缩图」
+这个解释被排除了 —— 它就是模型本身在这个任务形态上不行。
+
+### 还没排除的一个混淆因素
+
+UI-TARS 的训练格式里，history 是**带截图**的（官方 prompt 原话：
+「given a task and your action history, with screenshots」）。而 `measure.mjs` 只给了
+**文字历史**。这可能是它多步行为差的原因之一，**未排除**。要排除得把历史截图也发进去，
+但那会让每步的 prefill 成倍增长（每张图 ~1000 token），是个明确的成本取舍。
+
+### 和单图 grounding 的对照
+
+同一个模型：单张静态截图上的 grounding **4/4 全中**（第 6 节），多步任务**零完成**。
+**「能指对位置」和「能完成任务」是两件事** —— 前面几节的 grounding 成绩不能外推成
+「这个模型能用」。
+
+## 8. LiteRT-LM 的现状（查证，未实测）
 
 - Kotlin API 标为 **stable**，Android 是一等公民；原生 vision + audio；带约束解码的 function calling；
   自带 OpenAI 兼容的 `litert-lm serve`。
@@ -281,7 +342,7 @@ llama-quantize mmproj-model-f16.gguf mmproj-model-q8_0.gguf Q8_0
   Android 要自己 `bazel build --config=android_arm64 //runtime/engine:litert_lm_main`，
   需要 Bazel 7.6.1 + NDK r28b。文档里 Android 只写了 Linux/macOS 宿主的步骤（Windows 宿主未验证）。
 
-## 8. 复现步骤
+## 9. 复现步骤
 
 ```powershell
 # 1. 拿官方 Snapdragon 构建（不需要 Qualcomm 工具链）
@@ -317,29 +378,19 @@ adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell c
 > `uiautomator dump` 会把 Tappet 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
 > 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
 
-## 9. 下一步（按性价比排序）
+## 10. 下一步（按性价比排序）
 
-已完成的判别实验（第 6 节）把范围收窄到：**问题在 Qwen3-VL + mtmd，不在「2B 级别」本身**。
-所以下一步不是换引擎，而是**换模型** —— 通用 2B 的 grounding 本来就不是强项。
+**当前位置**：速度已经不是问题（1024 档 4.5 s/步，执行层只占 0.1 s），
+**拦路虎是任务级行为** —— UI-TARS-2B-SFT 在两个任务、两档分辨率下都完不成。
 
-**已完成**：UI-TARS-2B-SFT 的精度验证（4/4）与 mmproj 量化实验（否定了权重带宽假设，见第 6 节）。
-现在瓶颈已经定位到**图执行效率**，不是模型大小。所以下一步按这个方向走：
-
-1. **缩图到什么程度还不掉精度** —— 最该做的一个。缩图的收益是**超线性**的
-   （见第 6 节末尾那个 7 倍 token → 18 倍时间的观察），而 Qwen-VL 系列自己会警告
-   grounding 需要 ≥1024 image tokens。**这两者的交界点在哪，决定端侧可行性**。
-   做法：同一批 grounding 目标，在长边 2048 / 1536 / 1024 / 768 各跑一遍，画
-   「精度 vs 编码耗时」曲线。这条曲线是端侧方案的可行性判据。
-2. **查 vision encoder 的 HTP 算子覆盖**：日志已经点出 `UPSCALE: f32` 未支持。
-   要确认还有哪些 op 回退、回退的占比多大。若是算子问题，量化是白做的（已证实），
-   换引擎或改图才有效。
-3. **ShowUI-2B**（同样 Qwen2-VL-2B 基座）—— 它的**视觉 token 剪枝**直接打在这条瓶颈上
-   （论文称相对基线减少 33%–75% 的视觉 token），是「更准且更快」的少数候选。
-4. **动作空间映射**：UI-TARS 输出 `click(start_box='<|box_start|>(x,y)<|box_end|>')` 这类
-   **它自己的动作格式**，与 Tappet 现有的 10 个工具（`tap_node` / `tap_target` / …）不对齐，
-   真要接进去得写一层映射，并且要处理「它想做的动作当前工具表里没有」的情况。
-5. 若以上都不成立，再考虑 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建 Bazel+NDK），
-   或接受「端侧只做粗筛、精细动作仍走云端」的混合方案。
-
-**未验证的假设**（别当结论用）：端侧在真实网络下究竟比云端快多少，取决于用户的实际网速；
-本仓库没有任何一条端到端的「端侧 vs 云端同任务耗时」数据。
+1. **排除 history 截图这个混淆**（唯一还没排除的解释）。UI-TARS 训练时 history 是带截图的，
+   `measure.mjs` 只给了文字。改成把历史截图也发进去重跑 —— 若行为变好，说明是这个；
+   若没变，就可以确定是模型能力问题，直接进 2。**成本明确**：每张历史图 ~1000 token。
+2. **换模型**：UI-TARS-2B-SFT 之外，候选是 ShowUI-2B（视觉 token 剪枝，打在编码瓶颈上）
+   与 UI-TARS-1.5-7B（ScreenSpot-Pro 61.6 / Android World 64.2，但 ~4.5 GB 装不下）。
+3. **若 2B 档普遍不行**，接受混合方案：端侧只做**粗筛 / 定位**（这一档它确实行，4/4），
+   多步规划仍走云端。这需要在 Tappet 里把「感知」和「决策」拆成两段 ——
+   现在的架构是合在一起的。
+4. **动作空间映射**仍然要做（UI-TARS 输出 `click(start_box=…)`，与现有 10 个工具不对齐）——
+   `tools/uitars/adapt.mjs` 是这一层的最小实现，正式接进产品时可以直接搬。
+5. 边缘方案：LiteRT-LM（NPU 走 EAP、Android 要自建 Bazel+NDK）。

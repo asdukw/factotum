@@ -1,0 +1,185 @@
+# 端侧推理调研与实测（2026-10-19）
+
+**什么时候读这份**：要动「端侧模型 + 推理引擎」这条线之前。这里只有**实测数字与踩到的坑**，
+路线判断写在末尾且明确标成「未验证的假设」。
+
+原文动机：无障碍模式操控手机时，每一步都要把截图发给云端模型，**网速延迟太大**。
+端侧能砍掉的是往返 + 上传 + 排队，砍不掉的是 prefill 一张大图。所以「端侧是否更快」
+完全取决于**视觉编码 + prefill 能不能跑在 NPU 上**。
+
+---
+
+## 1. 设备画像（`adb shell` 实测，一加 15T / PLZ110）
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| SoC | **SM8850 = 骁龙 8 Elite Gen 5**（`ro.soc.model`） | `getprop` |
+| 屏幕上也写着 | 「第五代骁龙®8至尊版移动平台」（系统设置 → 关于本机） | 截图 |
+| NPU | **Hexagon HTP v81** | llama.cpp Verbose 日志 |
+| GPU | **Adreno 840** v2，OpenGL ES 3.2，`libOpenCL_adreno.so` 在 | `dumpsys SurfaceFlinger` |
+| 内存 | 15.4 GB 总量 | `/proc/meminfo` |
+| 屏幕 | 1216×2640 px | `screencap` |
+| 系统 | **Android 17.0**（`PLZ110_17.0.0.107(CN01B110P02)`），**API 37** | `getprop` |
+| 存储 | 512 GB，已用 227 GB | `df` |
+
+> **注意 API 37**：仓库 `compileSdk`/`targetSdk` 还是 36，设备已经超了一级。
+> 这与 `AGENTS.md` 里那条「某依赖 requires compileSdk 37」是同一个方向的债。
+
+## 2. 内存底线（真机实测，`dumpsys meminfo`）
+
+| 阶段 | PSS | RSS |
+|---|---|---|
+| 只有 Compose UI | **119 MB** | 262 MB |
+| + 内嵌运行时（libnode + dsh） | 327 MB（刚起来时） | 477 MB |
+| 稳态（运行时 + 截图路径） | 268 MB | 363 MB |
+| 截图瞬间峰值（连拍 12 张） | 294 MB | 388 MB |
+
+结构比总量重要：
+
+- **Private Dirty 只有 114 MB** —— 这才是「这个应用真正占住的」。
+- RSS 里 **188 MB 是 file-backed 的 code**（`libnode.so` 64MB + dsh + 应用代码），**可回收**。
+- 截图路径的边际开销只有约 25 MB（位图 + PNG + base64），不是大头。
+
+系统侧：`MemAvailable` 约 3.5 GB，但 **swap 12.6 GB 已用掉 10.5 GB** —— 这台机器负载很重。
+
+**推论**：mmap 的模型权重是 file-backed、可回收的，**真正吃紧的是 KV cache 与视觉编码器的
+匿名内存**。按这个算，2B 级（量化后 ~1.6 GB）能塞下，4B 级（~3 GB）悬。
+
+## 3. llama.cpp 的 Snapdragon 构建：可用，但有个没写在文档里的坑
+
+官方 release 有 `llama-b<build>-bin-android-arm64-snapdragon.tar.gz`（含 v73/v75/v79/**v81**
+四套 HTP kernel、`libggml-opencl.so`、`libmtmd.so`）。**不需要 Qualcomm 的交叉编译工具链**，
+推上去就能跑：
+
+```powershell
+adb push <解压后的 llama-b11729> /data/local/tmp/
+adb shell "chmod 755 /data/local/tmp/llama-b11729/bin/*"
+adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cli --list-devices"
+# → GPUOpenCL: QUALCOMM Adreno(TM) 840 (7537 MiB, 6513 MiB free)
+#   HTP0: Hexagon (0 MiB, 0 MiB free)
+```
+
+> **坑：HTP 必须设 `ADSP_LIBRARY_PATH`。**
+> 不设时报 `HTP0 failed to open session : uri file:///libggml-htp-v81.so?... error 0x80000406`。
+> URI 是硬编码的 `file:///libggml-htp-v81.so`，由 DSP 侧的 fastrpc 加载器按 `ADSP_LIBRARY_PATH`
+> 搜索。官方 README 与 `scripts/snapdragon/run.py` **都没有提这一条**（`run.py` 只设 `LD_LIBRARY_PATH`），
+> 照着文档做必然卡在这里。
+>
+> ```powershell
+> adb shell "cd /data/local/tmp/llama-b11729 && \
+>   LD_LIBRARY_PATH=lib ADSP_LIBRARY_PATH=/data/local/tmp/llama-b11729/lib ./bin/llama-cli ..."
+> ```
+
+### 实测吞吐（Llama-3.2-1B-Instruct Q4_0，`llama-bench -p 128 -n 64`）
+
+| 后端 | pp128 | tg64 |
+|---|---|---|
+| **HTP0（Hexagon NPU）** | **3411.6 ± 103.7 t/s** | **74.7 ± 0.8 t/s** |
+| GPUOpenCL（Adreno 840） | 986.4 ± 23.5 t/s | 61.4 ± 0.6 t/s |
+
+对照官方 README 里老设备的 HTP 数字（1B Q4_0：pp128 **169** / tg64 51.5）—— **这台机器快约 20 倍**。
+对我们的场景（长 prefill、短输出）来说 prefill 非常宽裕。
+
+> **纯 CPU 基线没测出来**：`-ngl 0` 仍会在 context 初始化时加载 hex 后端并失败；
+> 这版构建的 `--list-devices` 里也没有 CPU 设备。要 CPU 基线得另找办法。
+
+## 4. VLM：跑得通，但**视觉编码是瓶颈，且随图像 token 数线性增长**
+
+模型：`Qwen3-VL-2B-Instruct-Q4_K_M.gguf`（1.11 GB）+ `mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf`（0.45 GB），
+`llama-mtmd-cli -dev HTP0 -ngl 99`，输入是**真机截图**缩放而来。
+
+| 输入图像 | 视觉编码耗时 |
+|---|---|
+| 1216×2640（原生屏幕） | **6385 ms** |
+| 943×2047（**Tappet 现在 `capture_frame` 产出的帧**） | **2672 ms** |
+| 长边 1024 | 484 ms |
+| 长边 768 | 290 ms |
+| 长边 512 | 146 ms |
+
+**把截图缩到长边 1024 能把单步感知从 6.4 秒降到 0.5 秒** —— 这是这条路上最大的一个旋钮。
+
+另外两条实测：
+
+- **视觉编码器放 GPU 反而慢 8 倍**（`-dev GPUOpenCL`：50049 ms vs HTP 6385 ms）。必须留在 HTP。
+- HTP 跑 CLIP 图时有未支持算子（`UPSCALE: f32`）回退，日志会警告 `performance will be suboptimal`。
+- Qwen-VL 做 grounding 时模型自己会警告需要 `--image-min-tokens 1024`，**与上面的「缩图提速」
+  正好是一对矛盾**：缩得越小越快，但可能越不准。这个取舍必须实测。
+- 模型有 **MTP（多 token 预测）** 的独立 drafter 权重可下（`mtp-*.gguf`），官方称可提速约 3 倍。
+
+## 5. 但 grounding 与读字都不合格（**这是最重要的一条**）
+
+真值用 `uiautomator dump` 取（不依赖 Tappet 的无障碍服务），输入是系统设置「关于本机」截图。
+提示词用 Qwen3-VL 的原生格式：输出归一化到 0-1000 的 `[x1,y1,x2,y2]`。
+
+| 目标 | 真值中心（归一化） | 模型输出中心 | 结果 |
+|---|---|---|---|
+| 存储空间 | (184, 696) | (274, 704) | y 准（差 8），x 偏右 90 |
+| 处理器 | (152, 917) | (308, 803) | x 偏 156、y 偏 114 |
+| 运行内存 | (173, 996) | (400, 803) | 严重偏离 |
+| 手机名称 | (229, 631) | `[0,0,1000,1000]` | **整屏，完全失败** |
+
+读文字更直接：问「这屏上的处理器与存储是多少」，输出退化成
+`处理器是: 100000000000000...`（一长串 0）。同一模型对「这是哪个 App」这类**粗粒度**问题
+回答是正常的。
+
+> **一条可能解释一切的线索**：llama.cpp 有一个**至今未关闭**的 issue ——
+> *「Qwen3-VL: mtmd vision embeddings carry ~5× HF precision-floor noise → reproducible accuracy
+> drop vs transformers (quant/backend/version-independent)」*。
+> 也就是说这个失败**可能出在 llama.cpp 的 `mtmd` 视觉路径，而不是 2B 模型本身**。
+> 在排除它之前，不要把结论下成「2B 不够用」。
+
+## 6. LiteRT-LM 的现状（查证，未实测）
+
+- Kotlin API 标为 **stable**，Android 是一等公民；原生 vision + audio；带约束解码的 function calling；
+  自带 OpenAI 兼容的 `litert-lm serve`。
+- **但 NPU 加速要申请 Early Access Program**（官方文档原话）。公开可用的只有 GPU 路径。
+- **没有现成的 Android 二进制**：release 只发 macOS/iOS 的 xcframework，
+  Android 要自己 `bazel build --config=android_arm64 //runtime/engine:litert_lm_main`，
+  需要 Bazel 7.6.1 + NDK r28b。文档里 Android 只写了 Linux/macOS 宿主的步骤（Windows 宿主未验证）。
+
+## 7. 复现步骤
+
+```powershell
+# 1. 拿官方 Snapdragon 构建（不需要 Qualcomm 工具链）
+gh release download <最新 b 版本> -R ggml-org/llama.cpp `
+  -p "llama-b*-bin-android-arm64-snapdragon.tar.gz"
+tar -xzf llama-b*-bin-android-arm64-snapdragon.tar.gz
+
+# 2. 推上设备
+$D = "<serial>"
+adb -s $D push .\llama-b11729 /data/local/tmp/
+adb -s $D shell "chmod 755 /data/local/tmp/llama-b11729/bin/*"
+
+# 3. 确认两个后端都在
+adb -s $D shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cli --list-devices"
+
+# 4. 纯文本吞吐
+adb -s $D shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ADSP_LIBRARY_PATH=/data/local/tmp/llama-b11729/lib ./bin/llama-bench -m /data/local/tmp/gguf/model.gguf -p 128 -n 64 -dev HTP0 -ngl 99"
+
+# 5. 视觉
+adb -s $D exec-out screencap -p > screen.png
+adb -s $D push screen.png /data/local/tmp/gguf/
+adb -s $D shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ADSP_LIBRARY_PATH=/data/local/tmp/llama-b11729/lib ./bin/llama-mtmd-cli -m <model.gguf> --mmproj <mmproj.gguf> --image /data/local/tmp/gguf/screen.png -p '<prompt>' -dev HTP0 -ngl 99 -n 48 --temp 0"
+```
+
+取 grounding 真值：
+
+```powershell
+adb -s $D shell "am start -a android.settings.DEVICE_INFO_SETTINGS"
+adb -s $D shell "uiautomator dump /sdcard/ui.xml"
+adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell cat 会把 \n 翻成 \r\n
+```
+
+> `uiautomator dump` 会把 Tappet 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
+> 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
+
+## 8. 下一步（按性价比排序）
+
+1. **判别实验**：同一台机器、同一套提示词与截图，换 Gemma 4 E2B 再跑一遍 grounding。
+   若它也读不对字 → 倾向于引擎（`mtmd`）或 2B 级别；若它读得对 → 问题在 Qwen3-VL + mtmd 这个组合。
+2. 若确认是引擎问题，试 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建）。
+3. 若确认是 2B 级别不够，试 GUI 专门微调的 2B（UI-TARS-2B-SFT / ShowUI-2B），
+   或接受「端侧只做粗筛、精细动作仍走云端」的混合方案。
+
+**未验证的假设**（别当结论用）：端侧在真实网络下究竟比云端快多少，取决于用户的实际网速；
+本仓库没有任何一条端到端的「端侧 vs 云端同任务耗时」数据。

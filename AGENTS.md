@@ -737,6 +737,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 广播 TASK 后 App 被 ANR 杀 | 别用 `goAsync` 等任务完成（Broadcast Timeout 60s）→ 广播立即返回，任务异步跑 |
 | 广播 START/TASK 没反应 | ColorOS defer 后台广播 → 先 `monkey` 拉起 App 再广播 |
 | 广播后卡在 `debug task start`、再没有下文 | **cached app freezer 把进程冻住了**（Android 11+，约 10 秒）。首次启动要解压 dsh 运行时（模拟器实测 **122 秒**），期间没有前台服务就必冻 → 先 `am start` 把 App 拉到前台再广播。广播**不在前台的 FGS 白名单里**，`startForegroundService` 会抛 `ForegroundServiceStartNotAllowedException`，所以接收器里那一步是尽力而为（AlarmManager 那条路有白名单，不受影响） |
+| llama.cpp 在骁龙上报 `HTP0 failed to open session ... 0x80000406` | 没设 `ADSP_LIBRARY_PATH=<lib 目录>`。HTP 的 skel URI 是硬编码的 `file:///libggml-htp-v81.so`，由 DSP 侧 fastrpc 按这个变量搜索；官方 README 与 `run.py` 都没写。见 `docs/on-device-inference.md` |
 | 更新时下载失败报 `failed to connect to github.com` | 模拟器 `adb emu network speed` 会把 NAT 弄坏（宿主能连通、模拟器连不上同一个 IP）→ 冷启一次（`-no-snapshot-load`）。`-no-snapshot-save` 只防存，**不防读** |
 | 点「更新」回一句「更新没完成：NO_SETTINGS」 | 从 application context 起系统设置页少了 `FLAG_ACTIVITY_NEW_TASK` → `AppUpdater.unknownSourcesIntent` |
 | 进度条一直显示「已下载 0 B」 | 服务器没给 `Content-Length`（分块传输）→ 显示不确定进度条，不编一个假百分比。**不要**改成「卡在 0% 的确定进度条」 |
@@ -833,6 +834,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `docs/scheduled-tasks.md` | 动定时任务之前：Android 没有 cron、精确/不精确两档、错过不补跑、隐私边界 |
 | `docs/voice.md` | 动朗读 / TTS 之前：两个引擎的取舍、Markdown 摊平、包可见性那个坑 |
 | `docs/user-questions.md` | 动 `ask_user_question` / 任何「模型等用户回答」的功能之前：waterfall 的注册顺序坑、答案的三条语义、为什么不能只开工具不做 UI |
+| `docs/on-device-inference.md` | 动端侧模型 / 推理引擎之前：设备实测（SM8850 / Hexagon v81 / 内存底线）、llama.cpp Snapdragon 构建的 `ADSP_LIBRARY_PATH` 坑、视觉编码耗时随图像尺寸的变化、grounding 实测结果 |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |
 | `docs/releases/<tag>.md` | 发版说明的写法与历史 |
 | `README.md` | 对外介绍；`CHANGELOG.md` 记对外可见的变化 |

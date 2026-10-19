@@ -2,7 +2,6 @@ package com.tappet.app.update
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
@@ -12,9 +11,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
 
 /**
  * 应用内更新：从 GitHub Releases 取最新版、下载、**校验**、交给系统安装器。
@@ -31,14 +27,16 @@ import java.security.MessageDigest
  * 是最后一道闸。这里只负责把**验证过的** APK 递过去。
  *
  * **不做后台轮询**：只在用户点「检查更新」时联网（与连接器「不后台轮询」同一条原则）。
+ *
+ * 这里只管「哪个版本、装什么」；**取字节（含断点续传）在 [UpdateDownloader]**，
+ * 流程编排在 [UpdateManager]。三者的失败面不一样，混在一个 object 里时
+ * detekt 的「一个 object 最多 20 个函数」会先炸 —— 那条规则在这里是对的。
  */
 object AppUpdater {
   private const val API_LATEST = "https://api.github.com/repos/asdukw/tappet/releases/latest"
   private const val APK_PREFIX = "tappet-"
   private const val APK_SUFFIX = "-arm64-v8a.apk"
-  private const val TIMEOUT_MS = 30_000
 
-  /** 一次检查的结果。`release` 只有 [UpdateCheck.Available] 才非空。 */
   sealed interface UpdateCheck {
     data class UpToDate(val current: String) : UpdateCheck
 
@@ -92,7 +90,7 @@ object AppUpdater {
   @Suppress("TooGenericExceptionCaught")
   fun check(currentVersion: String): UpdateCheck {
     return try {
-      val body = getText(API_LATEST)
+      val body = UpdateHttp.getText(API_LATEST)
       val release = parseRelease(Json.parseToJsonElement(body).jsonObject) ?: return UpdateCheck.UpToDate(currentVersion)
       if (isNewerVersion(currentVersion, release.version)) {
         UpdateCheck.Available(currentVersion, release)
@@ -133,85 +131,6 @@ object AppUpdater {
     )
   }
 
-  /**
-   * 下载并校验。**任何一步不过都抛异常**，调用方据此不给安装入口。
-   *
-   * @param onProgress 已下载字节 / 总字节（总字节未知时为 -1），只用来更新 UI。
-   */
-  fun download(context: Context, release: Release, onProgress: (Long, Long) -> Unit): File {
-    val expected = getText(release.sha256Url).trim().substringBefore(' ').lowercase()
-    require(expected.length == 64) { "SHA256_MALFORMED" }
-
-    val target = File(context.cacheDir, "update-${release.version}.apk")
-    val connection = open(release.apkUrl)
-    try {
-      copyBody(connection, target, onProgress)
-    } finally {
-      connection.disconnect()
-    }
-
-    if (sha256(target) != expected) {
-      target.delete()
-      error("SHA256_MISMATCH")
-    }
-    if (!signerMatches(context, target)) {
-      target.delete()
-      error("SIGNER_MISMATCH")
-    }
-    return target
-  }
-
-  /**
-   * 把响应体抄进文件。
-   *
-   * 拆成两个函数只是为了让嵌套深度留在 detekt 的门槛内（函数 → use → use → 调用，
-   * 而不是函数 → use → use → while → if）。这不是为规则而规则：五层嵌套里漏写一个
-   * 「读到末尾就退出」是很难看出来的。
-   */
-  private fun copyBody(connection: HttpURLConnection, target: File, onProgress: (Long, Long) -> Unit) {
-    connection.inputStream.use { input ->
-      target.outputStream().use { output -> pump(input, output, connection.contentLengthLong, onProgress) }
-    }
-  }
-
-  private fun pump(
-    input: java.io.InputStream,
-    output: java.io.OutputStream,
-    total: Long,
-    onProgress: (Long, Long) -> Unit,
-  ) {
-    val buffer = ByteArray(64 * 1024)
-    var written = 0L
-    while (true) {
-      val read = input.read(buffer)
-      if (read < 0) break
-      output.write(buffer, 0, read)
-      written += read
-      onProgress(written, total)
-    }
-  }
-
-  /**
-   * 下载到的 APK 是否与**当前安装包**同一个签名。
-   *
-   * 这是整条更新链路上唯一挡得住「换了个包冒充更新」的一步：`getPackageArchiveInfo` 读的是
-   * 文件本身的签名，与已安装包的签名逐字节比。对不上就拒 —— 换签名 = 另一个 App，
-   * 装上去旧数据也读不到。
-   */
-  fun signerMatches(context: Context, apk: File): Boolean {
-    val flags = PackageManager.GET_SIGNING_CERTIFICATES
-    // 读不出来的情况一律当成「对不上」—— 这条路径上只有 fail closed 是对的。
-    val downloaded =
-      runCatching { context.packageManager.getPackageArchiveInfo(apk.absolutePath, flags)?.signingInfo }
-        .getOrNull()
-    val installed =
-      runCatching { context.packageManager.getPackageInfo(context.packageName, flags).signingInfo }
-        .getOrNull()
-    val left = downloaded?.apkContentsSigners?.map { sha256(it.toByteArray()) }?.toSet().orEmpty()
-    val right = installed?.apkContentsSigners?.map { sha256(it.toByteArray()) }?.toSet().orEmpty()
-    return left.isNotEmpty() && left == right
-  }
-
   /** 交给系统安装器的意图。调用方要先确认「安装未知应用」已授权（见 [canInstall]）。 */
   fun installIntent(context: Context, apk: File): Intent {
     val uri: Uri =
@@ -225,45 +144,16 @@ object AppUpdater {
   fun canInstall(context: Context): Boolean =
     Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()
 
+  /**
+   * 去系统里打开「安装未知应用」。
+   *
+   * `FLAG_ACTIVITY_NEW_TASK` 不能省：调用方（[UpdateManager]）拿的是 **application context**
+   * —— 它没有 Activity 栈，不带这个 flag 会直接 `ActivityNotFoundException`，
+   * 用户看到的是「更新没完成：NO_SETTINGS」（模拟器实测踩过一次）。
+   */
   fun unknownSourcesIntent(context: Context): Intent =
     Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, packageUri(context))
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
   private fun packageUri(context: Context): Uri = Uri.parse("package:${context.packageName}")
-
-  private fun getText(url: String): String {
-    val connection = open(url)
-    return try {
-      connection.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-    } finally {
-      connection.disconnect()
-    }
-  }
-
-  private fun open(url: String): HttpURLConnection =
-    (URL(url).openConnection() as HttpURLConnection).apply {
-      connectTimeout = TIMEOUT_MS
-      readTimeout = TIMEOUT_MS
-      // GitHub API 要求 User-Agent；不带会被 403。
-      setRequestProperty("User-Agent", "tappet-updater")
-      setRequestProperty("Accept", "application/vnd.github+json")
-      instanceFollowRedirects = true
-    }
-
-  private fun sha256(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().use { input ->
-      val buffer = ByteArray(64 * 1024)
-      while (true) {
-        val read = input.read(buffer)
-        if (read < 0) break
-        digest.update(buffer, 0, read)
-      }
-    }
-    return digest.digest().joinToString("") { "%02x".format(it) }
-  }
-
-  private fun sha256(bytes: ByteArray): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-    return digest.joinToString("") { "%02x".format(it) }
-  }
 }

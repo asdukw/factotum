@@ -1,5 +1,6 @@
 package com.tappet.app.ui.settings
 
+import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -17,7 +18,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,10 +28,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.accessibility.OverlaySettings
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.device.AccessibilityStatus
-import com.tappet.app.update.AppUpdater
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.tappet.app.ui.components.UpdateProgressBar
+import com.tappet.app.update.UpdateManager
 
 /**
  * 设置首页：分组卡片 + 语义徽章，模型部分之外的项目先以「即将推出」占位。
@@ -286,72 +284,31 @@ private fun ConnectorSection(state: SettingsViewModel.UiState, onOpenConnectors:
  * **只在用户点的时候联网**（与连接器「不后台轮询」同一条原则）：进这一页不发起任何请求，
  * 点「检查更新」才查 GitHub API。
  *
- * 更新链路上的两条保证由 [AppUpdater] 负责，这里只负责把结果如实说出来：
- * 下载的包要过 SHA-256 与**签名证书比对**；任何一步不过就不给安装入口。
+ * 状态与下载都在 [UpdateManager] 里，这里只是它的一个视图 —— 所以离开这一页**不会**中断
+ * 下载，回来时进度条还在原处。
  */
 @Composable
 private fun AboutSection() {
   val context = LocalContext.current
-  val scope = rememberCoroutineScope()
-  var state by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
-
-  fun startCheck() {
-    if (state is UpdateUiState.Checking || state is UpdateUiState.Downloading) return
-    state = UpdateUiState.Checking
-    scope.launch {
-      val result = withContext(Dispatchers.IO) { AppUpdater.check(appVersionName()) }
-      state =
-        when (result) {
-          is AppUpdater.UpdateCheck.UpToDate -> UpdateUiState.UpToDate(result.current)
-          is AppUpdater.UpdateCheck.Available -> UpdateUiState.Available(result.release)
-          is AppUpdater.UpdateCheck.Failed -> UpdateUiState.Failed(result.reason)
-        }
-    }
-  }
-
-  fun startInstall(release: AppUpdater.Release) {
-    if (!AppUpdater.canInstall(context)) {
-      state = UpdateUiState.NeedsPermission
-      return
-    }
-    state = UpdateUiState.Downloading(0)
-    scope.launch {
-      val outcome =
-        withContext(Dispatchers.IO) {
-          runCatching {
-            AppUpdater.download(context, release) { done, total ->
-              state = UpdateUiState.Downloading(if (total > 0) (done * 100 / total).toInt() else 0)
-            }
-          }
-        }
-      outcome
-        .onSuccess { apk ->
-          runCatching { context.startActivity(AppUpdater.installIntent(context, apk)) }
-            .onFailure { state = UpdateUiState.Failed(it.javaClass.simpleName) }
-            .onSuccess { state = UpdateUiState.UpToDate(appVersionName()) }
-        }
-        .onFailure { state = UpdateUiState.Failed(it.message ?: it.javaClass.simpleName) }
-    }
-  }
+  val state by UpdateManager.state.collectAsStateWithLifecycle()
+  val downloading = state as? UpdateManager.State.Downloading
 
   SettingsGroup {
     SettingsRow(
       glyph = GlyphKind.Info,
       title = "版本更新",
       subtitle = updateSubtitle(state),
-      onClick = {
-        when (val current = state) {
-          is UpdateUiState.Available -> startInstall(current.release)
-
-          UpdateUiState.NeedsPermission ->
-            runCatching { context.startActivity(AppUpdater.unknownSourcesIntent(context)) }
-              .onFailure { state = UpdateUiState.Failed("NO_SETTINGS") }
-
-          else -> startCheck()
-        }
-      },
+      onClick = { onUpdateRowClick(context, state) },
     ) {
       StatusBadge(updateBadge(state), updateTone(state))
+    }
+    if (downloading != null) {
+      // 进度条单独占一行：塞进 SettingsRow 的 trailing 槽会把它挤成一小截，
+      // 而这一行的重点此刻就是进度。
+      UpdateProgressBar(
+        progress = downloading.progress,
+        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 14.dp),
+      )
     }
     SettingsDivider()
     SettingsRow(
@@ -363,46 +320,69 @@ private fun AboutSection() {
   }
 }
 
-/** 更新入口的四种可操作状态 + 三种终态。UI 只读它，不做判断。 */
-private sealed interface UpdateUiState {
-  data object Idle : UpdateUiState
+/**
+ * 更新那一行点下去做什么。
+ *
+ * 每一条都对应一个**明确的下一步**，没有「再点一次试试」：
+ * 可更新→下载（接着上次的断点）、下载中→取消、已下载→安装、缺授权→去系统设置、
+ * 失败→接着下（版本已知时）或重查（版本未知时）。
+ */
+private fun onUpdateRowClick(context: Context, state: UpdateManager.State) {
+  when (state) {
+    is UpdateManager.State.Available -> UpdateManager.download(context)
 
-  data object Checking : UpdateUiState
+    is UpdateManager.State.Downloading -> UpdateManager.cancel()
 
-  data class UpToDate(val version: String) : UpdateUiState
+    is UpdateManager.State.Ready -> UpdateManager.install(context)
 
-  data class Available(val release: AppUpdater.Release) : UpdateUiState
+    // 缺授权时 download() 自己会把用户送到系统设置页；授完权再点一次就是接着下。
+    is UpdateManager.State.NeedsPermission -> UpdateManager.download(context)
 
-  data class Downloading(val percent: Int) : UpdateUiState
+    is UpdateManager.State.Failed -> UpdateManager.retry(context)
 
-  data object NeedsPermission : UpdateUiState
-
-  data class Failed(val reason: String) : UpdateUiState
+    else -> UpdateManager.check(context)
+  }
 }
 
-private fun updateSubtitle(state: UpdateUiState): String =
+private fun updateSubtitle(state: UpdateManager.State): String =
   when (state) {
-    UpdateUiState.Idle -> "点这里检查新版本"
-    UpdateUiState.Checking -> "正在检查…"
-    is UpdateUiState.UpToDate -> "已是最新（${state.version}）"
-    is UpdateUiState.Available -> "发现新版本 ${state.release.version} —— 点这里下载并安装"
-    is UpdateUiState.Downloading -> "正在下载… ${state.percent}%"
-    UpdateUiState.NeedsPermission -> "需要允许「安装未知应用」才能安装 —— 点这里去设置"
-    is UpdateUiState.Failed -> "检查失败（${state.reason}）—— 点这里重试"
+    UpdateManager.State.Idle -> "点这里检查新版本"
+
+    UpdateManager.State.Checking -> "正在检查…"
+
+    is UpdateManager.State.UpToDate -> "已是最新（${state.version}）"
+
+    is UpdateManager.State.Available -> "发现新版本 ${state.release.version} —— 点这里下载并安装"
+
+    is UpdateManager.State.Downloading -> "正在下载 —— 点这里取消（已下载的部分会留着）"
+
+    is UpdateManager.State.Ready -> "已下载 ${state.version} 且校验通过 —— 点这里安装"
+
+    is UpdateManager.State.NeedsPermission -> "需要允许「安装未知应用」才能安装 —— 点这里去设置"
+
+    is UpdateManager.State.Failed ->
+      if (state.release != null) {
+        "下载没完成（${state.reason}）—— 点这里接着下"
+      } else {
+        "检查失败（${state.reason}）—— 点这里重试"
+      }
   }
 
-private fun updateBadge(state: UpdateUiState): String =
+private fun updateBadge(state: UpdateManager.State): String =
   when (state) {
-    is UpdateUiState.Available -> "可更新"
-    UpdateUiState.NeedsPermission -> "待授权"
-    is UpdateUiState.Failed -> "失败"
+    is UpdateManager.State.Available -> "可更新"
+    is UpdateManager.State.Downloading -> "取消"
+    is UpdateManager.State.Ready -> "安装"
+    is UpdateManager.State.NeedsPermission -> "待授权"
+    is UpdateManager.State.Failed -> "失败"
     else -> "检查"
   }
 
-private fun updateTone(state: UpdateUiState): BadgeTone =
+private fun updateTone(state: UpdateManager.State): BadgeTone =
   when (state) {
-    is UpdateUiState.Available -> BadgeTone.Enabled
-    UpdateUiState.NeedsPermission, is UpdateUiState.Failed -> BadgeTone.Disabled
+    is UpdateManager.State.Available, is UpdateManager.State.Ready -> BadgeTone.Enabled
+    is UpdateManager.State.Downloading -> BadgeTone.Info
+    is UpdateManager.State.NeedsPermission, is UpdateManager.State.Failed -> BadgeTone.Disabled
     else -> BadgeTone.Muted
   }
 

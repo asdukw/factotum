@@ -217,6 +217,50 @@ x 恒定落在 ~490–700（**整行的水平中心**）。按「点中这一行
 4. 缩图对三者都有效（全分辨率 → 1024 长边，编码时间降一个数量级），所以「先缩图再推理」
    应当作为默认策略，而不是优化项。
 
+### mmproj 量化实验：**否定了「权重带宽是瓶颈」这个假设**
+
+动机：UI-TARS 编码慢 6–7 倍，而它唯一明显的差异是 mmproj 只有 **f16**（1.33 GB，另两个是 Q8）。
+视觉编码是小 batch 矩阵乘、通常 memory-bound，所以「压成 Q8 就快了」是当时最合理的猜测。
+
+做法（本机量化，`llama-b11729-bin-win-cpu-x64` 里的 `llama-quantize`）：
+
+```
+llama-quantize mmproj-model-f16.gguf mmproj-model-q8_0.gguf Q8_0
+  model size  = 1269.94 MiB (16.01 BPW)
+  quant size  =  676.97 MiB (8.54 BPW)      # 1.33 GB -> 0.71 GB，减半
+```
+
+**结果：没有任何改善。** 同一会话里背靠背跑两轮（全分辨率 1216×2640 截图）：
+
+| 轮次 | mmproj f16 | mmproj Q8_0 |
+|---|---|---|
+| 1 | 16727 ms | 17871 ms |
+| 2 | 17842 ms | 17958 ms |
+
+→ **瓶颈不是权重带宽**。视觉编码的时间与 mmproj 的大小基本无关。
+
+**精度没有损失**（4/4 仍然全中，坐标几乎逐字相同）：
+
+| 目标 | f16 | Q8_0 | 真值行中心 y |
+|---|---|---|---|
+| 手机名称 | (496,613) | (500,613) | 631 |
+| 存储空间 | (698,668) | (698,668) | 696 |
+| 处理器 | (499,919) | (499,919) | 917 |
+| 运行内存 | (492,983) | (499,983) | 992 |
+
+**所以 Q8 是纯内存收益**（省一半磁盘/内存），不是速度收益。在内存吃紧的机器上仍值得用。
+
+**那瓶颈在哪？** 两条线索：
+
+1. 日志里 HTP 明确报过 CLIP 图有未支持算子：
+   `WARNING: the CLIP graph uses unsupported operators by the backend (backend=HTP0): UPSCALE: type = f32`
+   → 有算子回退，那部分不走 NPU。
+2. 编码耗时随图像 token 数**超线性**：全分辨率 4042 个视觉 token（Patch14/Merge2 下约
+   43×94）要 17.9 s，长边 1024 约 576 个 token 只要 1.0 s —— token 数只差 7 倍，时间差 18 倍。
+   这个形状更像 **vision encoder 里注意力的 $O(n^2)$**，而不是权重量。
+
+两条都指向「**图执行效率**」而不是「模型大小」—— 这正好解释了为什么换更小的 mmproj 没用。
+
 ### 三个操作上的坑
 
 - **Gemma 4 必须加 `--jinja`**：不加直接 `libc++abi: terminating ... this custom template is not
@@ -278,15 +322,23 @@ adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell c
 已完成的判别实验（第 6 节）把范围收窄到：**问题在 Qwen3-VL + mtmd，不在「2B 级别」本身**。
 所以下一步不是换引擎，而是**换模型** —— 通用 2B 的 grounding 本来就不是强项。
 
-1. **UI-TARS-2B-SFT**（已确认基座 = `Qwen2VLForConditionalGeneration` / `qwen2_vl`，28 层、
-   hidden 1536；llama.cpp 原生支持 Qwen2-VL）。它是 GUI agent 端到端微调的，官方还带
-   Android 的 `MOUSE_USE` 提示词模板。GGUF 现成：
-   `lmstudio-community/UI-TARS-2B-SFT-GGUF` 的 `Q4_K_M`（1.12 GB）+ `mmproj-model-f16.gguf`（1.33 GB）。
-   **注意**：它输出的是**动作**（`click(start_box='<|box_start|>(x,y)<|box_end|>')` 这类），
-   动作空间与 Tappet 现有的 10 个工具**不对齐**，要映射。
-2. **ShowUI-2B**（同样是 Qwen2-VL-2B 基座）—— 它的**视觉 token 剪枝**直接打在本文第 4 节那个
-   瓶颈上（论文称相对基线减少 33%–75% 的视觉 token），是「更准且更快」的少数候选。
-3. 若这两个都不行，再考虑 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建 Bazel+NDK），
+**已完成**：UI-TARS-2B-SFT 的精度验证（4/4）与 mmproj 量化实验（否定了权重带宽假设，见第 6 节）。
+现在瓶颈已经定位到**图执行效率**，不是模型大小。所以下一步按这个方向走：
+
+1. **缩图到什么程度还不掉精度** —— 最该做的一个。缩图的收益是**超线性**的
+   （见第 6 节末尾那个 7 倍 token → 18 倍时间的观察），而 Qwen-VL 系列自己会警告
+   grounding 需要 ≥1024 image tokens。**这两者的交界点在哪，决定端侧可行性**。
+   做法：同一批 grounding 目标，在长边 2048 / 1536 / 1024 / 768 各跑一遍，画
+   「精度 vs 编码耗时」曲线。这条曲线是端侧方案的可行性判据。
+2. **查 vision encoder 的 HTP 算子覆盖**：日志已经点出 `UPSCALE: f32` 未支持。
+   要确认还有哪些 op 回退、回退的占比多大。若是算子问题，量化是白做的（已证实），
+   换引擎或改图才有效。
+3. **ShowUI-2B**（同样 Qwen2-VL-2B 基座）—— 它的**视觉 token 剪枝**直接打在这条瓶颈上
+   （论文称相对基线减少 33%–75% 的视觉 token），是「更准且更快」的少数候选。
+4. **动作空间映射**：UI-TARS 输出 `click(start_box='<|box_start|>(x,y)<|box_end|>')` 这类
+   **它自己的动作格式**，与 Tappet 现有的 10 个工具（`tap_node` / `tap_target` / …）不对齐，
+   真要接进去得写一层映射，并且要处理「它想做的动作当前工具表里没有」的情况。
+5. 若以上都不成立，再考虑 LiteRT-LM（要接受它 NPU 走 EAP、Android 要自建 Bazel+NDK），
    或接受「端侧只做粗筛、精细动作仍走云端」的混合方案。
 
 **未验证的假设**（别当结论用）：端侧在真实网络下究竟比云端快多少，取决于用户的实际网速；

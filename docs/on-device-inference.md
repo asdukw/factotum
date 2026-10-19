@@ -133,10 +133,12 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
 drop vs transformers（quant/backend/version-independent）」*。也就是说问题**可能出在引擎的视觉路径**。
 下面第 6 节就是为排除它而做的实验。
 
-## 6. 判别实验：同一个引擎换 Gemma 4 E2B
+## 6. 模型对比：同一引擎换三个模型
 
 设计：**同设备、同引擎（llama.cpp `mtmd` + HTP0）、同截图、同提示词**，只换模型。
-`gemma-4-E2B-it-Q4_0.gguf`（2.84 GB）+ `mmproj-gemma-4-E2B-it-Q8_0.gguf`（0.56 GB）。
+三个模型分别是 Qwen3-VL-2B、Gemma 4 E2B、UI-TARS-2B-SFT（GUI 专用微调）。
+目的不是选型，是**把「引擎坏了」与「模型不行」分开** —— 上一节那个失败不排除引擎之前，
+不能得出「2B 级别不够」的结论。
 
 ### 读屏文字（决定性）
 
@@ -176,13 +178,55 @@ Gemma **3/4 命中**（区间覆盖真值行），Qwen3-VL 约 **1/4**。
 
 Gemma 在两个分辨率上都更快。
 
-### 两个操作上的坑
+### 第三个模型：UI-TARS-2B-SFT（GUI 专用微调）
+
+基座已确认：`config.json` 里 `architectures = Qwen2VLForConditionalGeneration`、
+`model_type = qwen2_vl`、28 层、hidden 1536 —— **是 Qwen2-VL 系**，llama.cpp 原生支持。
+用 `lmstudio-community/UI-TARS-2B-SFT-GGUF` 的 `Q4_K_M`（1.12 GB）+ `mmproj-model-f16.gguf`（1.33 GB）。
+
+**读字：✅ 两项都正确**（「第五代骁龙®8至尊版移动平台」「270 GB / 512 GB」）。
+
+**grounding：4/4 全中**，而且是三个模型里唯一做到的。但它输出的是**自己的原生格式**
+`<|box_start|>(x,y)` —— 一个**点**，不是框。按「行中心」这个真值算：
+
+| 目标 | 真值行中心 y | UI-TARS y | 误差 |
+|---|---|---|---|
+| 手机名称 | 631 | 613 | 18 |
+| 存储空间 | 696 | 668 | 28 |
+| 处理器 | 917 | **919** | **2** |
+| 运行内存 | 992 | 983 | 9 |
+
+x 恒定落在 ~490–700（**整行的水平中心**）。按「点中这一行」的标准算它是对的，
+按「精确定位标签」的标准算它只给了行级。
+
+### 三个模型放一起
+
+| 模型 | 读屏文字 | grounding（4 目标） | 视觉编码 全分辨率 / 长边 1024 |
+|---|---|---|---|
+| Qwen3-VL-2B Q4_K_M（mmproj Q8 0.45GB） | ❌ 退化成一串 0 | ~1/4 | 6385 / 484 ms |
+| Gemma 4 E2B Q4_0（mmproj Q8 0.56GB） | ✅ | 3/4（粗框，两项撞到同一区域） | 2746 / 324 ms |
+| **UI-TARS-2B-SFT Q4_K_M（mmproj **F16** 1.33GB）** | ✅ | **4/4** | **18296 / 1019 ms** |
+
+**结论**：
+
+1. **引擎没坏** —— 另外两个模型都能正确读出中文 UI 文字。问题在 **Qwen3-VL + mtmd** 这个组合。
+2. **GUI 专用微调确实有用** —— UI-TARS 是唯一 4/4 全中的，而且它输出的是**动作**而不是描述，
+   与 Tappet 的工具调用形态天然更近。代价是它只给到**行级**精度（x 恒为行中心）。
+3. **UI-TARS 目前慢 6–7 倍**，最大嫌疑是它的 mmproj 只有 **f16**（1.33GB，另两个是 Q8）。
+   用 `llama-quantize` 把 mmproj 压到 Q8 应该能显著改善 —— **这一步还没做，是下一个最便宜的实验**。
+4. 缩图对三者都有效（全分辨率 → 1024 长边，编码时间降一个数量级），所以「先缩图再推理」
+   应当作为默认策略，而不是优化项。
+
+### 三个操作上的坑
 
 - **Gemma 4 必须加 `--jinja`**：不加直接 `libc++abi: terminating ... this custom template is not
   supported, try using --jinja` 然后 Aborted。
 - **Gemma 4 是推理模型**：默认会先吐一大段 thinking，`-n 64` 会让它**还没给出答案就截断**。
   问坐标时要给到 `-n 2000` 左右，并在提示词里明确「No explanation / Output only ...」。
   实际使用时要考虑这部分 token 成本。
+- **默认上下文不够**：`llama-mtmd-cli` 不给 `-c` 时，UI-TARS 会在解码阶段报
+  `decode: failed to find a memory slot for batch of size 1` 并把回答截断。加 `-c 8192` 解决。
+  （高分辨率截图本身就要吃掉几千个视觉 token，默认上下文很容易不够。）
 
 ## 7. LiteRT-LM 的现状（查证，未实测）
 

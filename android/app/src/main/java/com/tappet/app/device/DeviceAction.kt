@@ -14,15 +14,15 @@ sealed interface DeviceAction {
   data class TapPoint(val x: Int, val y: Int) : DeviceAction
 
   /**
-   * 按最近一次 [Screenshot]（工具名 `capture_frame`）的**图像像素** bbox 点击 —— 视觉路径的主入口。
+   * 按最近一次 [Screenshot]（工具名 `capture_screenshot`）的**图像像素** bbox 点击 —— 视觉路径的主入口。
    *
    * 模型给的坐标是它实际看到的那张图的像素；屏幕像素由执行层用 [ScreenFrame.toScreen] 换算，
    * 模型不参与换算。树可读时优先用 [TapNode]，那条路不需要换算。
    *
    * （将来接专用 grounding 模型时，这里再加 source / confidence 字段 —— 现在加了也只是没人读。）
    */
-  data class TapFrame(
-    val frameId: String,
+  data class TapScreenshot(
+    val screenshotId: String,
     val x1: Int,
     val y1: Int,
     val x2: Int,
@@ -35,9 +35,9 @@ sealed interface DeviceAction {
   data class LongPressPoint(val x: Int, val y: Int, val durationMs: Long = DEFAULT_LONG_PRESS_MS) :
     DeviceAction
 
-  /** [TapFrame] 的长按版本，坐标同样是最近一次截图的图像像素。 */
-  data class LongPressFrame(
-    val frameId: String,
+  /** [TapScreenshot] 的长按版本，坐标同样是最近一次截图的图像像素。 */
+  data class LongPressScreenshot(
+    val screenshotId: String,
     val x1: Int,
     val y1: Int,
     val x2: Int,
@@ -55,8 +55,8 @@ sealed interface DeviceAction {
   data class Swipe(val direction: SwipeDirection) : DeviceAction
 
   /**
-   * 截当前屏幕并产出一**帧**（工具名 `capture_frame`）。payload 不是给模型看的文本，而是传输用的
-   * JSON（mediaType / width / height / frameId / screenWidth / screenHeight / offset / base64）：
+   * 截当前屏幕并产出一**帧**（工具名 `capture_screenshot`）。payload 不是给模型看的文本，而是传输用的
+   * JSON（mediaType / width / height / screenshotId / screenWidth / screenHeight / offset / base64）：
    * 图由 dsh 侧存成附件交给模型，帧字段由插件渲染成模型可见的图例（见 [ScreenFrame]）。
    */
   data object Screenshot : DeviceAction
@@ -134,13 +134,13 @@ data class DeviceActionResult(
  */
 object VisionCode {
   /** 帧 id 与当前帧不符：界面已经变了，旧坐标作废，必须重新取帧。 */
-  const val STALE_FRAME = "STALE_FRAME"
+  const val STALE_SCREENSHOT = "STALE_SCREENSHOT"
 
   /** 还没取过帧（或服务重启过），没有坐标系可用。 */
   const val FRAME_UNKNOWN = "FRAME_UNKNOWN"
 
   /** bbox 越出图像范围。直接拒、不 clamp —— clamp 会让模型以为点对了。 */
-  const val OUT_OF_FRAME = "OUT_OF_FRAME"
+  const val OUT_OF_SCREENSHOT = "OUT_OF_SCREENSHOT"
 
   /** 手势下发成功但界面看起来没变。这是**提示**不是失败，`ok` 仍为 true。 */
   const val NO_VISIBLE_CHANGE = "NO_VISIBLE_CHANGE"
@@ -250,7 +250,7 @@ fun renderSnapshot(
  */
 const val EMPTY_TREE_HINT =
   "（当前界面几乎没有可读节点：该 App 对无障碍隐藏了控件树，且这个状态在进程存活期间不会" +
-    "恢复，App 内也没有强杀别的应用的手段。改用视觉路径：capture_frame 取一帧（图 + 帧信息），" +
+    "恢复，App 内也没有强杀别的应用的手段。改用视觉路径：capture_screenshot 取一帧（图 + 帧信息），" +
     "从图上找到目标后用 tap_target 给出**该帧的图像像素** bbox 点击，动作后再取一帧确认；" +
     "tap_node 这类按控件编号的工具在这里没有节点可用。**输入文字可以**：先 tap_target 点一下" +
     "输入框让它拿到焦点，再调 type_text（发送/搜索用 press enter）—— 这条路走无障碍的文本注入" +

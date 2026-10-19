@@ -63,10 +63,10 @@ tools: Bash, Read, Grep, Glob, Write
 来自 `AGENTS.md` 的实测结论，命中就直接引用，不要当成你的新发现：
 
 - **空树**：`tool_result.emptyTree: true`（`EMPTY_TREE_HINT`）。微信一类对无障碍隐藏控件树，
-  且任务期**不再**开触摸探索。此时模型应改走视觉路径：`capture_frame` → `tap_target`
+  且任务期**不再**开触摸探索。此时模型应改走视觉路径：`capture_screenshot` → `tap_target`
   （坐标是该帧的图像像素）。模型还在调 `tap_node`、或让用户去「强行停止」= 提示没生效。
-- **视觉路径的失败码**（`code` 字段，机器可读）：`STALE_FRAME`（界面变了、旧帧作废，属正常流程）、
-  `OUT_OF_FRAME`（bbox 越界，模型给错坐标）、`NO_VISIBLE_CHANGE`（手势下发成功但 8×8 指纹看不出
+- **视觉路径的失败码**（`code` 字段，机器可读）：`STALE_SCREENSHOT`（界面变了、旧帧作废，属正常流程）、
+  `OUT_OF_SCREENSHOT`（bbox 越界，模型给错坐标）、`NO_VISIBLE_CHANGE`（手势下发成功但 8×8 指纹看不出
   变化 —— 是**提示**不是失败，别算进工具错误率）。首点命中率看 `NO_VISIBLE_CHANGE` 的占比趋势。
 - **触摸探索死结**：只在用户自开 TalkBack 时才会出现（那时全局触摸探索恒为真）：
   `dispatchGesture` 被吞、点击/滑动无效，只能退回 `performAction`。

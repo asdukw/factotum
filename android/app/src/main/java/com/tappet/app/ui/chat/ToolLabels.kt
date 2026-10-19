@@ -3,17 +3,17 @@ package com.tappet.app.ui.chat
 /**
  * 工具的**对外显示名**。
  *
- * 模型看到的是原始工具名（`read_screen`、`tap_node`…），但界面上不该出现带下划线的英文 ——
- * 使用者关心的是「读取屏幕」，不是「read_screen」。这里只做展示层映射，不动工具契约。
+ * 模型看到的是原始工具名（`read_ui_tree`、`tap_node`…），但界面上不该出现带下划线的英文 ——
+ * 使用者关心的是「读取屏幕」，不是「read_ui_tree」。这里只做展示层映射，不动工具契约。
  *
  * **认不出的工具回落到原名**：插件仓库可以随时加工具，UI 不该因为没同步而显示空白；
  * 宁可难看，也不要猜错。
  */
 private val TOOL_LABELS =
   mapOf(
-    "read_screen" to "读取屏幕",
+    "read_ui_tree" to "读取屏幕",
     "screenshot" to "截屏",
-    "capture_frame" to "截取画面",
+    "capture_screenshot" to "截取画面",
     "tap_node" to "点按控件",
     "tap_point" to "点按坐标",
     "tap_target" to "点按目标",

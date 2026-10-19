@@ -59,10 +59,10 @@ class DshProtocolTest {
       frame(
         """
         {"method":"session.event","params":{"sessionId":"s1","event":{
-          "type":"tool/call","data":{"turn":0,"step":0,"callId":"c1","name":"read_screen","arguments":"{\"mode\":\"tree\"}"}}}}
+          "type":"tool/call","data":{"turn":0,"step":0,"callId":"c1","name":"read_ui_tree","arguments":"{\"mode\":\"tree\"}"}}}}
         """,
       )
-    assertEquals(DshEvent.ToolCall("s1", "c1", "read_screen", """{"mode":"tree"}"""), call)
+    assertEquals(DshEvent.ToolCall("s1", "c1", "read_ui_tree", """{"mode":"tree"}"""), call)
   }
 
   @Test

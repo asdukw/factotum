@@ -23,13 +23,13 @@ internal fun JsonObject.int(key: String): Int? =
   this[key]?.let { runCatching { it.jsonPrimitive.intOrNull }.getOrNull() }
 
 /** 视觉路径的公共入参：帧 id + 图像像素 bbox。缺一个就整条动作不成立。 */
-internal class FrameBox(val frameId: String, val x1: Int, val y1: Int, val x2: Int, val y2: Int)
+internal class ScreenshotBox(val screenshotId: String, val x1: Int, val y1: Int, val x2: Int, val y2: Int)
 
-internal fun JsonObject.frameBox(): FrameBox? {
-  val frameId = string("frame_id") ?: return null
+internal fun JsonObject.frameBox(): ScreenshotBox? {
+  val screenshotId = string("screenshot_id") ?: return null
   val x1 = int("x1") ?: return null
   val y1 = int("y1") ?: return null
   val x2 = int("x2") ?: return null
   val y2 = int("y2") ?: return null
-  return FrameBox(frameId, x1, y1, x2, y2)
+  return ScreenshotBox(screenshotId, x1, y1, x2, y2)
 }

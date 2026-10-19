@@ -210,8 +210,8 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 （`ctx.tools` 注册，含给模型看的描述；独立公开仓库，先在插件仓库提交再更新 submodule 指针）。
 插件改完 → `bundle-dsh.ps1` → 重装 APK。
 
-**模型可见的 10 个工具**（插件 v0.5.0）：`read_screen` / `tap_node(ref)` / `long_press(ref,duration_ms)` /
-`capture_frame()` / `tap_target(frame_id,x1,y1,x2,y2)` / `long_press_target(同前+duration_ms)` /
+**模型可见的 10 个工具**（插件 v0.5.0）：`read_ui_tree` / `tap_node(ref)` / `long_press(ref,duration_ms)` /
+`capture_screenshot()` / `tap_target(screenshot_id,x1,y1,x2,y2)` / `long_press_target(同前+duration_ms)` /
 `type_text` / `press(back|home|recents|enter)` / `launch_app(query)` / `swipe(direction)`。
 工具描述统一写「先读屏、操作后再确认、每次只做一个原子动作」。
 配了手机上的 Linux 之后**再多一个 `run_command`**（真 shell，见「手机上的 Linux」一节）。
@@ -219,9 +219,9 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 由 `dsh-plugin-gmail` 提供，不经过无障碍（见「加一个连接器」一节）。
 
 桥里另有 `screenshot` 与 `tap_point` 两个**屏幕像素**动作，只给 debug 广播与旧脚本用 ——
-**不在模型工具面里**：模型看到的坐标一律是帧的图像像素（见下），混进屏幕像素就是系统性点偏。
+**不在模型工具面里**：模型看到的坐标一律是截图的图像像素（见下），混进屏幕像素就是系统性点偏。
 
-### 坐标契约：模型只说「帧的图像像素」（2026-10-17）
+### 坐标契约：模型只说「截图的图像像素」（2026-10-17）
 
 交给模型的截图会被缩到最长边 2048（1080×2344 的屏 → **943×2047**），而手势要的是屏幕像素。
 两者以前没有任何声明的换算，模型连屏幕尺寸都看不到（工具结果只交 `summary` 文本）——
@@ -230,12 +230,12 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
 现在把换算钉在一处：`device/ScreenFrame.kt` 的纯函数 `toScreen(x,y)`
 （`round(offset + x*screenW/imageW)`，再夹到 `screenW-1`）。规则：
 
-- **模型侧唯一坐标系** = 最近一次 `capture_frame` 那张图的图像像素；模型永不换算、永不碰屏幕像素。
-- `capture_frame` 的 payload 带 `frameId / width / height / screenWidth / screenHeight / offsetX / offsetY`，
+- **模型侧唯一坐标系** = 最近一次 `capture_screenshot` 那张图的图像像素；模型永不换算、永不碰屏幕像素。
+- `capture_screenshot` 的 payload 带 `screenshotId / width / height / screenWidth / screenHeight / offsetX / offsetY`，
   插件把它渲染成**模型可见的图例文本**（模型只看得见文本，尺寸不写进文本它就拿不到）。
 - 屏幕尺寸取**缩放前的捕获位图**，不是 `displayMetrics`（分屏 / 系统栏会让后者对不上）；
   两者不一致时打 `ev=frame_mismatch` 审计标记。
-- 帧是**有状态的**：界面变了旧帧作废（`STALE_FRAME`），必须重新取帧；bbox 越界直接拒（`OUT_OF_FRAME`），
+- 截图是**有状态的**：界面变了旧截图作废（`STALE_SCREENSHOT`），必须重新取截图；bbox 越界直接拒（`OUT_OF_SCREENSHOT`），
   **不 clamp** —— clamp 会把「给错坐标」变成「点了个别的地方」。
 - 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔**不回图**（图会进历史并被每轮重发）。
   `changed=false` 时 `ok` 仍是 true（`NO_VISIBLE_CHANGE`）—— 它是提示，不是失败。
@@ -628,12 +628,12 @@ adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action READ_SCREEN
 
-# 视觉路径：取一帧，再按帧的图像像素点 —— 这一对是坐标换算的确定性判据
+# 视觉路径：取一张截图，再按截图的图像像素点 —— 这一对是坐标换算的确定性判据
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action CAPTURE_FRAME
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action TAP_TARGET `
-  --es frame_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
+  --es screenshot_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
 
 # 文本注入通道此刻的状态（系统版本 / 配置是否生效 / 有没有输入框连接 / 输入框类型）
 # flagActive=false 就是配置没生效 → 去设置里把无障碍关掉再打开一次
@@ -647,18 +647,18 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action IME_ENTER
 ```
 
-**帧契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
+**截图契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
 `docs/android-accessibility.md` §9）：
 
 1. **换算**（确定性，不依赖模型）：`CAPTURE_FRAME` 的 summary 应报「图像 943×2047｜屏幕 1080×2344」；
    对某个已知元素 `TAP_TARGET`，logcat 里换算出的屏幕坐标要落在该元素的 `getBoundsInScreen` 内
    （用 `READ_SCREEN` 复核）。建议先开「开发者选项 → 指针位置」，点击坐标肉眼可见。
-   再故意用过期 `frame_id` → 应报 `STALE_FRAME`；`x2` 超出图像宽 → 应报 `OUT_OF_FRAME`。
+   再故意用过期 `screenshot_id` → 应报 `STALE_SCREENSHOT`；`x2` 超出图像宽 → 应报 `OUT_OF_SCREENSHOT`。
 2. **动作生效**：对会翻页/开新页的按钮 `TAP_TARGET`，要求 `changed=true` 且页面确实变了；
    `NO_VISIBLE_CHANGE` 只说明「看着没变」，不判失败。
 3. **空树端到端**：微信已在后台运行时提交「打开微信，点开第一个会话」，工具序列应是
-   `capture_frame → tap_target`（不再是「读屏 1 个节点后停下请用户强停」）。
-4. **回归**：系统设置这类可读树的 App 仍应走 `read_screen + tap_node`，不该掉进视觉路径。
+   `capture_screenshot → tap_target`（不再是「读屏 1 个节点后停下请用户强停」）。
+4. **回归**：系统设置这类可读树的 App 仍应走 `read_ui_tree + tap_node`，不该掉进视觉路径。
 
 带空格的参数必须把整条 `am broadcast` 再用 `adb shell "..."` 包一层引号，否则会被设备 shell 拆词。
 
@@ -768,9 +768,9 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 读屏没有一个可读节点（微信） | 该 App 对无障碍隐藏控件树（只在「触摸探索」为真时启动的进程里暴露，而任务期不再开探索）→ 走视觉路径，由 `EMPTY_TREE_HINT` 引导 |
 | 用户开着 TalkBack 时点击/滑动全部无效 | 全局触摸探索恒为真，探索模式吞掉 `dispatchGesture` 的手势 → 走 `performAction` 语义动作（服务里已自动切换，这些分支不能删） |
 | 任务期间用户点屏幕变成「双击才生效」 | 触摸探索被开着才会 → 任务路径不再自动开；只有 debug 广播手动开了才可能出现 |
-| 按图点击总是偏左偏上约 12.6% | 截图缩到 2048 长边、`tap_point` 收屏幕像素，两套坐标系没换算 → 模型侧一律用帧的图像像素（`tap_target`），换算在 `ScreenFrame.toScreen` |
-| `tap_target` 报 `STALE_FRAME` | 帧是有状态的：界面变了旧帧作废 → 重新 `capture_frame` 再给坐标（不是 bug） |
-| `tap_target` 报 `OUT_OF_FRAME` | bbox 越出图像范围，**故意不 clamp** → 让模型重给坐标，别改成夹取 |
+| 按图点击总是偏左偏上约 12.6% | 截图缩到 2048 长边、`tap_point` 收屏幕像素，两套坐标系没换算 → 模型侧一律用截图的图像像素（`tap_target`），换算在 `ScreenFrame.toScreen` |
+| `tap_target` 报 `STALE_SCREENSHOT` | 截图是有状态的：界面变了旧截图作废 → 重新 `capture_screenshot` 再给坐标（不是 bug） |
+| `tap_target` 报 `OUT_OF_SCREENSHOT` | bbox 越出图像范围，**故意不 clamp** → 让模型重给坐标，别改成夹取 |
 | `tap_target` 回「界面似乎没有变化」 | 8×8 指纹的启发式：小面积变化（勾选框、行高亮）它看不出来 → 只能读成「可能没点中」，不是「点击失败」 |
 | 长视觉任务请求报 `IMAGE_OFFLOAD_REQUIRED` | 请求图像预算 20MiB 吃穿 → profile 里 `image-offload` 已启用（丢最老的图重试）；它**永久丢帧**，模型之后拿不到那张图 |
 | 树不可读时 `type_text` 失败 | 控件树不可读，文本注入通道也没拿到连接 → **先看码**：`text_no_channel` = 输入框没聚焦（先 `tap_target` 点它一下），`text_flag_missing` = 升级后没重新启用过无障碍，`text_unsupported_os` = 设备在 Android 13 以下。见 `docs/android-accessibility.md` §10 |

@@ -15,17 +15,17 @@ class AgentProgressTest {
   /** 视觉路径的动作也要有人话，否则悬浮层里冒出来的是下划线英文。 */
   @Test
   fun describesVisionPathCalls() {
-    assertEquals("截取画面" to null, describeToolCall("capture_frame", "{}"))
+    assertEquals("截取画面" to null, describeToolCall("capture_screenshot", "{}"))
     assertEquals(
       "按图点击" to "图像 (500,1023)",
-      describeToolCall("tap_target", """{"frame_id":"f1","x1":400,"y1":1000,"x2":600,"y2":1047}"""),
+      describeToolCall("tap_target", """{"screenshot_id":"f1","x1":400,"y1":1000,"x2":600,"y2":1047}"""),
     )
     assertEquals(
       "按图长按" to "图像 (500,1023) · 700ms",
-      describeToolCall("long_press_target", """{"frame_id":"f1","x1":400,"y1":1000,"x2":600,"y2":1047,"duration_ms":700}"""),
+      describeToolCall("long_press_target", """{"screenshot_id":"f1","x1":400,"y1":1000,"x2":600,"y2":1047,"duration_ms":700}"""),
     )
     // 四个数缺一个就当没有 —— 不猜、不显示半截坐标。
-    assertEquals("按图点击" to null, describeToolCall("tap_target", """{"frame_id":"f1","x1":400}"""))
+    assertEquals("按图点击" to null, describeToolCall("tap_target", """{"screenshot_id":"f1","x1":400}"""))
   }
 
   @Test

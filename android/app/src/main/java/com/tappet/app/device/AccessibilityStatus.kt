@@ -36,8 +36,8 @@ object AccessibilityStatus {
   // 「往下滑一下」有什么关系。认不出来的动作说「这个操作」，不编。
   fun actionLabel(action: String?): String =
     when (action) {
-      "read_screen" -> "读屏"
-      "capture_frame", "screenshot" -> "截图"
+      "read_ui_tree" -> "读屏"
+      "capture_screenshot", "screenshot" -> "截图"
       "tap_node", "tap_point", "tap_target" -> "点击屏幕"
       "long_press", "long_press_target" -> "长按屏幕"
       "type_text" -> "输入文字"

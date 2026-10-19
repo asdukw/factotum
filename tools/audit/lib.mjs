@@ -153,8 +153,8 @@ export function pullAttachment(pkg, id, storeVersion = 'android-v1') {
 export const EMPTY_TREE_MARKER = '几乎没有可读节点'
 
 // 旧名字（screenshot / tap_point）**留着**：runs/index.json 是累积的，历史 run 里就是这些名字，
-// 删掉会让跨运行对比冒出假的 unknownTools 跳变。新名字见插件 v0.4.0（capture_frame / tap_target）。
-export const OBSERVE_TOOLS = new Set(['read_screen', 'screenshot', 'capture_frame'])
+// 删掉会让跨运行对比冒出假的 unknownTools 跳变。新名字见插件 v0.4.0（capture_screenshot / tap_target）。
+export const OBSERVE_TOOLS = new Set(['read_ui_tree', 'screenshot', 'capture_screenshot'])
 export const ACTION_TOOLS = new Set([
   'tap_node',
   'tap_point',
@@ -259,11 +259,11 @@ const textOf = (c) =>
     if (r.error) errByTool[r.tool] = (errByTool[r.tool] ?? 0) + 1
   }
 
-  // 空转：连续 read_screen 而不做任何动作的最长连击
+  // 空转：连续 read_ui_tree 而不做任何动作的最长连击
   let streak = 0
   let maxStreak = 0
   for (const r of results) {
-    if (r.tool === 'read_screen') maxStreak = Math.max(maxStreak, ++streak)
+    if (r.tool === 'read_ui_tree') maxStreak = Math.max(maxStreak, ++streak)
     else if (ACTION_TOOLS.has(r.tool)) streak = 0
   }
 

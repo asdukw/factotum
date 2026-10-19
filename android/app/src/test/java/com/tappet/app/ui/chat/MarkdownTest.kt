@@ -93,9 +93,9 @@ class MarkdownTest {
 
   @Test
   fun `inline parses code, bold, italic and links`() {
-    val tokens = Markdown.inline("看 `read_screen` 和 **粗体**、*斜体*，见 [文档](https://example.com/a_b)")
+    val tokens = Markdown.inline("看 `read_ui_tree` 和 **粗体**、*斜体*，见 [文档](https://example.com/a_b)")
 
-    assertEquals(InlineToken.Code("read_screen"), tokens[1])
+    assertEquals(InlineToken.Code("read_ui_tree"), tokens[1])
     assertTrue(tokens.contains(InlineToken.Bold("粗体")))
     assertTrue(tokens.contains(InlineToken.Italic("斜体")))
     assertTrue(tokens.contains(InlineToken.Link("文档", "https://example.com/a_b")))

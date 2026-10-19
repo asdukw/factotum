@@ -17,7 +17,6 @@
 
 import { execFileSync } from "node:child_process";
 import {
-  GUI_OWL_SYSTEM_PROMPT,
   GUI_OWL_TOOLS,
   normalizeGuiOwl,
   parseAction,
@@ -101,10 +100,11 @@ function screenshot() {
 
 async function ask(imageB64, prompt) {
   const started = Date.now();
+  // **GUI-Owl 不要手写 system prompt**：GGUF 里的 chat template 在 `--jinja` 下
+  // 自己渲染 <tools> 与 <tool_call> 的格式说明，再手写一遍是重复注入（实测过）。
   const messages =
     protocol === "guiowl"
       ? [
-          { role: "system", content: GUI_OWL_SYSTEM_PROMPT },
           {
             role: "user",
             content: [
@@ -128,9 +128,14 @@ async function ask(imageB64, prompt) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: protocol === "guiowl" ? "guiowl" : "uitars",
-      temperature: 0,
+      // GUI-Owl 官方 generation_config.json：do_sample=true / temperature 0.6 /
+      // top_p 0.95 / top_k 40。**不要用温度 0** —— 贪心解码是这类模型「循环、
+      // 复读同一动作」的典型诱因（实测过：temp=0 时反复 press_home）。
+      // UI-TARS 没有这份配置，保持贪心。
+      ...(protocol === "guiowl"
+        ? { temperature: 0.6, top_p: 0.95, top_k: 40, tools: GUI_OWL_TOOLS }
+        : { temperature: 0 }),
       max_tokens: 256,
-      ...(protocol === "guiowl" ? { tools: GUI_OWL_TOOLS } : {}),
       messages,
     }),
   });

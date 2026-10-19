@@ -138,13 +138,13 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
       is DeviceAction.TapPoint -> executeTapPoint(action.x, action.y)
 
-      is DeviceAction.TapFrame -> executeTapFrame(action)
+      is DeviceAction.TapScreenshot -> executeTapScreenshot(action)
 
       is DeviceAction.LongPressNode -> executeLongPressNode(action.ref, action.durationMs)
 
       is DeviceAction.LongPressPoint -> executeLongPressPoint(action.x, action.y, action.durationMs)
 
-      is DeviceAction.LongPressFrame -> executeLongPressFrame(action)
+      is DeviceAction.LongPressScreenshot -> executeLongPressScreenshot(action)
 
       is DeviceAction.TypeText -> executeTypeText(action.text)
 
@@ -209,7 +209,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   private suspend fun executeTapNode(ref: Int): DeviceActionResult {
     val node =
       lastSnapshot?.nodes?.firstOrNull { it.ref == ref }
-        ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_screen 再按行首编号点")
+        ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_ui_tree 再按行首编号点")
     if (touchExplorationActive) return semanticClick(ref, long = false)
     return tapPixel(node.bounds.centerX, node.bounds.centerY)
   }
@@ -245,7 +245,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   private suspend fun executeLongPressNode(ref: Int, durationMs: Long): DeviceActionResult {
     val node =
       lastSnapshot?.nodes?.firstOrNull { it.ref == ref }
-        ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_screen 再按行首编号长按")
+        ?: return DeviceActionResult(false, "ref=$ref 不存在：先 read_ui_tree 再按行首编号长按")
     if (touchExplorationActive) return semanticClick(ref, long = true)
     return longPressPixel(node.bounds.centerX, node.bounds.centerY, durationMs)
   }
@@ -274,12 +274,12 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
   // ---------- 视觉路径：按帧坐标操作 ----------
 
-  private suspend fun executeTapFrame(action: DeviceAction.TapFrame): DeviceActionResult =
-    actOnFrame(action.frameId, action.x1, action.y1, action.x2, action.y2, long = false, durationMs = 0L)
+  private suspend fun executeTapScreenshot(action: DeviceAction.TapScreenshot): DeviceActionResult =
+    actOnFrame(action.screenshotId, action.x1, action.y1, action.x2, action.y2, long = false, durationMs = 0L)
 
-  private suspend fun executeLongPressFrame(action: DeviceAction.LongPressFrame): DeviceActionResult =
+  private suspend fun executeLongPressScreenshot(action: DeviceAction.LongPressScreenshot): DeviceActionResult =
     actOnFrame(
-      action.frameId,
+      action.screenshotId,
       action.x1,
       action.y1,
       action.x2,
@@ -295,7 +295,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
    * 越界直接拒、不 clamp —— clamp 会把「模型给错了坐标」变成「点了个别的地方」，更难查。
    */
   private suspend fun actOnFrame(
-    frameId: String,
+    screenshotId: String,
     x1: Int,
     y1: Int,
     x2: Int,
@@ -304,20 +304,20 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     durationMs: Long,
   ): DeviceActionResult {
     val frame = currentFrame
-      ?: return DeviceActionResult(false, "还没有取过帧：先 capture_frame", code = VisionCode.FRAME_UNKNOWN)
-    if (frame.id != frameId || frameStale) {
+      ?: return DeviceActionResult(false, "还没有取过帧：先 capture_screenshot", code = VisionCode.FRAME_UNKNOWN)
+    if (frame.id != screenshotId || frameStale) {
       val why = if (frameStale) "，界面已变化" else ""
       return DeviceActionResult(
         false,
-        "帧 $frameId 已作废（当前 ${frame.id}$why）：重新 capture_frame 再给坐标",
-        code = VisionCode.STALE_FRAME,
+        "帧 $screenshotId 已作废（当前 ${frame.id}$why）：重新 capture_screenshot 再给坐标",
+        code = VisionCode.STALE_SCREENSHOT,
       )
     }
     if (!frame.containsBox(x1, y1, x2, y2)) {
       return DeviceActionResult(
         false,
         "bbox ($x1,$y1)-($x2,$y2) 越出图像 ${frame.imageWidth}×${frame.imageHeight}",
-        code = VisionCode.OUT_OF_FRAME,
+        code = VisionCode.OUT_OF_SCREENSHOT,
       )
     }
     val centerX = (x1 + x2) / 2
@@ -442,7 +442,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     // 不值得为它给服务层引入序列化依赖。
     val payload =
       "{\"mediaType\":\"$mediaType\",\"width\":$width,\"height\":$height," +
-        "\"frameId\":\"${frame.id}\",\"screenWidth\":$screenWidth,\"screenHeight\":$screenHeight," +
+        "\"screenshotId\":\"${frame.id}\",\"screenWidth\":$screenWidth,\"screenHeight\":$screenHeight," +
         "\"offsetX\":0,\"offsetY\":0,\"base64\":\"$base64\"}"
     return DeviceActionResult(
       ok = true,
@@ -834,7 +834,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   private suspend fun semanticClick(ref: Int, long: Boolean): DeviceActionResult {
     val handle =
       lastNodeHandles.getOrNull(ref)
-        ?: return DeviceActionResult(false, "ref=$ref 没有活的节点句柄：重新 read_screen")
+        ?: return DeviceActionResult(false, "ref=$ref 没有活的节点句柄：重新 read_ui_tree")
     val label = if (long) "长按" else "点击"
     val target =
       actionableAncestor(handle, long)
@@ -954,7 +954,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     /** 遍历节点上限，防止超大界面把主线程拖死。 */
     private const val MAX_NODES = 4000
 
-    /** read_screen 快照的节点上限（给 LLM 的行数是另一层截断；聊天列表节点很多）。 */
+    /** read_ui_tree 快照的节点上限（给 LLM 的行数是另一层截断；聊天列表节点很多）。 */
     private const val MAX_SCREEN_NODES = 1500
 
     private const val TAP_DURATION_MS = 60L

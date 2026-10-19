@@ -26,7 +26,7 @@ const records = [
     type: 'assistant/message',
     seq: 3,
     time: 1200,
-    data: { message: { content: [{ type: 'tool-call', id: 'c1', name: 'read_screen', arguments: '{}' }] } },
+    data: { message: { content: [{ type: 'tool-call', id: 'c1', name: 'read_ui_tree', arguments: '{}' }] } },
   },
   {
     type: 'tool/result',
@@ -70,12 +70,12 @@ const trace = [
   // 连续两次读屏（第二次空树）→ 测空转连击与空树识别
   { type: 'assistant/message', seq: 3, time: 2000, data: { message: { content: [
     { type: 'reasoning', text: '先看看屏幕' },
-    { type: 'tool-call', id: 'c1', name: 'read_screen', arguments: '{}' },
+    { type: 'tool-call', id: 'c1', name: 'read_ui_tree', arguments: '{}' },
   ] } } },
   { type: 'tool/result', seq: 4, time: 2400, data: { message: { toolCallId: 'c1', isError: false,
     content: [{ type: 'text', text: 'pkg=com.tencent.mm nodes=1' }] } } },
   { type: 'assistant/message', seq: 5, time: 3000, data: { message: { content: [
-    { type: 'tool-call', id: 'c2', name: 'read_screen', arguments: '{}' },
+    { type: 'tool-call', id: 'c2', name: 'read_ui_tree', arguments: '{}' },
   ] } } },
   { type: 'tool/result', seq: 6, time: 3300, data: { message: { toolCallId: 'c2', isError: false,
     content: [{ type: 'text', text: `（当前界面${EMPTY_TREE_MARKER}……）` }] } } },
@@ -109,17 +109,17 @@ assert.equal(events[1].text, '打开微信看看')
 assert.equal(metrics.records, 11)
 assert.equal(metrics.steps, 4, '助手回合数')
 assert.equal(metrics.toolCalls.total, 4)
-assert.deepEqual(metrics.toolCalls.byTool, { read_screen: 2, screenshot: 1, tap_point: 1 })
+assert.deepEqual(metrics.toolCalls.byTool, { read_ui_tree: 2, screenshot: 1, tap_point: 1 })
 assert.equal(metrics.toolErrors.total, 1)
 assert.deepEqual(metrics.toolErrors.byTool, { tap_point: 1 })
 
-assert.equal(metrics.observeCalls, 3, 'read_screen x2 + screenshot')
+assert.equal(metrics.observeCalls, 3, 'read_ui_tree x2 + screenshot')
 assert.equal(metrics.actionCalls, 1)
 assert.deepEqual(metrics.unknownTools, [])
 
 // 视觉路径的新工具名必须被分类认出来 —— 漏了会让 observeCalls / actionCalls 静默偏低，
 // 而这两个数正是「模型在盲点还是在读屏」的判据。
-assert.ok(OBSERVE_TOOLS.has('capture_frame'), 'capture_frame 算观察')
+assert.ok(OBSERVE_TOOLS.has('capture_screenshot'), 'capture_screenshot 算观察')
 assert.ok(ACTION_TOOLS.has('tap_target'), 'tap_target 算动作')
 assert.ok(ACTION_TOOLS.has('long_press_target'), 'long_press_target 算动作')
 

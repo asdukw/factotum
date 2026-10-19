@@ -5,14 +5,14 @@ import org.junit.Test
 
 /**
  * 工具显示名与思考时长：都是**展示层**的纯函数，但错法很显眼 ——
- * 界面上出现 `read_screen` 这种下划线英文，或者「思考了 0 秒」。
+ * 界面上出现 `read_ui_tree` 这种下划线英文，或者「思考了 0 秒」。
  */
 class ToolLabelsTest {
   @Test
   fun `known tools get chinese labels`() {
-    assertEquals("读取屏幕", toolDisplayName("read_screen"))
+    assertEquals("读取屏幕", toolDisplayName("read_ui_tree"))
     assertEquals("截屏", toolDisplayName("screenshot"))
-    assertEquals("截取画面", toolDisplayName("capture_frame"))
+    assertEquals("截取画面", toolDisplayName("capture_screenshot"))
     assertEquals("点按控件", toolDisplayName("tap_node"))
     assertEquals("点按坐标", toolDisplayName("tap_point"))
     assertEquals("点按目标", toolDisplayName("tap_target"))

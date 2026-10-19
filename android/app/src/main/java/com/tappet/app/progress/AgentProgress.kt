@@ -144,10 +144,10 @@ internal fun describeToolCall(name: String, arguments: String): Pair<String, Str
 /** 动作名。认不出的工具如实显示原始名，不猜。 */
 private fun toolCallLabel(name: String): String =
   when (name) {
-    "read_screen" -> "读取当前屏幕"
+    "read_ui_tree" -> "读取当前屏幕"
     "tap_node" -> "点击控件"
     "tap_point" -> "按坐标点击"
-    "capture_frame" -> "截取画面"
+    "capture_screenshot" -> "截取画面"
     "tap_target" -> "按图点击"
     "long_press_target" -> "按图长按"
     "long_press" -> "长按屏幕"
@@ -191,10 +191,10 @@ private fun toolCallDetail(name: String, args: JsonObject?): String? =
 internal fun toolResultTitle(name: String?, ok: Boolean): String {
   if (!ok) return "操作失败"
   return when (name) {
-    "read_screen" -> "屏幕读取完成"
+    "read_ui_tree" -> "屏幕读取完成"
     "tap_node", "tap_point", "tap_target" -> "点击已完成"
     "long_press", "long_press_target" -> "长按已完成"
-    "capture_frame" -> "画面已截取"
+    "capture_screenshot" -> "画面已截取"
     "type_text" -> "文字已输入"
     "press" -> "按键已完成"
     "launch_app" -> "应用已启动"
@@ -206,7 +206,7 @@ internal fun toolResultTitle(name: String?, ok: Boolean): String {
 internal fun summarizeToolResult(name: String?, text: String?): String? {
   val clean = text?.trim().orEmpty()
   if (clean.isEmpty()) return null
-  return if (name == "read_screen") summarizeScreenResult(clean) else summarizeText(clean, 110)
+  return if (name == "read_ui_tree") summarizeScreenResult(clean) else summarizeText(clean, 110)
 }
 
 internal fun summarizeScreenResult(text: String): String? {

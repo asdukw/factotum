@@ -84,7 +84,7 @@ class ChatViewModelTest {
           FakeStreamer(
             events =
               listOf(
-                AgentStreamEvent.Status("正在调用 read_screen…"),
+                AgentStreamEvent.Status("正在调用 read_ui_tree…"),
                 AgentStreamEvent.TextDelta("电池 100%"),
                 AgentStreamEvent.TextDelta("。"),
                 AgentStreamEvent.Completed,
@@ -276,7 +276,7 @@ class ChatViewModelTest {
           FakeStreamer(
             events =
               listOf(
-                AgentStreamEvent.ToolCallStarted("c1", "read_screen", """{"mode":"tree"}"""),
+                AgentStreamEvent.ToolCallStarted("c1", "read_ui_tree", """{"mode":"tree"}"""),
                 AgentStreamEvent.TextDelta("屏幕上写着设置"),
                 AgentStreamEvent.ToolCallFinished("c1", ok = true, result = "设置 / 电池"),
                 AgentStreamEvent.Completed,
@@ -292,7 +292,7 @@ class ChatViewModelTest {
 
     val assistant = viewModel.state.value.messages.last()
     assertEquals(1, assistant.toolCalls.size)
-    assertEquals("read_screen", assistant.toolCalls.single().name)
+    assertEquals("read_ui_tree", assistant.toolCalls.single().name)
     assertEquals(ToolCallState.Ok, assistant.toolCalls.single().state)
     assertEquals("设置 / 电池", assistant.toolCalls.single().result)
 
@@ -311,7 +311,7 @@ class ChatViewModelTest {
     advanceUntilIdle()
     val restored = viewModel.state.value.messages.last()
     assertEquals(1, restored.toolCalls.size)
-    assertEquals("read_screen", restored.toolCalls.single().name)
+    assertEquals("read_ui_tree", restored.toolCalls.single().name)
     assertEquals(ToolCallState.Ok, restored.toolCalls.single().state)
   }
 

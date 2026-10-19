@@ -147,7 +147,7 @@ object DeviceBridgeServer {
 
   private fun toDeviceAction(action: String, root: JsonObject): DeviceAction? =
     when (action) {
-      "read_screen" -> DeviceAction.ReadScreen
+      "read_ui_tree" -> DeviceAction.ReadScreen
 
       "tap_node" -> root.int("ref")?.let(DeviceAction::TapNode)
 
@@ -182,18 +182,18 @@ object DeviceBridgeServer {
 
       "launch_app" -> root.string("query")?.let(DeviceAction::LaunchApp)
 
-      // capture_frame 是给模型的那条路（工具名一致）；screenshot 留着给 debug 与旧脚本。
-      "screenshot", "capture_frame" -> DeviceAction.Screenshot
+      // capture_screenshot 是给模型的那条路（工具名一致）；screenshot 留着给 debug 与旧脚本。
+      "screenshot", "capture_screenshot" -> DeviceAction.Screenshot
 
       "tap_target" ->
-        root.frameBox()?.let { DeviceAction.TapFrame(it.frameId, it.x1, it.y1, it.x2, it.y2) }
+        root.frameBox()?.let { DeviceAction.TapScreenshot(it.screenshotId, it.x1, it.y1, it.x2, it.y2) }
 
       "long_press_target" ->
         root.frameBox()?.let {
           val duration =
             root.int("duration_ms")?.toLong()?.coerceIn(MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS)
               ?: DEFAULT_LONG_PRESS_MS
-          DeviceAction.LongPressFrame(it.frameId, it.x1, it.y1, it.x2, it.y2, duration)
+          DeviceAction.LongPressScreenshot(it.screenshotId, it.x1, it.y1, it.x2, it.y2, duration)
         }
 
       "swipe" ->

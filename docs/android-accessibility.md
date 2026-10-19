@@ -238,7 +238,7 @@ adb shell dumpsys window windows   # 目标窗口 fl= 里有没有 SECURE
 
 ### 现象
 
-微信 8.0.78 对无障碍**完全不暴露控件树**：`read_screen` 只返回 1 个节点，
+微信 8.0.78 对无障碍**完全不暴露控件树**：`read_ui_tree` 只返回 1 个节点，
 `uiautomator dump` 的 `<hierarchy>` 里 root 只有状态栏/导航栏，`dumpsys accessibility`
 显示微信窗口 `hasChildren=false`。同一时刻 QQ 读得到 72 节点、系统设置 46 节点 ——
 所以不是 ROM 拦截、也不是执行层的问题，是微信 App 侧的行为。
@@ -307,15 +307,15 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
 
 ### 视觉路径：帧契约
 
-树不可读时模型改走 `capture_frame` → `tap_target`。这里有一个**必须**先修的硬伤：
+树不可读时模型改走 `capture_screenshot` → `tap_target`。这里有一个**必须**先修的硬伤：
 
 - 交给模型的截图被缩到最长边 2048，1080×2344 的屏得到 **943×2047**；而 `tap_point` 收的是屏幕像素。
   两者之间以前没有任何声明的换算，模型连屏幕尺寸都看不到（插件只把 `summary` 文本交给模型，
   payload 里的尺寸它读不到）—— 按图给坐标会系统性偏约 **12.6%**，而且不报错。
-- 现在坐标一律是**最近一次 `capture_frame` 那张图的图像像素**，换算在设备侧的纯函数
+- 现在坐标一律是**最近一次 `capture_screenshot` 那张图的图像像素**，换算在设备侧的纯函数
   `ScreenFrame.toScreen`（`round(offset + x*screenW/imageW)`，夹到 `screenW-1`）。
   屏幕尺寸取**缩放前的捕获位图**而不是 `displayMetrics`；两者不一致时打 `ev=frame_mismatch`。
-- 帧是**有状态的**：界面变了旧帧作废（`STALE_FRAME`）；bbox 越界直接拒（`OUT_OF_FRAME`），不 clamp。
+- 截图是**有状态的**：界面变了旧截图作废（`STALE_SCREENSHOT`）；bbox 越界直接拒（`OUT_OF_SCREENSHOT`），不 clamp。
 - 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔不回图。`changed=false` 时 `ok` 仍为 true
   （`NO_VISIBLE_CHANGE`）—— 它是提示不是失败，插件把 `ok=false` 当异常抛。
 

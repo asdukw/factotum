@@ -67,7 +67,7 @@ Tappet APK（单进程）
 | **P0** ✅ | JNI 模块 + libnode + `NodeRuntime`（env/资产拷贝/日志转发），跑 hello-world JS | 2026-10-03 一加 15T 通过：logcat `NODEJS-MOBILE` 输出 `v24.18.0 / mobile 24.18.0-0 / android / arm64`，TMPDIR/HOME 正确，5 秒后 exit 0；4KB 页设备跑 16KB 对齐的 .so 正常 |
 | **P1a** ✅ | vendored dsh + phone profile + 自定义 launcher（绕开 boot/loader） | PC 验证：`launcher.mjs` 用 zen 端点完成一次问答（exit 0） |
 | **P1b** ✅ | 运行时打包进 assets 并由 `NodeRuntime` 解压启动 | 真机：dsh 在内嵌 Node 24 上启动，zen 完成问答 `2+2 equals 4.`；会话落盘 `session.v4.jsonl.zstd` |
-| **P1c** ✅ | Kotlin BridgeServer + android 插件（7 个设备工具） | 真机：dsh 调 `read_screen` 后回答 `pkg=com.android.launcher，text-node=45`；任务结束进程存活 |
+| **P1c** ✅ | Kotlin BridgeServer + android 插件（7 个设备工具） | 真机：dsh 调 `read_ui_tree` 后回答 `pkg=com.android.launcher，text-node=45`；任务结束进程存活 |
 | **P2** 🟡 | QQ 端到端：群聊中结合上下文发言（@/回复、联系人聊天待测） | 真机在目标群成功发送并自证（内容与群名不入库） |
 | **P3** 🟡 | 产品化：SDK JSON-RPC（stdio 经 nodejs-mobile channel）或 WebView；前台服务保活；审批策略；会话落 SQLCipher（可选，实现 `SessionPersistence` seam） | 日常可用（RPC ✅ 2026-10-03） |
 
@@ -149,20 +149,20 @@ adb shell am broadcast --include-stopped-packages `
   随机 token）把 8 个 `DeviceAction` 暴露成 `POST /action`；dsh 插件
   `dsh-plugin-android-tools`（`ctx.tools`）把动作注册成工具，经 env
   `ANDROID_BRIDGE_URL/TOKEN` 找到桥。未连接无障碍服务时返回明确失败。
-- 工具：`read_screen` / `tap_node(ref)` / `tap_point(x,y)` / `type_text` / `press_back` /
+- 工具：`read_ui_tree` / `tap_node(ref)` / `tap_point(x,y)` / `type_text` / `press_back` /
   `launch_app(query)` / `swipe(direction)`；描述里写明「先读屏、操作后再确认」。
 - **`process.exit()` 会 abort 宿主进程**（FORTIFY: pthread_mutex_lock on destroyed
   mutex → SIGABRT）：launcher 改为任务结束后不 exit，只记录 `task finished code=0`。
   代价是 P1 期间一个 App 进程只跑一次任务；常驻 runtime + RPC 是 P3 的正式形态。
-- 验证：任务「Call read_screen once, then reply with ONLY the package name and the
+- 验证：任务「Call read_ui_tree once, then reply with ONLY the package name and the
   text-node count」→ 真机输出 `pkg=com.android.launcher，text-node（TextView）数量=45。`，
   App 进程存活。
 
 ### P2 实测记录（2026-10-03，真机；不含群名与聊天内容）
 
 - 任务：用户授权后在指定 QQ 群里结合上下文发言。dsh 的动作序列（从输出可复盘）：
-  `launch_app("QQ")` → `read_screen` 找到置顶群（核实标题群名一致、群人数）→
-  `read_screen` 读取近期聊天（话题：升学、地域打趣、回老家）→ `type_text` 一条
+  `launch_app("QQ")` → `read_ui_tree` 找到置顶群（核实标题群名一致、群人数）→
+  `read_ui_tree` 读取近期聊天（话题：升学、地域打趣、回老家）→ `type_text` 一条
   结合「回老家」话题的自然发言 → `tap_node` 点「发送」→ 用「查找聊天记录」搜索
   关键词自证消息已入库 → 报告完成。
 - **约束生效**：任务文本里写明「用户已明确授权」并给出「核实群名不一致就退出重找」
@@ -183,7 +183,7 @@ adb shell am broadcast --include-stopped-packages `
   `NODEJS-MOBILE` 只承载 stderr 诊断。
 - **native**：`prepareStdio()` 预建 stdin/stdout/stderr 管道（stdin 由 Kotlin 经 JNI
   写入；stdout 逐行回调 Kotlin，不落 logcat；stderr 进 logcat）。
-- **验证**：initialize 往返 ~0.45s；同一进程连续 prompt #2/#3；`read_screen` 任务
+- **验证**：initialize 往返 ~0.45s；同一进程连续 prompt #2/#3；`read_ui_tree` 任务
   ~3.2s 返回 `com.oplus.safecenter 21`（包名 + 节点数）；无需 force-stop。
 - **踩坑（都已修）**：
   1. `prepareStdio` 必须在 `node::Start` 前取到 JavaVM，否则 stdout 线程 attach 失败、
@@ -208,7 +208,7 @@ adb shell am broadcast --include-stopped-packages `
      `dshEvents` 再把事件里的 dsh id 映射回调用方 id（收集方过滤逻辑不变）。
      代价：进程重启后 dsh 上下文不延续（UI 历史仍在 Room；跨重启 resume 需等 SDK 支持）。
   2. **状态文案残留**：`ChatViewModel` 收到 `Status` 只清了本地缓冲，`appendText` 仍往气泡里
-     追加，最终回答前会留着「正在调用 read_screen…」。修法：第一条 `TextDelta` 用
+     追加，最终回答前会留着「正在调用 read_ui_tree…」。修法：第一条 `TextDelta` 用
      `replace = true` 顶掉状态（新增回归单测）。
 - **仍缺**：真机回归（ColorOS 前台服务冻结策略、通知权限）、任务「停止」目前只停 UI 收集，
   dsh 侧无取消方法。
@@ -217,7 +217,7 @@ adb shell am broadcast --include-stopped-packages `
 
 - **流程**：arm64 `assembleDebug` → `adb install -r` → 重新启用无障碍 → 启动 App。
 - **结果**：内嵌 Node 启动 ~1s、web server 绑定随机端口，WebView 完整渲染 dsh GUI；
-  WebView 里发「Read the current screen…」，agent 5 秒完成，经 android-tools 调 `read_screen`
+  WebView 里发「Read the current screen…」，agent 5 秒完成，经 android-tools 调 `read_ui_tree`
   正确回答当前是 Tappet（`com.tappet.app`）——WebView → gateway → session → phone preset →
   无障碍桥整条链路在真机打通。
 - **坑（已修）**：
@@ -262,7 +262,7 @@ adb shell am broadcast --include-stopped-packages `
   `:app:assembleDebug`、`:app:assembleDebugAndroidTest` 全绿。
 - **验证（真机，一加 15T / ColorOS，2026-10-03）**：`adb install -r` → 重新启用无障碍 →
   冷启动原生聊天页正常（旧会话从 SQLCipher 里恢复，Markdown 斜体/行内代码渲染正确）；
-  在输入框发「Call read_screen once and reply with ONLY the package name.」：
+  在输入框发「Call read_ui_tree once and reply with ONLY the package name.」：
   - 气泡先显示「已提交，等待模型…」+ 光标，发送键变「停止」；
   - **工具卡**按预期出现，收尾成「完成」，点开有「参数 / 结果」两栏；
   - 助手回答 `com.tappet.app`（实际经无障碍读屏拿到），整条 dsh → 桥 → 无障碍链路在真机跑通；
@@ -281,7 +281,7 @@ adb shell am broadcast --include-stopped-packages `
 
 - **方向**：`android-tools` 只保留 App 无关的“手和眼”，不做聊天页专用语义；
   `collect_chat` / `read_chat` 不再挂载，通用 `wait` 搬进 `android-tools`。
-- **工具（9 个）**：`read_screen` / `tap_node` / `tap_point` / `long_press` /
+- **工具（9 个）**：`read_ui_tree` / `tap_node` / `tap_point` / `long_press` /
   `type_text` / `press(back|home|recents|enter)` / `launch_app` / `swipe` / `wait`。
   Android 没有全局 Esc，取消/返回用 `press(back)`；`enter` 走 `ACTION_IME_ENTER`（Android 11+）。
 - **读屏与长按**：`ScreenNode` 增加 `long_clickable` 标记；长按优先按 `ref` 中心点手势，
@@ -291,13 +291,13 @@ adb shell am broadcast --include-stopped-packages `
 - **验证（JVM）**：插件 `npm test`（9 个工具 + bridge contract）；Android
   `:app:testDebugUnitTest`、`:app:assembleDebug` 全绿；运行时 zip 确认无
   `dsh-plugin-chat-tools`，profile 无 chat-tools。
-- **验证（真机，一加 15T / ColorOS，2026-10-04）**：`read_screen` / `long_press` /
+- **验证（真机，一加 15T / ColorOS，2026-10-04）**：`read_ui_tree` / `long_press` /
   `press back` / `press home` / `press enter` 均 ok；同一个常驻 runtime 跑
-  `read_screen` 任务结果 `ok=true tools=1 errors=0`。
+  `read_ui_tree` 任务结果 `ok=true tools=1 errors=0`。
 
 ### P8 下线 wait + 原生「思考」折叠块（2026-10-05）
 
-- **wait 下线**：等待交给模型自身的思考阶段与重复 `read_screen` 轮询；插件面收敛为
+- **wait 下线**：等待交给模型自身的思考阶段与重复 `read_ui_tree` 轮询；插件面收敛为
   8 个通用原语（纯桥动作）。插件仓库提交 `feat: 下线 wait 工具`（smoke 断言 8 个工具、
   契约测试去掉 wait 分支），tappet 更新 submodule 指针，phone profile 两处 persona 去掉
   「等待」；`bundle-dsh.ps1` 重打运行时，zip 内确认无 wait 工具、无「等待」文案。
@@ -321,9 +321,9 @@ adb shell am broadcast --include-stopped-packages `
   `:app:testDebugUnitTest`（DshProtocol reasoning block、ChatViewModel reasoning 落库/恢复、
   ReasoningSummary）、`:app:assembleDebug` 全绿。
 - **验证（真机，一加 15T / ColorOS，2026-10-06）**：装包后发
-  「Call read_screen once and reply with ONLY the package name.」：界面顺序为
+  「Call read_ui_tree once and reply with ONLY the package name.」：界面顺序为
   用户消息 → 思考折叠行（默认折叠，标题「思考」+ 首行摘要 + 展开按钮）→
-  `read_screen` 工具卡（完成）→ 回答 `com.tappet.app`；点行内任意处展开出全文、
+  `read_ui_tree` 工具卡（完成）→ 回答 `com.tappet.app`；点行内任意处展开出全文、
   按钮变「收起」，再点收回。`force-stop` 重启后折叠行、工具卡、回答均从 SQLCipher
   恢复（折叠行回到默认折叠）。旧会话里历史遗留的 wait 卡片不影响新运行时，
   新任务不会再产生 wait。
@@ -373,13 +373,13 @@ adb shell am broadcast --include-stopped-packages `
 - 设备层新增 `screenshot` 原子动作：`takeScreenshot` → 缩到最长边 2048（对齐 dsh 的
   2048px / 2048² 像素预算）→ PNG，超 900KB 转 JPEG q80 → payload 为
   `{mediaType,width,height,base64}` 的 JSON。
-- 设备层新增 `screenshot` 原子动作（2026-10-17 起同时产出**帧**，工具名 `capture_frame`）：
+- 设备层新增 `screenshot` 原子动作（2026-10-17 起同时产出**帧**，工具名 `capture_screenshot`）：
   `takeScreenshot` → 缩到最长边 2048（对齐 dsh 的 2048px / 2048² 像素预算）→ PNG，超 900KB 转
-  JPEG q80 → payload 为 `{mediaType,width,height,frameId,screenWidth,screenHeight,offsetX,offsetY,base64}`
+  JPEG q80 → payload 为 `{mediaType,width,height,screenshotId,screenWidth,screenHeight,offsetX,offsetY,base64}`
   的 JSON。后六个字段是**帧契约**：模型只说图像像素，屏幕像素由执行层 `ScreenFrame.toScreen` 换算
   （见 `docs/android-accessibility.md` §9）。
-- 插件新增 `capture_frame` 工具：取桥的 base64 → `ctx.attachments.saveImage` → `render` 出
-  `[text, image]`，其中文本是**帧图例**（图像尺寸 / 屏幕尺寸 / frame_id）—— 模型只看得见文本，
+- 插件新增 `capture_screenshot` 工具：取桥的 base64 → `ctx.attachments.saveImage` → `render` 出
+  `[text, image]`，其中文本是**帧图例**（图像尺寸 / 屏幕尺寸 / screenshot_id）—— 模型只看得见文本，
   尺寸不写进文本它就拿不到。没有附件服务或桥没回契约形状时退回纯文字，不抛错。
 
 **预算与代价**：pi-ai 默认请求图像上限 20MiB（base64 计），每轮请求都会重发历史图；
@@ -406,6 +406,6 @@ adb shell am broadcast --include-stopped-packages `
 **踩坑（值得记）**：dsh 的 value schema DSL 要求对象根**显式**写
 `additionalProperties: true|false`，漏了 `defineTool` 会抛错，而它一抛错
 **整个插件注册的工具全没了** —— 现象是模型侧 `tools: []`，模型只能对着 persona
-猜工具名（还真猜出了 read_screen/tap/swipe 这些）。`test/smoke.mjs` 用 stub 顶掉了
+猜工具名（还真猜出了 read_ui_tree/tap/swipe 这些）。`test/smoke.mjs` 用 stub 顶掉了
 `defineTool`，拦不住；新增的 `test/real-schema.mjs` 自建沙箱（拷源码 + junction 接
 运行时依赖）跑真校验，才把这类错误挡在 PC 侧。

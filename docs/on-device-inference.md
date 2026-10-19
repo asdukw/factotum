@@ -91,7 +91,7 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
 | 输入图像 | 视觉编码耗时 |
 |---|---|
 | 1216×2640（原生屏幕） | **6385 ms** |
-| 943×2047（**Tappet 现在 `capture_frame` 产出的帧**） | **2672 ms** |
+| 943×2047（**Tappet 现在 `capture_screenshot` 产出的帧**） | **2672 ms** |
 | 长边 1024 | 484 ms |
 | 长边 768 | 290 ms |
 | 长边 512 | 146 ms |
@@ -439,7 +439,7 @@ adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell c
    模型现在每步吐 34–61 个 token。用 llama.cpp 的 GBNF grammar / `--grammar`
    把输出钉死成只有 tool_call 的 JSON（十几 token），decode 能从 1.0–1.8 s 降到 ~0.4 s。
    **这是唯一一个「只改配置就能省一秒」的动作。**
-2. **树可读时不走视觉（最大的结构性优化）**。`read_screen` 产出的是文本，
+2. **树可读时不走视觉（最大的结构性优化）**。`read_ui_tree` 产出的是文本，
    没有图像 token —— 2B 纯文本 prefill 是 3411 t/s 量级，一步可能 0.3 s 级。
    视觉应该只作为「树不可读」的兜底。现在所有优化都花在兜底路径上，主路径没测过。
 3. **停止条件外置**。两个模型都判定不了「做完了没有」（见第 8 节）。

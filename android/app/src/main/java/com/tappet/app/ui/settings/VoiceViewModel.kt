@@ -81,7 +81,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
         rate = VoiceSettings.rate(appContext),
         selectedVoice = VoiceSettings.systemVoice(appContext),
         selectedModelId = VoiceSettings.localModel(appContext),
-        selectedAsrModelId = VoiceSettings.asrModel(appContext),
+        selectedAsrModelId = AsrModelCatalog.selectedId(appContext),
       ),
     )
   val state: StateFlow<UiState> = _state.asStateFlow()

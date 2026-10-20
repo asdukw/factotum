@@ -40,7 +40,7 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       "ASR" -> {
         val wav = intent.getStringExtra(EXTRA_WAV) ?: return
         val logPayload = intent.getBooleanExtra(EXTRA_LOG_PAYLOAD, false)
-        val modelId = intent.getStringExtra(EXTRA_MODEL) ?: VoiceSettings.asrModel(app)
+        val modelId = intent.getStringExtra(EXTRA_MODEL) ?: AsrModelCatalog.selectedId(app)
         // 广播立即返回，识别在进程内异步跑（Broadcast Timeout 是 60 秒，
         // 而首次识别要把上百 MB 的模型读进内存）。
         CoroutineScope(Dispatchers.IO).launch { transcribe(app, wav, modelId, logPayload) }
@@ -53,6 +53,12 @@ class VoiceDebugReceiver : BroadcastReceiver() {
           return
         }
         CoroutineScope(Dispatchers.IO).launch { install(app, model) }
+      }
+
+      "VAD" -> {
+        val wav = intent.getStringExtra(EXTRA_WAV) ?: return
+        val logPayload = intent.getBooleanExtra(EXTRA_LOG_PAYLOAD, false)
+        CoroutineScope(Dispatchers.IO).launch { vad(app, wav, logPayload) }
       }
 
       "MODELS" -> logModels(app)
@@ -92,6 +98,89 @@ class VoiceDebugReceiver : BroadcastReceiver() {
           )
       }
     }
+  }
+
+  /**
+   * 把一段 WAV 推过 **VAD**，再走一遍「VAD 认过的段 → 识别」的真实路径。
+   *
+   * 为什么值得单开一条：[VadSegmenter] 换掉了手写的能量法端点判定，而这件事原来**只能靠人
+   * 对着手机说话**才能验。样例音频（模型归档里的 `test_wavs/`）是真实中文语音，喂进去就能
+   * 回答三个问题：VAD 认不认得出人声、它把这段切成了几段、切出来的段交给识别器还能不能
+   * 出字。剩下只有「麦克风收到的是不是人声」需要真人 —— 与 `op ASR` 同一个思路。
+   *
+   * 打的是**结构**（段数 / 样本数 / 每段的起点与长度），不是正文；正文要显式
+   * `--ez logPayload true`，那时打印的是你推上去的那段测试音频。
+   */
+  private suspend fun vad(
+    app: Context,
+    wav: String,
+    logPayload: Boolean,
+  ) {
+    val wave =
+      try {
+        WaveReader.readWave(wav)
+      } catch (
+        @Suppress("TooGenericExceptionCaught") error: Throwable,
+      ) {
+        Log.e(TAG, "读 WAV 失败：$wav", error)
+        return
+      }
+    val segmenter =
+      try {
+        VadSegmenter(app.assets)
+      } catch (
+        @Suppress("TooGenericExceptionCaught") error: Throwable,
+      ) {
+        Log.e(TAG, "VAD 起不来：${error.javaClass.simpleName}")
+        return
+      }
+
+    val startedAt = System.currentTimeMillis()
+    // 按采集路径同样的块长喂（512 样本 = 32ms），别按整个文件一口气塞 ——
+    // 真实路径就是一块一块来的，一次塞完验不出「攒窗口」那段逻辑。
+    val segments = ArrayList<FloatArray>()
+    var offset = 0
+    while (offset < wave.samples.size) {
+      val end = minOf(offset + AudioCapture.FRAME_SAMPLES, wave.samples.size)
+      segments += segmenter.accept(wave.samples.copyOfRange(offset, end))
+      offset = end
+    }
+    // 文件末尾没有静音，最后一段不会自己闭合 —— 与「用户说完立刻按停」同一个情形。
+    segments += segmenter.finish()
+    val ms = System.currentTimeMillis() - startedAt
+    val samples = segments.sumOf { it.size }
+    Log.i(
+      TAG,
+      "vad done input=${wave.samples.size} segments=${segments.size} speech_samples=$samples ms=$ms",
+    )
+    segments.forEachIndexed { index, segment ->
+      Log.i(TAG, "vad segment index=$index samples=${segment.size}")
+    }
+    segmenter.release()
+
+    if (segments.isEmpty()) {
+      Log.w(TAG, "VAD 一段都没认出来 —— 样例音频是人声，这不该发生")
+      return
+    }
+    val joined = FloatArray(samples)
+    var write = 0
+    segments.forEach { segment ->
+      segment.copyInto(joined, write)
+      write += segment.size
+    }
+    val engine = LocalRecognizer(app, AsrModelCatalog.selectedId(app))
+    val initError = engine.initialize()
+    if (initError != null) {
+      Log.e(TAG, "引擎不可用：$initError")
+      return
+    }
+    val text = engine.transcribe(joined)
+    Log.i(
+      TAG,
+      "vad asr done chars=${text.length}" +
+        if (logPayload) " text=$text" else " (加 --ez logPayload true 才打印文本)",
+    )
+    engine.release()
   }
 
   private suspend fun transcribe(
@@ -142,7 +231,9 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       val partial = VoiceModelDownloader.partialBytes(app, VoiceModelKinds.ASR, model.id)
       Log.i(TAG, "asr model id=${model.id} installed=$installed bytes=$bytes partial=$partial")
     }
-    Log.i(TAG, "asr selected=${VoiceSettings.asrModel(app) ?: "none"}")
+    // 两个都打：stored 是用户在设置页点过的那条，effective 是实际会用的那条
+    // （没点过就回落到第一个装好的）。两者不一致时，「点了没反应」这类问题一眼可辨。
+    Log.i(TAG, "asr stored=${VoiceSettings.asrModel(app) ?: "none"} effective=${AsrModelCatalog.selectedId(app) ?: "none"}")
   }
 
   private companion object {

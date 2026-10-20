@@ -51,3 +51,5 @@ android/.dsh-cache/
 android/app/src/main/assets/dsh-runtime.zip
 # 从 pi-ai 目录抽出的模型模态索引（tools/bundle-dsh.ps1 生成）
 android/app/src/main/assets/model-modalities.json
+# silero VAD 模型（tools/fetch-sherpa.ps1 拉，629KB；语音输入的端点判定用）
+android/app/src/main/assets/silero_vad.onnx

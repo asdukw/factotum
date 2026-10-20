@@ -1,5 +1,7 @@
 package com.tappet.app.voice
 
+import android.content.Context
+
 /**
  * 一个可下载的本地**识别**模型。
  *
@@ -179,4 +181,30 @@ object AsrModelCatalog {
   val ALL: List<AsrModel> = listOf(PARAFORMER_ZH_SMALL, SENSE_VOICE_INT8, WHISPER_TINY)
 
   fun byId(id: String?): AsrModel? = ALL.firstOrNull { it.id == id }
+
+  /** [resolveAsrModelId] 的 Context 版：把「装好了没有」接到真实的模型目录上。 */
+  fun selectedId(context: Context): String? =
+    resolveAsrModelId(VoiceSettings.asrModel(context)) {
+      VoiceModelStore.isInstalled(context, VoiceModelKinds.ASR, it)
+    }
+}
+
+/**
+ * 该用哪个识别模型 —— **判据是「装没装」，不是「选没选」**。
+ *
+ * 只装了一个模型却要用户再回设置页点一次「选中」，是界面在自找麻烦；而漏掉那一步的表现是
+ * 聊天页的麦克风回一句「还没下载识别模型」，**与事实相反**（真机踩过：三个模型都装着、
+ * 文件也齐，点麦克风说没下载 —— 因为 `VoiceSettings.asrModel` 一直是 null）。
+ *
+ * [stored] 还在就用它（用户显式选过就尊重他），否则回落到第一个装好的；一个都没装就把
+ * [stored] 原样还回去，让上层的报错能点名是哪一个。**纯函数**：判据由调用方给，
+ * 这样这条规则不需要设备也能验。
+ */
+internal fun resolveAsrModelId(
+  stored: String?,
+  installed: (AsrModel) -> Boolean,
+): String? {
+  val chosen = AsrModelCatalog.byId(stored)
+  if (chosen != null && installed(chosen)) return chosen.id
+  return AsrModelCatalog.ALL.firstOrNull(installed)?.id ?: stored
 }

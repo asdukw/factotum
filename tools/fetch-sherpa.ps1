@@ -63,3 +63,33 @@ if ((Get-Item -LiteralPath $dest).Length -lt 1MB) {
 
 Write-Host "sherpa-onnx $Version ($Abi) -> $dest"
 Write-Host "  注意：Kotlin 绑定 Tts.kt 必须与这个版本同 tag，改版本时一起换。"
+
+# silero VAD 的模型（629KB）打进 assets —— **不让用户为它多下一样东西**。
+# 语音输入的端点判定用它，不是我们自己算能量阈值：把几秒环境噪声喂给识别模型，它会
+# 「听」出一句像模像样的话（真机实测：静音 5 秒 → 7~11 个字），而 VAD 前置过滤正是
+# whisper 系模型幻觉的公认主修法（faster-whisper 的 vad_filter、WhisperX 都这么干）。
+# 模型与识别模型同一个 release 域，不引入第二个下载源。
+$vadAsset = "silero_vad.onnx"
+$vadUrl = "https://github.com/$Repo/releases/download/asr-models/$vadAsset"
+$assetsDir = Join-Path $root "android/app/src/main/assets"
+$vadDest = Join-Path $assetsDir $vadAsset
+
+New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+if (Test-Path -LiteralPath $vadDest) {
+  Write-Host "using cached $vadDest"
+} else {
+  Write-Host "downloading $vadUrl$(if ($Proxy) { " (proxy $Proxy)" })"
+  $vadReq = @{ Uri = $vadUrl; OutFile = $vadDest; Headers = @{ "User-Agent" = "opencode" } }
+  if ($Proxy) { $vadReq.Proxy = $Proxy }
+  Invoke-WebRequest @vadReq
+}
+
+# 同一个理由再验一遍：vad 模型坏了的表现是「语音输入一开口就报错」，
+# 而那看起来像设备问题。629KB 上下，明显偏小就是没下全。
+if (-not (Test-Path -LiteralPath $vadDest)) {
+  throw "silero_vad.onnx 没落到 assets：期望在 $vadDest"
+}
+if ((Get-Item -LiteralPath $vadDest).Length -lt 500KB) {
+  throw "silero_vad.onnx 太小，像是坏文件：$vadDest"
+}
+Write-Host "silero VAD -> $vadDest ($([math]::Round((Get-Item -LiteralPath $vadDest).Length / 1KB)) KB)"

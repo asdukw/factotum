@@ -24,8 +24,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * ## 一次交互长什么样
  *
- * 点麦克风 → 开始录（界面显示电平与秒数）→ 用户停下说话，**自动**在尾静音后结束
- * （见 [EndpointDetector]），或者用户自己点停止 → 识别 → 文本回到输入框。
+ * 点麦克风 → 开始录（界面显示电平与秒数）→ 用户停下说话，**自动**在说完之后结束
+ * （判定交给 silero VAD，见 [VadSegmenter] 与 [dictationEnd]），或者用户自己点停止 →
+ * 识别 → 文本回到输入框。
  * 一次只处理一段，不做连续听写：连续听写要把「这句话什么时候算说完」交给用户去管，
  * 而输入框里装的是**一条指令**，不是聊天记录。
  *
@@ -83,7 +84,7 @@ object VoiceInput {
   private var capture: AudioCapture? = null
 
   /** 这一段的结束信号：采集回调与 [stopAndTranscribe] 都能把它点亮。 */
-  private var stopSignal: CompletableDeferred<EndpointDetector.Decision.End>? = null
+  private var stopSignal: CompletableDeferred<DictationEnd>? = null
 
   private var engine: LocalRecognizer? = null
 
@@ -91,13 +92,6 @@ object VoiceInput {
   private var engineKey: String? = null
 
   private var resultId = 0L
-
-  /**
-   * 上一次估出来的环境噪声底，带进下一段（[EndpointDetector] 的「快降慢升」意味着
-   * 第一段在嘈杂环境里可能不准，第二段开始就准了）。进程内保留即可 ——
-   * 它只描述「刚才那个房间有多吵」，不值得落盘。
-   */
-  private var noiseFloor: Float? = null
 
   /**
    * 现在能不能用。null = 可以；否则是给用户看的一句话（没权限 / 没下模型 / 模型没了）。
@@ -129,32 +123,53 @@ object VoiceInput {
       _state.value = State.Failed(reason)
       return
     }
-    val detector = EndpointDetector(sampleRate = SAMPLE_RATE, initialNoiseFloor = noiseFloor)
+    val segmenter =
+      try {
+        VadSegmenter(app.assets)
+      } catch (
+        @Suppress("TooGenericExceptionCaught") error: Throwable,
+      ) {
+        // 打包时漏了 silero_vad.onnx（跑 tools/fetch-sherpa.ps1 就有了）。这是构建问题，
+        // 但对用户来说就是「这个功能现在不能用」，如实说，别把它说成设备的问题。
+        Log.e(TAG, "VAD 起不来：${error.javaClass.simpleName}")
+        _state.value = State.Failed("语音输入暂时不可用（端点检测没起来）")
+        return
+      }
     val buffer = SampleBuffer()
-    val finished = CompletableDeferred<EndpointDetector.Decision.End>()
+    val finished = CompletableDeferred<DictationEnd>()
     stopSignal = finished
+    val startedAt = System.currentTimeMillis()
+    var heardSpeech = false
     var lastLevelUpdate = 0L
 
     val recorder =
       AudioCapture { samples, rms ->
-        buffer.add(samples)
-        val decision = detector.feed(rms, samples.size)
-        if (decision is EndpointDetector.Decision.End) {
+        // **只把 VAD 认过的段放进 buffer**，原始音频不直接进：环境噪声根本不会出现在
+        // 段里，所以「静音喂出幻觉文本」结构上不可能（这是换掉手写能量法的全部理由）。
+        val segments = segmenter.accept(samples)
+        segments.forEach { buffer.add(it) }
+        if (segments.isNotEmpty()) heardSpeech = true
+        val speaking = segmenter.isSpeechDetected()
+        val elapsed = System.currentTimeMillis() - startedAt
+        val end = dictationEnd(elapsed, speaking, heardSpeech, segments.isNotEmpty())
+        if (end != null) {
           // **不在这里 stop()**：本回调就跑在采集线程上，而 stop() 会 join 它自己。
           // 收尾交给下面的会话协程。
-          finished.complete(decision)
+          finished.complete(end)
           return@AudioCapture
         }
         // 电平每 100ms 刷一次：每帧（32ms）都刷会让 Compose 一直重组，而人眼看不出来。
+        // 这里的 RMS **只用来画电平条**，判定说话与否是 VAD 的事。
         val now = System.currentTimeMillis()
         if (now - lastLevelUpdate >= LEVEL_UPDATE_MS && _state.value is State.Listening) {
           lastLevelUpdate = now
-          _state.value = State.Listening(level = levelOf(rms), elapsedMs = buffer.durationMs)
+          _state.value = State.Listening(level = levelOf(rms), elapsedMs = elapsed)
         }
       }
     val startError = recorder.start()
     if (startError != null) {
       stopSignal = null
+      segmenter.release()
       _state.value = State.Failed(startError)
       return
     }
@@ -165,10 +180,14 @@ object VoiceInput {
     job =
       scope.launch {
         // 采集线程自己死了（麦克风被抢走）不会再有人点亮信号，所以给一个宽于
-        // EndpointDetector 上限（60 秒）的兜底。
-        val end = withTimeoutOrNull(SESSION_TIMEOUT_MS) { finished.await() }
-        noiseFloor = detector.noiseFloorEstimate()
+        // [MAX_SESSION_MS] 的兜底。
+        val end = withTimeoutOrNull(SESSION_WATCHDOG_MS) { finished.await() }
         recorder.stop()
+        // **stop() 之后、release() 之前**收尾：`Vad` 不是线程安全的，而 stop() 已经
+        // 把采集线程 join 掉了。这一步不能省 —— 用户说完立刻按停时，最后一句还没闭合
+        // （段要等 [VadSegmenter.MIN_SILENCE_MS] 的静音才闭合），不 flush 就把刚说的话丢了。
+        segmenter.finish().forEach { buffer.add(it) }
+        segmenter.release()
         capture = null
         stopSignal = null
         if (end == null) Log.w(TAG, "录音异常结束，按超时处理")
@@ -176,15 +195,15 @@ object VoiceInput {
       }
   }
 
-  /** 用户点停止：不等到尾静音，立刻收尾。没在听时是空操作。 */
+  /** 用户点停止：不等 VAD 判完，立刻收尾。没在听时是空操作。 */
   fun stopAndTranscribe() {
     if (!isListening()) return
-    stopSignal?.complete(EndpointDetector.Decision.End.Silence)
+    stopSignal?.complete(DictationEnd.Silence)
   }
 
   /** 放弃这一段（退出页面、权限被撤）。识别结果与音频都不留。 */
   fun cancel() {
-    stopSignal?.complete(EndpointDetector.Decision.End.NoSpeech)
+    stopSignal?.complete(DictationEnd.NoSpeech)
     stopSignal = null
     capture?.stop()
     capture = null
@@ -234,7 +253,7 @@ object VoiceInput {
    * 每次说话都重来会让第一次识别慢好几秒。
    */
   private fun engineFor(context: Context): LocalRecognizer {
-    val modelId = VoiceSettings.asrModel(context)
+    val modelId = AsrModelCatalog.selectedId(context)
     engine?.let { if (modelId == engineKey) return it }
     engine?.release()
     val created = LocalRecognizer(context, modelId)
@@ -247,14 +266,13 @@ object VoiceInput {
   private fun levelOf(rms: Float): Float = (rms / LEVEL_FULL_SCALE).coerceIn(0f, 1f)
 
   private const val TAG = "TappetVoice"
-  private const val SAMPLE_RATE = 16_000
   private const val LEVEL_FULL_SCALE = 0.15f
   private const val LEVEL_UPDATE_MS = 100L
 
-  /** 会话上限。比 [EndpointDetector] 的 60 秒上限宽一点，正常轮不到它。 */
-  private const val SESSION_TIMEOUT_MS = 90_000L
+  /** 会话兜底。比 [MAX_SESSION_MS] 宽，正常轮不到它 —— 它挡的是「采集线程自己死了」。 */
+  private const val SESSION_WATCHDOG_MS = MAX_SESSION_MS + 10_000L
 
-  /** 短于这个样本数（0.2 秒）不值得送进模型。 */
+  /** 短于这个样本数（0.2 秒）不值得送进模型。VAD 最短的段是 0.25 秒，正常轮不到它。 */
   private const val MIN_SAMPLES = 3_200
 
   /** 把一帧一帧的样本攒成一段。用块表避免每次追加都复制整段音频。 */
@@ -262,8 +280,6 @@ object VoiceInput {
     private val chunks = ArrayList<FloatArray>()
 
     private var samples: Int = 0
-
-    val durationMs: Long get() = samples * 1000L / SAMPLE_RATE
 
     fun add(chunk: FloatArray) {
       chunks.add(chunk)

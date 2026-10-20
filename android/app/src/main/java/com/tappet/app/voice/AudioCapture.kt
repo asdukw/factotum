@@ -15,8 +15,11 @@ import kotlin.math.sqrt
  * 代价是有的设备会因此多几毫秒延迟。
  *
  * 音源用 `VOICE_RECOGNITION` 而不是 `MIC`：前者是给识别用的（关掉 AGC、开降噪），
- * 也是系统语音助手的默认选择。注意它**因设备而异**：有的 ROM 会做激进降噪，
- * 把小声说话削成静音 —— 那种情况下 [EndpointDetector] 的自适应阈值会跟着降下来，仍能工作。
+ * 也是系统语音助手的默认选择。注意它**因设备而异**：有的 ROM 会做激进降噪，把小声说话
+ * 削成静音 —— 真机上要是有「说话没反应」的反馈，先怀疑这一条。
+ *
+ * [onFrame] 里的 RMS **只给界面画电平条**（见 [VoiceInput]）；判定有没有人在说话是
+ * [VadSegmenter] 的事，别拿这个 RMS 去做决定。
  *
  * 采集跑在自己的线程上：`AudioRecord.read` 是阻塞的，放在协程里会占住调度线程。
  * 停止靠 [running] 标志 + `read` 返回，**不打断线程**（打断阻塞的 native 读会留下半帧）。
@@ -87,14 +90,16 @@ internal class AudioCapture(
     }
   }
 
-  private companion object {
+  // internal 而不是 private：采样率与帧长是**与 VAD 共用的契约**
+  // （`VadSegmenter` 的窗口必须 512 个样本、模型必须 16kHz），各写一份迟早会漂。
+  internal companion object {
     const val TAG = "TappetVoice"
 
     const val SAMPLE_RATE = 16_000
     const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
     const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
 
-    /** 一帧 32ms（512 个样本）—— 与常见 VAD 的帧长一致，端点上够细，开销可忽略。 */
+    /** 一帧 32ms（512 个样本）—— 与 silero VAD 的窗口一样长，正好一帧一个窗口。 */
     const val FRAME_SAMPLES = 512
 
     const val BYTES_PER_SAMPLE = 2

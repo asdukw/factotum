@@ -34,7 +34,7 @@ Android SDK（compileSdk 36）、`ndk;29.0.14206865`、`cmake;3.31.6`（后三�
 # 首次准备：libnode（含 NDK 里的 libc++_shared.so）与 vendored dsh
 git submodule update --init --recursive   # 设备工具插件在独立仓库
 .\tools\fetch-libnode.ps1
-.\tools\fetch-sherpa.ps1      # 本地朗读引擎的 native 库（24MB；不跑则本地引擎不可用）
+.\tools\fetch-sherpa.ps1      # 本地朗读引擎的 native 库（24MB）+ silero VAD 模型（629KB，进 assets）
 .\tools\bundle-dsh.ps1
 
 # 构建 + 单测（在 android/ 下执行）
@@ -490,11 +490,12 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 | `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**） |
 | `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门 |
 | `voice/AudioCapture.kt` | 麦克风采集：16kHz 单声道 → `FloatArray` + RMS |
-| `voice/EndpointDetector.kt` | 纯 Kotlin：能量法端点判定（**快降慢升**的自适应阈值，单测钉住） |
+| `voice/VadSegmenter.kt` | 端点判定：**sherpa-onnx 自带的 silero VAD**（`assets/silero_vad.onnx`，629KB） |
+| `voice/DictationEnd.kt` | 纯 Kotlin：会话的三个收尾条件（单测钉住） |
 | `voice/RecognizedText.kt` | 纯 Kotlin：识别结果清理 + 回填输入框（单测钉住） |
 | `voice/VoiceInput.kt` | 单例：语音输入的唯一状态源、按模型 id 缓存识别器 |
 | `voice/VoiceSettings.kt` | 偏好：朗读引擎 / 自动朗读 / 语速 / 音色 + 识别模型（**非密**） |
-| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `FeatureConfig` / `WaveReader`）；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
+| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `Vad` / `FeatureConfig` / `WaveReader`）；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
 | `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」（朗读 + 语音输入两节） |
 | `debug/.../VoiceDebugReceiver.kt` | **仅 debug**：把 WAV 喂给识别引擎 / 无 UI 装模型（`op ASR` / `INSTALL` / `MODELS`） |
 
@@ -534,10 +535,20 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   「系统 TTS 打底」成立是因为文本是我们自己写的、且系统 TTS 不联网 —— 两者不是一回事。
 - **音频不落盘、不进日志**：只在本进程内存里活到识别完。`LocalRecognizer` 只记样本长度、
   字符数与耗时；debug 广播要打印识别文本得显式 `--ez logPayload true`。
-- **端点判定是能量法**（`EndpointDetector`）：阈值自适应，规矩是**快降慢升** ——
-  升快了会把用户自己的声音当成环境噪声（「说了半天它说没听到」），这条有单测钉住。
-  噪声底**跨段保留**（`VoiceInput` 传给下一段）。代价写在 `docs/voice.md`：
-  嘈杂环境第一次可能不准；**silero VAD 是下一步**，不是这一版。
+- **端点判定用 silero VAD，不要再自己写阈值**（2026-10-20 换掉手写能量法）：把几秒环境噪声
+  交给识别模型，它会「听」出一句像模像样的话落进输入框（真机实测：静音 5 秒 → 7~11 个字），
+  而**调阈值堵不住**（收紧后照样越线）。VAD 前置过滤是 whisper 系幻觉的公认主修法
+  （faster-whisper 的 `vad_filter`、WhisperX 都这么干），sherpa-onnx 自带
+  （`Vad.kt` + `silero_vad.onnx` 629KB，`fetch-sherpa.ps1` 打进 assets）。
+  三个阈值写在 `VadSegmenter` 里并写清了取舍，**别用上游的 `getVadModelConfig`**。
+- **`Vad.flush()` 不能省**：段要等后续 0.8 秒静音才闭合，正在说的最后一句永远悬着 ——
+  用户说完立刻按停就会把话丢了（实测：真实中文样例切出 0 段）。收尾顺序
+  `recorder.stop()` → `finish()` → `release()`，不能反（`Vad` 不是线程安全的）。
+- **识别模型不必手动选**：`AsrModelCatalog.selectedId` 回落到第一个装好的。以前只认设置页
+  点过的那条，于是三个模型都装着、点麦克风却回「还没下载识别模型」——与事实相反。
+- **会话收尾条件是纯函数**（`voice/DictationEnd.kt`，单测钉住）：90 秒硬上限、
+  「刚说完一段**且**此刻没人在说话」、一直没说话到 5 秒。中间那条的后半个条件不能省 ——
+  一段也会因为切到 `max_speech` 上限而吐出来，那时人还在说。
 - **识别器按模型 id 缓存**（`VoiceInput.engineKey`）：建一次要把几十上百 MB 的模型读进内存，
   每次说话都重建就是每次等好几秒。
 - **与合成同一道闸门**：`OfflineRecognizer` 不是线程安全的，而协程取消打断不了阻塞的
@@ -676,6 +687,11 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action IME_TEXT --es text "hello"
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action IME_ENTER
+
+# 语音（朗读 / 语音输入）：装识别模型、看模型状态、把 WAV 喂给识别引擎或 VAD。
+# **`op VAD` 打的是段数 / 样本数，没有正文** —— 验端点判定不必真人开口；详见 docs/voice.md §9
+adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
+  -a com.tappet.app.debug.VOICE --es op VAD --es wav <设备上的路径> --ez logPayload true
 ```
 
 **截图契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
@@ -723,7 +739,7 @@ android/                        唯一运行时（Kotlin / Compose）
     data/                       Room + SQLCipher 持久化、Keystore 口令；crypto/SecretVault 存用户填的 key
     device/                     通用设备契约：DeviceAction / DeviceBridge / OemProfiles
     node/                       NodeRuntime：解压 dsh 运行时、注入 env、JNI 启动
-    voice/                      朗读：Markdown → 可朗读文本、引擎接口（系统 TTS / 本地）、单一状态源
+    voice/                      朗读（Markdown → 可朗读文本、系统/本地引擎）+ 语音输入（VAD 端点判定、识别、回填输入框）
     ui/                         Compose 界面（聊天 / 首页 / 设置）
   app/src/main/cpp/             JNI（node::Start + stdout 转发到 logcat）
   app/src/test/                 JVM 单测      app/src/androidTest/  真机测试
@@ -854,8 +870,13 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 本地引擎读完第一段就停，日志报「朗读中断」 | `destroyIfIdle()` 少了 `if (!released) return` → 每次合成结束都把引擎释放了 |
 | 点麦克风提示「还没下载识别模型」 | 语音输入要先下模型（设置 → 语音 → 语音输入，82–239MB）；识别**没有**系统引擎那一档，理由见 `docs/voice.md` §6 |
 | whisper 把中文音频识别成另一种语言（且不报错） | 语种写死了 → `AsrEngineSpec.Whisper.language` 必须留空（留空 = 从音频推断，实测把英文解成了中文） |
-| 说了半天提示「没听到说话」 | 环境噪声高于阈值下限（0.008）而噪声底还没学会 → 同一环境第二段起正常；说太久（20 秒以上）也会被慢升的阈值追上，说完按一下停最稳 |
+| 点麦克风提示「还没下载识别模型」，但模型明明下好了 | 没有「选中」的那条（`VoiceSettings.asrModel` 是 null）→ 现在由 `AsrModelCatalog.selectedId` 回落到第一个装好的；旧版本装的模型不必重下 |
+| 点麦克风什么都没说，输入框却多出一句话 | 手写的能量法端点判定把环境噪声送进了模型（静音 5 秒 → 7~11 个字）→ 已换成 silero VAD，噪声根本不成段；**别再回到阈值判定** |
+| 说完立刻按停，话没了 | `Vad.flush()` 漏了：段要等 0.8 秒静音才闭合 → 收尾顺序必须是 `stop()` → `finish()` → `release()` |
+| 语音输入报「端点检测没起来」 | `assets/silero_vad.onnx` 不在包里 → 跑 `tools/fetch-sherpa.ps1`（629KB，从 `asr-models` release 拉） |
 | `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
+| `op ASR` / `op VAD` 广播了但日志里什么都没有 | Git Bash 把设备路径 `/data/...` 翻成了 `Files/Git/data/...`（MSYS 路径转换）→ 前面加 `MSYS_NO_PATHCONV=1`；另见「先 monkey 再广播」那条 |
+| `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数（**没有正文**），不用真人开口就能验 |
 
 ## 深度文档
 
@@ -863,7 +884,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 |---|---|
 | `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
-| `docs/voice.md` | 动语音（朗读 / 语音输入）之前：引擎取舍、模型授权、端点判定的代价、真机怎么验 |
+| `docs/voice.md` | 动语音（朗读 / 语音输入）之前：引擎取舍、模型授权、端点判定（silero VAD）的三个阈值、真机怎么验 |
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
 | `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
 | `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |

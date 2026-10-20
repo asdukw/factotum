@@ -202,11 +202,6 @@ private fun ModelSection(
   onInstallModel: (String, VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
   onDeleteModel: (String, VoiceModel) -> Unit,
-  /**
-   * 这一组有没有「选中」这一档。标点模型是 `false`：装了就对所有需要它的识别模型生效，
-   * 多一个「使用」按钮只会让用户以为还得配对一次。
-   */
-  selectable: Boolean = true,
 ) {
   SectionLabel(title)
   SettingsGroup {
@@ -214,8 +209,7 @@ private fun ModelSection(
       if (index > 0) SettingsDivider()
       ModelRow(
         model = model,
-        selected = selectable && model.model.id == selectedId,
-        selectable = selectable,
+        selected = model.model.id == selectedId,
         // 同一时刻只装一个（VoiceModelInstaller），所以进度条只会出现在一条上；
         // 但要按**种类**匹配，否则装朗读模型时识别那一组也会跟着画进度条。
         installing = installing?.takeIf { it.kind == kind && it.modelId == model.model.id },
@@ -265,29 +259,6 @@ private fun DictationSection(
         "装好会自动选中它，装了多个也可以点某一条手动换。"
     },
   )
-  Spacer(Modifier.height(20.dp))
-  ModelSection(
-    title = "标点（可选）",
-    kind = VoiceModelKinds.PUNCT,
-    models = state.punctModels,
-    selectedId = null,
-    installing = state.installing,
-    onSelectModel = onSelectModel,
-    onInstallModel = onInstallModel,
-    onCancelInstall = onCancelInstall,
-    onDeleteModel = onDeleteModel,
-    selectable = false,
-  )
-  Spacer(Modifier.height(12.dp))
-  InfoBanner(
-    if (state.punctReady) {
-      "识别结果会补上逗号句号。只有 Paraformer 那档需要它 —— " +
-        "SenseVoice 自带标点，Whisper 自己会吐标点。"
-    } else {
-      "不装也能用：Paraformer 那档出来的是一整句没有标点的文本，" +
-        "装上之后它会补上逗号句号（其余两档不需要）。"
-    },
-  )
 }
 
 @Composable
@@ -299,7 +270,6 @@ private fun ModelRow(
   onInstall: () -> Unit,
   onCancel: () -> Unit,
   onDelete: () -> Unit,
-  selectable: Boolean = true,
 ) {
   Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -327,7 +297,6 @@ private fun ModelRow(
         model = model,
         installing = installing,
         selected = selected,
-        selectable = selectable,
         onInstall = onInstall,
         onCancel = onCancel,
         onDelete = onDelete,
@@ -354,17 +323,20 @@ private fun ModelAction(
   onCancel: () -> Unit,
   onDelete: () -> Unit,
   onSelect: () -> Unit,
-  selectable: Boolean = true,
 ) {
   when {
     installing != null -> TextButton(onClick = onCancel) { Text("取消") }
 
+    // 本体没装：一次把伴生的也下了，按钮上的数字是两样加起来 —— 用户不必知道里面有两份。
     !model.installed ->
-      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.model.sizeBytes)}") }
+      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.missingBytes)}") }
 
-    // 没有「选中」这一档的组（标点模型）装好之后只剩「删除」—— 否则会多出一个
-    // 「使用」按钮，而点它什么也不会发生。
-    selected || !selectable -> TextButton(onClick = onDelete) { Text("删除") }
+    // 本体装好了、只差伴生的那几样（老用户升级后的情形）：按钮写「补下」而不是「下载」，
+    // 免得看着像是要把已经装好的那份重来一遍。装的时候已经装好的会被跳过。
+    model.missingCompanions.isNotEmpty() ->
+      Button(onClick = onInstall) { Text("补下 ${formatMegabytes(model.missingBytes)}") }
+
+    selected -> TextButton(onClick = onDelete) { Text("删除") }
 
     else -> Button(onClick = onSelect) { Text("使用") }
   }
@@ -394,9 +366,14 @@ private fun ModelProgress(installing: VoiceModelInstaller.State) {
 private fun modelSubtitle(model: VoiceViewModel.ModelUi): String {
   val size =
     when {
+      model.installed && model.missingCompanions.isNotEmpty() ->
+        "还差 ${model.missingCompanions.joinToString("、") { it.label }} ${formatMegabytes(model.missingBytes)}"
+
       model.installed -> "已下载 ${formatMegabytes(model.installedBytes)}"
+
       model.partialBytes > 0 -> "已下载 ${formatMegabytes(model.partialBytes)}，会接着下"
-      else -> "需要下载 ${formatMegabytes(model.model.sizeBytes)}"
+
+      else -> "需要下载 ${formatMegabytes(model.missingBytes)}"
     }
   return "${model.model.summary} · $size"
 }

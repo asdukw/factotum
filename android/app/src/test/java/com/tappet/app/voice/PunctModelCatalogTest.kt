@@ -68,6 +68,16 @@ class PunctModelCatalogTest {
   }
 
   @Test
+  fun `种类是 punct，而且自己不依赖别人`() {
+    // kind 是**存储身份**（写错 = 设备上已下好的找不到），而 companions 为空是这条链的终点：
+    // 标点模型要是也有伴生，安装就成了递归，而「装一次谁需要谁用」的前提就没了。
+    PunctModelCatalog.ALL.forEach { model ->
+      assertEquals(model.id, VoiceModelKinds.PUNCT, model.kind)
+      assertTrue(model.id, model.companions.isEmpty())
+    }
+  }
+
+  @Test
   fun `按 id 查得到，查不到的 id 回 null`() {
     assertEquals(PunctModelCatalog.CT_TRANSFORMER_ZH_EN, PunctModelCatalog.byId("punct_ct_transformer_zh_en"))
     assertEquals(null, PunctModelCatalog.byId(null))

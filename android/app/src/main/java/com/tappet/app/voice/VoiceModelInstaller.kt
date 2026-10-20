@@ -58,8 +58,18 @@ object VoiceModelInstaller {
     job =
       scope.launch {
         try {
-          VoiceModelDownloader.install(app, kind, model) { progress ->
-            _state.value = State(kind, model.id, progress = progress)
+          // 先装本体、再装伴生模型（[VoiceModel.companions]，目前就是标点那种）：
+          // 中途取消时留下的是「识别能用、标点还差一点」，反过来则是一份没人用得上的标点。
+          // **已经装好的跳过** —— 老用户升级后点一次「补下」只拉缺的那一份，不会把 82MB 的
+          // 识别模型再下一遍。
+          //
+          // 进度条会**从头走两遍**（两条归档是两次下载），这是如实反映而不是 bug：
+          // 界面上那一行的按钮写的就是两样加起来的大小。
+          for (target in listOf(model) + model.companions) {
+            if (VoiceModelStore.isInstalled(app, target.kind, target)) continue
+            VoiceModelDownloader.install(app, target.kind, target) { progress ->
+              _state.value = State(kind, model.id, progress = progress)
+            }
           }
           _state.value = null
         } catch (cancelled: CancellationException) {

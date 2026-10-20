@@ -24,7 +24,19 @@ data class AsrModel(
   override val licenseNote: String,
   val engine: AsrEngineSpec,
 ) : VoiceModel {
+  override val kind: String get() = VoiceModelKinds.ASR
+
   override val requiredFiles: List<String> get() = engine.requiredFiles
+
+  /**
+   * 这一档不产标点时，标点模型**跟着它一起装**。
+   *
+   * 「要不要标点」不是一个该由用户回答的问题：它只取决于识别模型选的是哪个，做成设置页里的
+   * 一个选项等于把「哪档需要标点」这个内部知识推给用户，而他既不知道也不该知道。
+   * 所以它是一条数据（[AsrEngineSpec.needsPunctuation]），不是一个开关。
+   */
+  override val companions: List<VoiceModel>
+    get() = if (engine.needsPunctuation) PunctModelCatalog.ALL else emptyList()
 }
 
 /**

@@ -571,9 +571,15 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   —— 填 `modified_beam_search` **不是退化成贪心，是直接退出进程**（内嵌 Node 与宿主同进程，
   退出就是 App 崩）；`blankPenalty` 只有 transducer 读它。`ruleFsts` / `ruleFars` / `hr`
   反而是活的（基类统一构造，对所有模型生效）。
-- **标点是「装一次、谁需要谁用」**（同一天）：`PunctModelCatalog` + `VoiceModelKinds.PUNCT`，
-  **只有 paraformer 需要**（`AsrEngineSpec.needsPunctuation`）。装了就生效、没有「选中」，
-  没装/起不来就原样返回 —— **它是改善不是前置条件**，别写成「语音输入不可用」。
+- **标点是「跟着识别模型一起下」，设置页里没有它的入口**（同一天）：`VoiceModel.companions`
+  把标点模型挂在 `AsrModel` 上（判据是 `AsrEngineSpec.needsPunctuation`），
+  `VoiceModelInstaller` 装本体时**按顺序一起装、已装好的跳过**。
+  「要不要标点」不是该由用户回答的问题 —— 做成设置页里的选项等于把内部知识推给用户。
+  四个配套点别丢：① 它有自己的 `VoiceModelKinds.PUNCT`（共享件，将来两个模型共用一份时
+  不该重下），所以 `VoiceModel.kind` 由模型自己声明、**不沿用调用方传进来的那个**；
+  ② 老用户升级后本体已装、只缺伴生 → 那一条显示「补下」而不是「下载」（按钮数字是**缺的**
+  那部分）；③ 删本体时顺带清掉**没人再需要**的伴生模型（否则留下 62MB 界面上看不到的东西）；
+  ④ 它是改善不是前置条件，缺了照常能用，别写成「语音输入不可用」。
   标点补在**段拼起来之后**（逐段补会在段边界塞句号）。下载域仍是 k2-fsa/sherpa-onnx，
   只是另一个 release tag（`punctuation-models`）。
 - **与合成同一道闸门**：`OfflineRecognizer` 不是线程安全的，而协程取消打断不了阻塞的
@@ -914,7 +920,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 | `op ASR` / `op VAD` 广播了但日志里什么都没有 | Git Bash 把设备路径 `/data/...` 翻成了 `Files/Git/data/...`（MSYS 路径转换）→ 前面加 `MSYS_NO_PATHCONV=1`；另见「先 monkey 再广播」那条 |
 | `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数 / 每段的 `lang` 与 `event`（**没有正文**），不用真人开口就能验 |
-| 识别结果是一整句没有标点的中文 | 正常：paraformer 那档本身不产标点（sense-voice / whisper 产）→ 设置 → 语音 → 标点里下 CT-Transformer（62MB，Apache-2.0），**装了就生效** |
+| 识别结果是一整句没有标点的中文 | 正常：paraformer 那档本身不产标点（sense-voice / whisper 产）→ 标点模型是**跟着 paraformer 一起下**的（`AsrModel.companions`），设置页里没有单独入口。**老用户升级后** Paraformer 那一条会显示「补下 61.7 MB」，点一次即可 |
 | 标点模型装了但输出没变 | 当前识别模型不 `needsPunctuation`（只有 paraformer 要）→ `op MODELS` 看 `punct model ... installed`，`op PUNCT --es text '...'` 单独验引擎 |
 | 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：三个模型只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
 | 日志里想看「模型认为这是什么语言 / 这段是不是语音」 | 识别完成后那一行有 `lang=` / `event=`（只有 SenseVoice 会填，其余打 `-`）；它们是**记号不是正文**，可以进日志 |

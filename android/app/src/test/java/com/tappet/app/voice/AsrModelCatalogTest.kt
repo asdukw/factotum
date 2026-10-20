@@ -96,4 +96,35 @@ class AsrModelCatalogTest {
     assertTrue(!AsrModelCatalog.SENSE_VOICE_INT8.engine.needsPunctuation)
     assertTrue(!AsrModelCatalog.WHISPER_TINY.engine.needsPunctuation)
   }
+
+  @Test
+  fun `需要标点的那档把标点模型当伴生一起装`() {
+    // 标点不做成设置页里的一个选项：用户点了「下载 Paraformer」，标点跟着下来。
+    // 判据必须与 needsPunctuation 一致 —— 两处不一致的表现是「下完还是没有标点」，
+    // 而用户没有任何入口去补。
+    assertEquals(
+      PunctModelCatalog.ALL,
+      AsrModelCatalog.PARAFORMER_ZH_SMALL.companions,
+    )
+    assertTrue(AsrModelCatalog.SENSE_VOICE_INT8.companions.isEmpty())
+    assertTrue(AsrModelCatalog.WHISPER_TINY.companions.isEmpty())
+  }
+
+  @Test
+  fun `伴生模型的种类与本体不同，但自己带着种类`() {
+    // 伴生模型装到**另一类**目录下（punctuation 不是识别模型的一部分，两个识别模型将来
+    // 可能共用一份）。所以 [VoiceModel.kind] 必须由模型自己说，而不是沿用调用方传进来的那个。
+    val companion = AsrModelCatalog.PARAFORMER_ZH_SMALL.companions.single()
+
+    assertEquals(VoiceModelKinds.PUNCT, companion.kind)
+    assertEquals(VoiceModelKinds.ASR, AsrModelCatalog.PARAFORMER_ZH_SMALL.kind)
+  }
+
+  @Test
+  fun `识别模型的种类都是 asr`() {
+    // kind 是**存储身份**：写错的表现是「明明下过，界面却说没下」。
+    AsrModelCatalog.ALL.forEach { model ->
+      assertEquals(model.id, VoiceModelKinds.ASR, model.kind)
+    }
+  }
 }

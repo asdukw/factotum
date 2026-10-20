@@ -21,6 +21,8 @@ data class PunctModel(
   /** ONNX 权重在模型目录里的文件名。 */
   val modelFile: String,
 ) : VoiceModel {
+  override val kind: String get() = VoiceModelKinds.PUNCT
+
   override val requiredFiles: List<String> get() = listOf(modelFile)
 }
 

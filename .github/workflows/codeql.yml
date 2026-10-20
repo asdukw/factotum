@@ -2,19 +2,24 @@ name: CodeQL
 
 # GitHub 自带的语义级扫描（公开仓库免费）。与 ktlint/detekt 的分工：那两个看风格与坏味道，
 # 这个找数据流上的安全问题（注入、路径穿越、不安全的加密用法等）。
-# 只改文档不跑 CodeQL：没有可分析的代码变更。定时扫描不受影响。
+# CodeQL 只分析 Java/Kotlin：只有 android/ 或本 workflow 变更才需要跑。
+# 定时扫描不受路径过滤影响。
 on:
   push:
     branches: [master]
-    paths-ignore: &docs-paths
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
+    paths: &code-paths
+      - "android/**"
+      - ".github/workflows/codeql.yml"
   pull_request:
-    paths-ignore: *docs-paths
+    paths: *code-paths
   schedule:
     - cron: "0 3 * * 1" # 每周一 03:00 UTC：上游查询集更新后也能重扫
   workflow_dispatch:
+
+# 连续推送时取消上一次：CodeQL 单次就要几分钟，排队等旧任务没有意义。
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,6 +42,8 @@ jobs:
       - run: |
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36"
+      # 缓存依赖与 wrapper；编译本身仍要 --rerun-tasks，CodeQL 才能观察到。
+      - uses: gradle/actions/setup-gradle@v6
       - uses: github/codeql-action/init@v4
         with:
           languages: java-kotlin

@@ -55,8 +55,8 @@ jobs:
           # 按 glob 找 APK，而不是写死 app-debug.apk：签名配置一旦被设成 null，AGP 会产出
           # `app-debug-unsigned.apk`，写死路径只会得到一句 "No such file or directory"，
           # 看不出原因（真发生过一次）。
-          APK_DEBUG=$(ls android/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
-          APK_RELEASE=$(ls android/app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          APK_DEBUG=$(find android/app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -print -quit)
+          APK_RELEASE=$(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)
           if [ -z "$APK_DEBUG" ] || [ -z "$APK_RELEASE" ]; then
             echo "::error::出包步骤没有同时产出 debug 与 release APK"
             exit 1

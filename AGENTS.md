@@ -487,6 +487,9 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   留下「看起来装好了」的目录，然后在 native 层崩。`TtsArchiveTest` 用自造的 tar.bz2 钉住。
 - **vendor 的 `Tts.kt` 不要手改**：JNI 按字段名取值，少一个字段不报编译错、会在 native 层崩。
   升级时与 `fetch-sherpa.ps1` 的版本一起换。
+- **传给 sherpa 的采样回调必须是匿名对象，不能写成 lambda**：JNI 按 `invoke([F)Ljava/lang/Integer;`
+  取方法，而 lambda 字面量编成 invokedynamic 后没有这个重载 → `GetMethodID` 拿到 null →
+  `JNI DETECTED ERROR` + **整个 App 闪退，堆栈指不到自己的代码**。`TtsCallbackSignatureTest` 钉住。
 - 正文**不进日志**：`TappetVoice` 只记引擎名、段数、失败原因。
 
 ### 几条不许碰的约束
@@ -778,6 +781,8 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 朗读报「没有可用的文字转语音引擎」 | 设备上真没有可用引擎（或引擎装了但没被选为默认）→ 系统设置 → 无障碍 → 文字转语音里选一个 |
 | 朗读念出「星号星号」「横杠」 | `SpeakableText` 没摊平那种 Markdown 结构 → 在 `SpeakableTextTest` 里补一条再改 |
 | 点「停止」要等好几秒才停 | 切段太长（一段读完才检查取消）→ 调小 `TtsEngine.maxChunk` |
+| 本地引擎一朗读就闪退，堆栈里只有 sherpa 与协程的帧 | 采样回调写成了 lambda 字面量 → JNI 找不到 `invoke([F)Ljava/lang/Integer;`（见 `docs/voice.md` §4.1）→ 改回匿名对象 |
+| 本地引擎读完第一段就停，日志报「朗读中断」 | `destroyIfIdle()` 少了 `if (!released) return` → 每次合成结束都把引擎释放了 |
 
 ## 深度文档
 

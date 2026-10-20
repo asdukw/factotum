@@ -125,6 +125,40 @@ JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会�
 **依赖代价**：`commons-compress`（+ commons-io / codec / lang3）。Android 的 `java.util.zip`
 不认 bzip2，而这些模型只有 `.tar.bz2` 一种分发格式。四个纯 Java jar，Apache-2.0。
 
+### 4.1 回调**必须**是匿名对象，不能写成 lambda（真机闪退，2026-10-20）
+
+sherpa-onnx 的 JNI 按**名字与签名**取回调方法：
+
+```cpp
+GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;")   // 参数 float[]，返回装箱的 Integer
+```
+
+Kotlin 2.x 默认把 lambda 字面量编成 invokedynamic，D8 再落成一个
+`Xxx$$ExternalSyntheticLambda0`，那个类里**没有**这个专用重载（只有擦除后的
+`invoke(Object)Object`）。于是 `GetMethodID` 返回 null，native 侧接着调 `NewFloatArray`
+时撞上 pending exception，直接 SIGABRT：
+
+```
+Abort message: 'JNI DETECTED ERROR IN APPLICATION: JNI NewFloatArray called with pending exception
+java.lang.NoSuchMethodError: no non-static method
+"Lcom/tappet/app/voice/LocalTtsEngine$$ExternalSyntheticLambda0;.invoke([F)Ljava/lang/Integer;"'
+```
+
+**整个 App 闪退，而堆栈里只有 sherpa 与协程的帧，一个字都指不到自己写的代码。**
+`javap` 两种写法对比：
+
+| 写法 | 编出来的 `invoke` |
+|---|---|
+| `{ samples -> ... }`（lambda 字面量） | 无类（indy）；D8 落成的类里只有 `invoke(Object)Object` |
+| `object : (FloatArray) -> Int { override fun invoke(...) }` | `Integer invoke(float[])` + `Object invoke(Object)` ✅ |
+
+所以 `LocalTtsEngine.samplesCallback` 是匿名对象，`TtsCallbackSignatureTest` 断言编译产物
+里真的有那个重载（把实现换回 lambda，这条测试立刻 `NoSuchMethodException` —— 验过）。
+
+**另一条踩过的**：`destroyIfIdle()` 里 `if (!released) return` 那一行不能省。少了它，
+每次合成结束（`finally` 里无条件调它）都会把引擎释放掉，表现是「第一段读完就停了，
+日志里一句『朗读中断』」。
+
 ## 5. 已知边界
 
 - **不在后台继续读**。没有前台服务，App 退到后台后进程可能被冻结，朗读会卡住。

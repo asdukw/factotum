@@ -12,17 +12,32 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 /**
  * 本地开源引擎：sherpa-onnx + 中文 VITS 模型，推理直接跑在手机上。
  *
  * 与 [SystemTtsEngine] 的差别不只是音色：系统引擎把文字交给**别的进程**，这里是我们自己
  * 把文字算成波形再喂给 AudioTrack。好处是不依赖 ROM 装了什么引擎、音色可选可换；
- * 代价是 APK 里多一个 24MB 的 native 库、外加用户自己下的十几 MB 模型。
+ * 代价是 APK 里多一个 23MB 的 native 库、外加用户自己下的十几 MB 模型。
  *
  * 合成与播放是**流水**的（`generateWithCallback` 一边算一边往 AudioTrack 里写），
  * 不是「算完一整段再播」：后者在一段几十个字上要等一两秒才出声，读起来一顿一顿的。
  * 流水也顺带解决了停止 —— 回调里看一眼 [stopped] 就能让 native 那边立刻收手。
+ *
+ * ## 为什么这里要有一道闸门
+ *
+ * `OfflineTts` **不是线程安全的**，而协程取消**打断不了阻塞的 native 调用**：
+ * 用户点了停止、或者又点了另一条消息时，`job.cancel()` 只是把协程标记成取消，
+ * 那个 IO 线程还在 `generateWithCallback` 里面。于是「新的一次朗读」会与「上一次没退干净的
+ * 合成」同时进同一个 `Ort::Session` —— 真机上表现为**整个 App 闪退**，
+ * logcat 里只有一句 `FORTIFY: pthread_mutex_lock called on a destroyed mutex`，
+ * 堆栈一个字都没有。同一个坑还有两处：换引擎时 `release()` 会在别人用着的时候
+ * `delete(ptr)`；[stop] 会对已经 `release()` 掉的 AudioTrack 调 pause。
+ *
+ * 所以：**同一时刻只允许一次合成**（[gate]），**销毁只能发生在没人用的时候**
+ * （[release] 只做标记，真正的 `delete` 交给最后退出的那次合成，[destroyIfIdle]）。
  *
  * 这个类不碰 UI、不落盘、不记正文，日志只有引擎状态与失败原因。
  */
@@ -44,10 +59,19 @@ class LocalTtsEngine(
 
   private var tts: OfflineTts? = null
 
-  @Volatile private var track: AudioTrack? = null
+  /** 合成的独占闸门。见类注释。 */
+  private val gate = Semaphore(1)
+
+  /** 已经被换掉、等着销毁。真正 `delete` 的时机由 [destroyIfIdle] 决定。 */
+  @Volatile private var released = false
 
   /** 用户点了停止 / 又开始读另一条：回调看到它就让 native 停下来。 */
   @Volatile private var stopped = false
+
+  /** AudioTrack 的读写锁：`pause/flush` 与 `release` 必须互斥，否则就是 use-after-free。 */
+  private val trackLock = Any()
+
+  @Volatile private var track: AudioTrack? = null
 
   private val model: TtsModel? = TtsModelCatalog.byId(modelId)
 
@@ -81,8 +105,8 @@ class LocalTtsEngine(
               debug = false,
               provider = "cpu",
             ),
-          // 电话号码 / 数字 / 日期的正则化：不做的话「13800138000」会被念成一串数字，
-          // 而不是「一三八…」。三个 FST 由 sherpa-onnx 按顺序套用。
+          // 电话号码 / 数字 / 日期的正则化：不做的话一长串数字会被逐个念出来，
+          // 而不是按中文习惯读成号码。三个 FST 由 sherpa-onnx 按顺序套用。
           ruleFsts = selected.ruleFsts.joinToString(",") { File(dir, it).absolutePath },
         )
       try {
@@ -104,36 +128,66 @@ class LocalTtsEngine(
   override fun selectVoice(id: String?) = Unit
 
   override suspend fun speak(text: String): Boolean {
+    if (released) return false
     val engine = tts ?: return false
-    stopped = false
     return withContext(Dispatchers.IO) {
-      val sampleRate = engine.sampleRate()
-      val audio = buildTrack(sampleRate)
-      track = audio
-      var framesWritten = 0L
+      // 等上一次合成真的从 native 里退出来。它不会等太久：`stop()` 把 stopped 置真之后，
+      // 回调会在下一块（几十毫秒）返回 0，native 那边就收手了。
+      if (!gate.tryAcquire(GATE_WAIT_MS, TimeUnit.MILLISECONDS)) {
+        Log.w(TAG, "上一次合成还没退出 native，放弃这一段")
+        return@withContext false
+      }
       try {
-        audio.play()
-        engine.generateWithCallback(text = text, sid = 0, speed = rate) { samples ->
-          if (stopped) {
-            0 // 0 = 让 native 停下，不再往下算
-          } else {
-            framesWritten += audio.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-            1
-          }
-        }
-        if (stopped) {
-          false
-        } else {
-          // 等缓冲区播完再释放：直接 stop() 会把最后小半秒切掉，听感是「最后一个字没念完」。
-          awaitPlayback(audio, framesWritten)
-          true
-        }
-      } catch (
-        @Suppress("TooGenericExceptionCaught") error: Throwable,
-      ) {
-        Log.w(TAG, "本地引擎合成失败：${error.javaClass.simpleName}")
-        false
+        // 复位必须**在拿到闸门之后**：在闸门外面复位的话，上一次还没退干净的合成会看到
+        // stopped=false 又继续跑，于是两个线程同时进同一个 Ort::Session。
+        if (released) return@withContext false
+        stopped = false
+        synthesize(engine, text)
       } finally {
+        gate.release()
+        // 被换掉过、且现在没人在用 → 由这里收尾销毁。绝不在别人用着的时候 delete。
+        destroyIfIdle()
+      }
+    }
+  }
+
+  private fun synthesize(engine: OfflineTts, text: String): Boolean {
+    val sampleRate = engine.sampleRate()
+    if (sampleRate <= 0) {
+      Log.w(TAG, "本地引擎报了个不可用的采样率：$sampleRate")
+      return false
+    }
+    val audio = buildTrack(sampleRate)
+    synchronized(trackLock) { track = audio }
+    var framesWritten = 0L
+    val callback =
+      samplesCallback { samples ->
+        if (stopped) {
+          0 // 0 = 让 native 停下，不再往下算
+        } else {
+          framesWritten += audio.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+          1
+        }
+      }
+    return try {
+      audio.play()
+      engine.generateWithCallback(text = text, sid = 0, speed = rate, callback = callback)
+      if (stopped) {
+        Log.i(TAG, "合成被停止")
+        false
+      } else {
+        // 等缓冲区播完再释放：直接 stop() 会把最后小半秒切掉，听感是「最后一个字没念完」。
+        awaitPlayback(audio, framesWritten)
+        true
+      }
+    } catch (
+      @Suppress("TooGenericExceptionCaught") error: Throwable,
+    ) {
+      Log.w(TAG, "本地引擎合成失败：${error.javaClass.simpleName}")
+      false
+    } finally {
+      // 置空与释放要在同一把锁里完成：不然 [stop] 可能正好读到刚被释放掉的那个对象。
+      synchronized(trackLock) {
         track = null
         audio.release()
       }
@@ -143,16 +197,43 @@ class LocalTtsEngine(
   override fun stop() {
     stopped = true
     // 立刻静音，而不是等下一次回调边界 —— 一段可能还有好几百毫秒没写完。
-    track?.let { audio ->
-      runCatching { audio.pause() }
-      runCatching { audio.flush() }
+    // 整段在锁里做：`release()` 可能在另一个线程上跑，出了锁再调 pause 就是 use-after-free。
+    synchronized(trackLock) {
+      track?.let { audio ->
+        runCatching { audio.pause() }
+        runCatching { audio.flush() }
+      }
     }
   }
 
+  /**
+   * 标记这个引擎作废，并**在安全的时候**销毁 native 对象。
+   *
+   * 不做「这里直接 `tts.release()`」：调用方（[VoiceReader] 换引擎时）跑在主线程上，
+   * 而合成跑在 IO 线程上，取消打断不了它 —— 直接销毁就是拿一个正在被使用的
+   * `Ort::Session` 去 `delete`，真机上是整个 App 闪退。
+   */
   override fun release() {
+    released = true
     stop()
-    tts?.release()
-    tts = null
+    destroyIfIdle()
+  }
+
+  /**
+   * **被换掉之后**、且没有合成在跑时，才真的销毁。
+   *
+   * `if (!released) return` 这一行不能省：没有它的话，每次合成结束（finally 里无条件调本函数）
+   * 都会把 `tts` 释放掉 —— 表现是「第一段读完就停了，日志里一句『朗读中断』」。
+   */
+  private fun destroyIfIdle() {
+    if (!released) return
+    if (!gate.tryAcquire()) return
+    try {
+      tts?.release()
+      tts = null
+    } finally {
+      gate.release()
+    }
   }
 
   private fun buildTrack(sampleRate: Int): AudioTrack {
@@ -202,5 +283,29 @@ class LocalTtsEngine(
     const val MAX_THREADS = 4
     const val DRAIN_POLL_MS = 20L
     const val DRAIN_TIMEOUT_MS = 30_000L
+
+    /** 等上一次合成退出 native 的上限。它本来就该在几十毫秒内退出。 */
+    const val GATE_WAIT_MS = 3_000L
   }
 }
+
+/**
+ * sherpa-onnx 的采样回调。
+ *
+ * **必须是匿名对象，不能图省事写成 lambda 字面量。**
+ *
+ * JNI 那一侧是按**名字与签名**取方法的：`GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;")`
+ * —— 参数是 `float[]`、返回是**装箱的** `Integer`。Kotlin 2.x 默认把 lambda 字面量编成
+ * invokedynamic，D8 再落成一个 `Xxx$$ExternalSyntheticLambda0`，那个类里**没有**这个
+ * 专用重载（只有擦除后的 `invoke(Object)Object`）。于是 `GetMethodID` 返回 null，
+ * native 侧接着调 `NewFloatArray` 时撞上 pending exception，直接
+ * `JNI DETECTED ERROR ... NoSuchMethodError` + SIGABRT —— **整个 App 闪退，
+ * 而堆栈里只有 sherpa 与协程的帧，一个字都指不到这里**（一加 15T 实测，2026-10-20）。
+ *
+ * 匿名对象会被编成一个真类，`javap` 出来正好有 `Integer invoke(float[])`。
+ * 这是编译产物层面的约束，读代码看不出来 —— 所以下面那条单测钉着它。
+ */
+internal fun samplesCallback(onSamples: (FloatArray) -> Int): (FloatArray) -> Int =
+  object : (FloatArray) -> Int {
+    override fun invoke(samples: FloatArray): Int = onSamples(samples)
+  }

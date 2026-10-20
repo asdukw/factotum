@@ -9,7 +9,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /**
- * 解开 sherpa-onnx 的模型归档（`.tar.bz2`）。
+ * 解开 sherpa-onnx 的模型归档（`.tar.bz2`）。**合成与识别共用**（见 [VoiceModel]）。
  *
  * 为什么需要它：这些模型**只有 `.tar.bz2` 一种分发格式**，而 Android 的 `java.util.zip`
  * 只认 deflate —— 不认 bzip2，也不认 tar。所以引了 commons-compress（纯 Java，Apache-2.0）。
@@ -25,7 +25,7 @@ import java.io.FileOutputStream
  * 纯 Java IO，不碰 Android：解包是这套流程里最容易出错又最不需要设备的一段，
  * 用 commons-compress 自己造一个小归档就能在 JVM 单测里真跑一遍。
  */
-object TtsArchive {
+object SherpaArchive {
   /** 单个条目的上限，挡住「解出来比归档大几百倍」的归档炸弹。 */
   private const val MAX_ENTRY_BYTES = 512L * 1024 * 1024
 

@@ -243,3 +243,40 @@ internal fun SpeakerGlyph(tint: Color, modifier: Modifier = Modifier.size(16.dp)
     )
   }
 }
+
+/** 麦克风：一个胶囊头 + 半圆底座 + 一根柄。语音输入的入口。 */
+@Composable
+internal fun MicGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    val cx = size.width / 2f
+    val headTop = size.height * 0.16f
+    val headBottom = size.height * 0.58f
+    val headWidth = size.width * 0.34f
+    drawRoundRect(
+      color = tint,
+      topLeft = Offset(cx - headWidth / 2f, headTop),
+      size = Size(headWidth, headBottom - headTop),
+      cornerRadius = CornerRadius(headWidth / 2f),
+      style = Stroke(width = w),
+    )
+    // 底座：一段开口向上的弧
+    val arcSize = Size(size.width * 0.56f, size.height * 0.5f)
+    drawArc(
+      color = tint,
+      startAngle = 0f,
+      sweepAngle = 180f,
+      useCenter = false,
+      topLeft = Offset((size.width - arcSize.width) / 2f, size.height * 0.28f),
+      size = arcSize,
+      style = Stroke(width = w, cap = StrokeCap.Round),
+    )
+    drawLine(
+      tint,
+      Offset(cx, size.height * 0.78f),
+      Offset(cx, size.height * 0.9f),
+      strokeWidth = w,
+      cap = StrokeCap.Round,
+    )
+  }
+}

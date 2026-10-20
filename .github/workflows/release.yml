@@ -129,7 +129,7 @@ jobs:
           "$SIGNER" verify "$APK" > /dev/null
           # **产物结构检查**：与 assemble.yml 同一套。v0.6.0 第一次发出去的包缺 librg.so，
           # 而当时 assemble.yml 只查 debug 包 —— release 这条路上没人验，构建是"成功"的。
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so; do
+          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
             unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
           done
           if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then

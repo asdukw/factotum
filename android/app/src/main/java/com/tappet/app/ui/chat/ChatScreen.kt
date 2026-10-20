@@ -1,8 +1,12 @@
 package com.tappet.app.ui.chat
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -101,6 +105,9 @@ import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.ui.components.ProviderModelIcon
+import androidx.core.content.ContextCompat
+import com.tappet.app.voice.RecognizedText
+import com.tappet.app.voice.VoiceInput
 import com.tappet.app.voice.VoiceReader
 import com.tappet.app.voice.VoiceSettings
 import kotlinx.coroutines.delay
@@ -279,6 +286,136 @@ private fun VoiceErrorLinger(error: String?) {
 }
 
 /**
+ * 语音输入的提示同样只停一会儿：它不需要用户处理（最常见的是「没听清」）。
+ *
+ * 与 [VoiceErrorLinger] 分开写，是因为两者的**清除入口不是同一个单例** ——
+ * 合在一起就得在里面判断「这条错误属于谁」，那种代码下一个读的人一定会看错。
+ */
+@Composable
+private fun DictationErrorLinger(state: VoiceInput.State) {
+  LaunchedEffect(state) {
+    if (state is VoiceInput.State.Failed) {
+      delay(VOICE_ERROR_LINGER_MS)
+      VoiceInput.clearError()
+    }
+  }
+}
+
+/**
+ * 录音状态：电平条 + 秒数（正在听）、一句「正在准备模型 / 正在识别」。
+ *
+ * 电平是给用户的**反馈**，不是装饰：麦克风没被系统挡住、音量够大，这两件事
+ * 只能靠它看出来 —— 否则用户对着一句话说完，等来的是「没听清」。
+ */
+@Composable
+private fun DictationStatus(state: VoiceInput.State) {
+  when (state) {
+    is VoiceInput.State.Listening -> {
+      LevelBar(state.level)
+      Spacer(Modifier.width(6.dp))
+      Text(
+        text = formatElapsed(state.elapsedMs),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+
+    VoiceInput.State.Preparing ->
+      DictationHint("正在准备模型…")
+
+    VoiceInput.State.Transcribing ->
+      DictationHint("正在识别…")
+
+    else -> Unit
+  }
+}
+
+@Composable
+private fun DictationHint(text: String) {
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+}
+
+/** 电平条：0..1 映射到一小段宽度。最小值不为 0，否则安静时看着像坏了。 */
+@Composable
+private fun LevelBar(level: Float) {
+  val width by animateFloatAsState(targetValue = level.coerceIn(LEVEL_MIN, 1f), label = "dictation-level")
+  Box(
+    modifier =
+      Modifier.width(44.dp)
+        .height(4.dp)
+        .clip(CircleShape)
+        .background(MaterialTheme.colorScheme.surfaceVariant),
+  ) {
+    Box(
+      modifier =
+        Modifier.fillMaxWidth(width)
+          .fillMaxHeight()
+          .clip(CircleShape)
+          .background(MaterialTheme.colorScheme.primary),
+    )
+  }
+}
+
+/**
+ * 麦克风按钮。四种样子对应四个状态：待命、正在听（红）、准备模型 / 识别中（转圈）。
+ *
+ * **不禁用**：不可用的原因（没权限 / 没下模型）要让用户点得到才知道 ——
+ * 一个灰掉且不解释的按钮，用户只会以为是坏的。点了之后由 [VoiceInput] 给出那句话。
+ */
+@Composable
+private fun MicButton(state: VoiceInput.State, onClick: () -> Unit) {
+  val listening = state is VoiceInput.State.Listening
+  val busy = state is VoiceInput.State.Preparing || state is VoiceInput.State.Transcribing
+  val background = if (listening) MaterialTheme.colorScheme.error else Color.Transparent
+  val tint =
+    when {
+      listening -> MaterialTheme.colorScheme.onError
+      else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+  // 正在听的时候让图标呼吸：用户一眼能看出「它还在录」，而不是「我是不是没点上」。
+  val alpha =
+    if (listening) {
+      val transition = rememberInfiniteTransition(label = "mic")
+      val value by
+        transition.animateFloat(
+          initialValue = 0.55f,
+          targetValue = 1f,
+          animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse),
+          label = "mic-alpha",
+        )
+      value
+    } else {
+      1f
+    }
+
+  Box(
+    modifier =
+      Modifier.size(38.dp)
+        .clip(CircleShape)
+        .background(background)
+        .clickable(onClick = onClick)
+        .semantics { contentDescription = if (listening) "停止录音" else "语音输入" },
+    contentAlignment = Alignment.Center,
+  ) {
+    if (busy) {
+      CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+    } else {
+      MicGlyph(tint = tint.copy(alpha = alpha))
+    }
+  }
+}
+
+/** 录音时长。`0:07` 比 `7s` 更像录音机上的那个数字。 */
+internal fun formatElapsed(elapsedMs: Long): String {
+  val seconds = elapsedMs / 1000
+  return "%d:%02d".format(seconds / 60, seconds % 60)
+}
+
+/**
  * 回复读完时自动朗读。
  *
  * 判据是「**这一条刚刚流式结束**」，不能是「最后一条是助手且不在流式中」——
@@ -328,8 +465,27 @@ private fun ChatBody(
 
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
+  val dictation by VoiceInput.state.collectAsStateWithLifecycle()
+  val dictationResult by VoiceInput.result.collectAsStateWithLifecycle()
+  val context = LocalContext.current
+
+  // 权限弹窗只能从界面发起（ColorOS 会拦 adb 的 pm grant）。授完直接开录，
+  // 不让用户再点一次麦克风 —— 他刚才点的就是「我要说话」。
+  val micPermission =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) VoiceInput.start(context) else VoiceInput.clearError()
+    }
+
+  // 识别结果回填输入框：**追加**而不是覆盖 —— 用户可能已经打了半句，
+  // 或者连着说了两段。清掉结果再回填，避免旋转 / 重组时重复追加同一段。
+  LaunchedEffect(dictationResult?.id) {
+    val text = dictationResult?.text ?: return@LaunchedEffect
+    VoiceInput.clearResult()
+    onInputChange(RecognizedText.appendToInput(state.input, text))
+  }
 
   VoiceErrorLinger(voiceError)
+  DictationErrorLinger(dictation)
   AutoReadOnFinish(messages = state.messages, sessionId = state.sessionId)
 
   // 新消息 / 流式增量都跟着滚到底部
@@ -361,6 +517,7 @@ private fun ChatBody(
     }
     state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
     voiceError?.let { reason -> BannerText("朗读失败：$reason") }
+    (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
 
     LazyColumn(
       state = listState,
@@ -382,10 +539,20 @@ private fun ChatBody(
       canSend = state.canSend,
       modelPreset = LlmPreset.byId(state.providerId),
       providerName = state.providerName,
+      dictation = dictation,
       onValueChange = onInputChange,
       onSend = onSend,
       onStop = onStop,
       onModelSwitchClick = onModelSwitchClick,
+      onMicClick = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+          PackageManager.PERMISSION_GRANTED
+        ) {
+          micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+          VoiceInput.toggle(context)
+        }
+      },
     )
   }
 }
@@ -828,10 +995,12 @@ private fun ChatInputBar(
   canSend: Boolean,
   modelPreset: LlmPreset?,
   providerName: String,
+  dictation: VoiceInput.State,
   onValueChange: (String) -> Unit,
   onSend: () -> Unit,
   onStop: () -> Unit,
   onModelSwitchClick: () -> Unit,
+  onMicClick: () -> Unit,
 ) {
   val textStyle = MaterialTheme.typography.bodyLarge
   Column(modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
@@ -885,6 +1054,10 @@ private fun ChatInputBar(
             }
           }
           Spacer(Modifier.weight(1f))
+          DictationStatus(dictation)
+          Spacer(Modifier.width(6.dp))
+          MicButton(state = dictation, onClick = onMicClick)
+          Spacer(Modifier.width(4.dp))
           SendStopButton(
             isStreaming = isStreaming,
             canSend = canSend,
@@ -970,8 +1143,11 @@ private val USER_BUBBLE_MAX_WIDTH = 300.dp
 private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"
 
-/** 朗读失败的提示在屏幕上停留多久（毫秒）。 */
+/** 朗读 / 语音输入的提示在屏幕上停留多久（毫秒）。 */
 private const val VOICE_ERROR_LINGER_MS = 5_000L
+
+/** 电平条的最小可见宽度比例：0 会让它在安静时看着像坏了。 */
+private const val LEVEL_MIN = 0.06f
 
 /**
  * 模型切换 sheet，对齐 RikkaHub 的样式：顶部胶囊搜索 → 供应商分组（可折叠）→ 圆角模型卡

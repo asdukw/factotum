@@ -1,35 +1,35 @@
 package com.tappet.app.voice
 
 /**
- * 一个可下载的本地语音模型。
+ * 一个可下载的本地**合成**模型。
  *
- * 全部字段都是「从 GitHub release 的 tar.bz2 解出来之后长什么样」的声明：解包时按
- * [archiveRoot] 剥掉顶层目录，运行时按 [modelFile] / [tokensFile] / [lexiconFile] /
- * [ruleFsts] 拼 [com.k2fsa.sherpa.onnx.OfflineTtsConfig]。字段对不上时表现为
- * 「模型下好了但点朗读报错」，所以 [TtsModelCatalog] 里的每一条都要照着真实的归档写。
- *
- * **授权要如实写、如实显示**：这些模型训练自不同来源的数据集，授权各不相同
- * （小雅那份的数据集明确写着非商用）。界面在下载按钮旁边把 [license] 显示出来，
- * 而不是等用户去翻仓库 —— 用户点之前就该知道自己在下什么。
+ * 「怎么下、怎么解、装到哪」在 [VoiceModel] 那一层（与识别共用），这里只多出
+ * **怎么用**：运行时按 [modelFile] / [tokensFile] / [lexiconFile] / [ruleFsts] 拼
+ * [com.k2fsa.sherpa.onnx.OfflineTtsConfig]。字段对不上时表现为「模型下好了但点朗读报错」，
+ * 所以 [TtsModelCatalog] 里的每一条都要照着**真实的归档**写。
  */
 data class TtsModel(
-  val id: String,
-  val label: String,
+  override val id: String,
+  override val label: String,
   val summary: String,
   /** 下载地址（GitHub release 资产，与本仓库的更新检查同一个来源）。 */
-  val url: String,
+  override val url: String,
   /** 归档大小，界面显示用。 */
-  val sizeBytes: Long,
+  override val sizeBytes: Long,
   /** tar 里的顶层目录名；解包时剥掉。 */
-  val archiveRoot: String,
+  override val archiveRoot: String,
   val modelFile: String,
   val tokensFile: String,
   val lexiconFile: String,
   /** 文本正则化用的 FST（电话号码 / 数字 / 日期），按顺序传给引擎。 */
   val ruleFsts: List<String>,
-  val license: String,
-  val licenseNote: String,
-)
+  override val license: String,
+  override val licenseNote: String,
+) : VoiceModel {
+  /** 装好了的判据：模型、词表、词典与三个文本正则化 FST 都在。 */
+  override val requiredFiles: List<String>
+    get() = listOf(modelFile, tokensFile, lexiconFile) + ruleFsts
+}
 
 /**
  * 可选的本地模型目录。

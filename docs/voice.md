@@ -88,7 +88,7 @@ I AppsFilter: interaction: PackageSetting{com.tappet.app} ->
 | `tools/fetch-sherpa.ps1` | 拉官方预编译的 `libsherpa-onnx-jni.so` → `jniLibs/<abi>/`（不入库） |
 | `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 Kotlin/JNI 绑定，与 `fetch-sherpa.ps1` 的版本必须同 tag |
 | `voice/TtsModelCatalog.kt` | 可下载模型的目录（地址 / 文件布局 / **授权**） |
-| `voice/TtsModelDownloader.kt` + `TtsArchive.kt` | 下载（复用更新那套续传）、解 tar.bz2、原子换目录 |
+| `voice/TtsModelDownloader.kt` + `SherpaArchive.kt` | 下载（复用更新那套续传）、解 tar.bz2、原子换目录 |
 | `voice/LocalTtsEngine.kt` | 合成 + 播放 |
 
 **为什么是 static-link 变体**：官方有两个 Android 包。默认的 `sherpa-onnx-<ver>-android.tar.bz2`
@@ -116,7 +116,7 @@ JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会�
 
 **解包有两道闸**：剥掉归档的顶层目录（否则运行时拼不对路径）；**挡住路径穿越**
 （tar 条目名可以是 `../../databases/tappet.db`，越界的条目直接跳过）。都用
-`TtsArchiveTest` 里自造的 tar.bz2 钉住了 —— 不需要设备，也不需要下真模型。
+`SherpaArchiveTest` 里自造的 tar.bz2 钉住了 —— 不需要设备，也不需要下真模型。
 
 **合成与播放是流水的**：`generateWithCallback` 一边算一边往 AudioTrack 里写，
 不是「算完一整段再播」（后者要等一两秒才出声）。停止靠回调里看一眼 `stopped` 标志

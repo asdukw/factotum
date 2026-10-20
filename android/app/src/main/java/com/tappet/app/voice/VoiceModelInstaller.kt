@@ -12,21 +12,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 模型下载的**唯一状态源**，进程内单例。
+ * 模型下载的**唯一状态源**，进程内单例。**合成与识别共用**（见 [VoiceModel]）。
  *
  * 与 `UpdateManager` 同一个理由：如果下载挂在设置页的 ViewModel 上，用户返回上一级就会
- * 把下载连带取消 —— 而「正在下 13MB」这件事与哪个页面开着没有关系。放在单例里，
+ * 把下载连带取消 —— 而「正在下 80MB」这件事与哪个页面开着没有关系。放在单例里，
  * 关掉设置页下载照跑，回来还能看到进度。
  *
- * 同时只装一个：两个下载并行会抢同一份 staging 目录（[TtsModelDownloader] 的前提）。
- * 再点另一个模型 = 取消当前的、开始新的。
+ * 同时只装一个：两个下载并行会抢同一份 staging 目录（[VoiceModelDownloader] 的前提），
+ * 而且合成模型与识别模型用的是同一块磁盘、同一条网络。再点另一个模型 = 取消当前的、开始新的。
  *
- * **不落日志正文**：这里只有模型 id、字节数与失败原因。
+ * **不落日志正文**：这里只有种类、模型 id、字节数与失败原因。
  */
-object TtsModelInstaller {
+object VoiceModelInstaller {
   data class State(
+    val kind: String,
     val modelId: String,
-    val progress: TtsModelDownloader.Progress? = null,
+    val progress: VoiceModelDownloader.Progress? = null,
     val error: String? = null,
   ) {
     val running: Boolean get() = error == null
@@ -46,15 +47,19 @@ object TtsModelInstaller {
     if (job?.isActive != true) _state.value = null
   }
 
-  fun install(context: Context, model: TtsModel) {
+  fun install(
+    context: Context,
+    kind: String,
+    model: VoiceModel,
+  ) {
     val app = context.applicationContext
     job?.cancel()
-    _state.value = State(model.id)
+    _state.value = State(kind, model.id)
     job =
       scope.launch {
         try {
-          TtsModelDownloader.install(app, model) { progress ->
-            _state.value = State(model.id, progress = progress)
+          VoiceModelDownloader.install(app, kind, model) { progress ->
+            _state.value = State(kind, model.id, progress = progress)
           }
           _state.value = null
         } catch (cancelled: CancellationException) {
@@ -64,7 +69,7 @@ object TtsModelInstaller {
           // 兜底：网络断、磁盘满、归档坏了都从这里出去，消息直接给用户看。
           @Suppress("TooGenericExceptionCaught") error: Throwable,
         ) {
-          _state.value = State(model.id, error = error.message ?: error.javaClass.simpleName)
+          _state.value = State(kind, model.id, error = error.message ?: error.javaClass.simpleName)
         }
       }
   }

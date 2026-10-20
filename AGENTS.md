@@ -457,7 +457,7 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 | `voice/TtsEngine.kt` | 引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
 | `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
 | `voice/LocalTtsEngine.kt` | 本地引擎：sherpa-onnx 合成 + AudioTrack 流式播放 |
-| `voice/TtsModel*.kt` + `TtsArchive.kt` | 模型目录 / 下载（复用更新那套续传）/ 解 tar.bz2 |
+| `voice/VoiceModel*.kt` + `SherpaArchive.kt` | 模型目录 / 下载（复用更新那套续传）/ 解 tar.bz2；**合成与识别共用** |
 | `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 JNI 绑定；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
 | `voice/VoiceReader.kt` | 单例：唯一状态源、一次只读一条、音频焦点 |
 | `voice/VoiceSettings.kt` | 偏好：引擎 / 自动朗读 / 语速 / 音色（**非密**） |
@@ -484,7 +484,7 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   界面必须把授权显示在下载按钮旁边。MeloTTS（MIT）因为 GitHub 归档里 int8 是 LFS 指针、
   fp32 又 170MB 而没收 —— 细节见 `docs/voice.md` §4。
 - **解包是「解到 staging → rename」**，且必须挡路径穿越：直接解到正式目录，解到一半被杀会
-  留下「看起来装好了」的目录，然后在 native 层崩。`TtsArchiveTest` 用自造的 tar.bz2 钉住。
+  留下「看起来装好了」的目录，然后在 native 层崩。`SherpaArchiveTest` 用自造的 tar.bz2 钉住。
 - **vendor 的 `Tts.kt` 不要手改**：JNI 按字段名取值，少一个字段不报编译错、会在 native 层崩。
   升级时与 `fetch-sherpa.ps1` 的版本一起换。
 - **传给 sherpa 的采样回调必须是匿名对象，不能写成 lambda**：JNI 按 `invoke([F)Ljava/lang/Integer;`

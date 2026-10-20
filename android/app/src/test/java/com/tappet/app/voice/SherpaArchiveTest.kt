@@ -19,7 +19,7 @@ import java.io.FileOutputStream
  * 这里钉住的两件事都是「错了不会报错、只会静默做错」的：剥目录剥错，模型文件就找不到；
  * 路径穿越没挡住，下载来的字节就能写到 App 私有目录之外。
  */
-class TtsArchiveTest {
+class SherpaArchiveTest {
   @get:Rule val temp = TemporaryFolder()
 
   @Test
@@ -31,7 +31,7 @@ class TtsArchiveTest {
     )
     val dest = temp.newFolder("out")
 
-    val count = TtsArchive.extract(archive, stripRoot = "model-root", dest = dest)
+    val count = SherpaArchive.extract(archive, stripRoot = "model-root", dest = dest)
 
     assertEquals(3, count)
     assertEquals("weights", File(dest, "model.onnx").readText())
@@ -47,7 +47,7 @@ class TtsArchiveTest {
     )
     val dest = temp.newFolder("out")
 
-    TtsArchive.extract(archive, stripRoot = "model-root", dest = dest)
+    SherpaArchive.extract(archive, stripRoot = "model-root", dest = dest)
 
     assertTrue(File(dest, "model.onnx").isFile)
     assertFalse("不该把别的目录也解出来", File(dest, "unrelated.txt").exists())
@@ -61,7 +61,7 @@ class TtsArchiveTest {
     )
     val dest = temp.newFolder("out")
 
-    TtsArchive.extract(archive, stripRoot = "model-root", dest = dest)
+    SherpaArchive.extract(archive, stripRoot = "model-root", dest = dest)
 
     assertTrue(File(dest, "model.onnx").isFile)
     val escaped = File(dest.parentFile, "escaped.txt")
@@ -73,7 +73,7 @@ class TtsArchiveTest {
     val archive = makeArchive("other-root/a.txt" to "x")
     val dest = temp.newFolder("out")
 
-    val failure = runCatching { TtsArchive.extract(archive, stripRoot = "model-root", dest = dest) }
+    val failure = runCatching { SherpaArchive.extract(archive, stripRoot = "model-root", dest = dest) }
 
     assertTrue(failure.isFailure)
   }

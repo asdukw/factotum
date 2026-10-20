@@ -516,9 +516,14 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 - **焦点被抢走就停，不自动续读**；**不在后台继续读**（没有前台服务，退到后台可能被冻住）。
 - **本地引擎要跑 `tools/fetch-sherpa.ps1`**（拉 24MB 的 `libsherpa-onnx-jni.so`，不入库）；
   用 static-link 变体，单个 .so，不依赖 `libc++_shared.so`。
-- **模型只有 `chaowen`（CC0）与 `xiao_ya`（非商用）两条**：目录里不许放授权不明的权重，
-  界面必须把授权显示在下载按钮旁边。MeloTTS（MIT）因为 GitHub 归档里 int8 是 LFS 指针、
-  fp32 又 170MB 而没收 —— 细节见 `docs/voice.md` §4。
+- **模型目录 = 四条游戏角色音色**（2026-10-21：刻晴 / 优菈 / 德丽莎 / 理之律者，
+  22.05kHz、每条 120MB）：原来那两条 Piper（`chaowen` / `xiao_ya`）已删；塔菲只有
+  Bert-VITS2 权重、鸣潮菲比全网没有 TTS 权重，两个都跑不了 —— 检索记录见 `docs/voice.md` §4。
+- **`sid` 是角色，不是常量**：这批是一个游戏一份多说话人模型，角色只是里面的一行
+  （导出脚本把 `sid` 做成了 ONNX 的输入）。**填错不报错、只是读出别人的声音** ——
+  `TtsModel.sid` 必填、`TtsModelCatalogTest` 逐个钉住；换音色只能在真机上听。
+- 加条目的标准不变：公开稳定可直接下载（GitHub release 资产，不引入第二个下载域）、
+  授权说得清、界面把授权显示在下载按钮旁边。
 - **解包是「解到 staging → rename」**，且必须挡路径穿越：直接解到正式目录，解到一半被杀会
   留下「看起来装好了」的目录，然后在 native 层崩。`SherpaArchiveTest` 用自造的 tar.bz2 钉住。
 - **vendor 的 `Tts.kt` 不要手改**：JNI 按字段名取值，少一个字段不报编译错、会在 native 层崩。

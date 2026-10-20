@@ -101,8 +101,37 @@ I AppsFilter: interaction: PackageSetting{com.tappet.app} ->
 （20 个参数，给示例用的）删掉了，配置在 `LocalTtsEngine` 里自己拼。其余部分**不要手改**：
 JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会在 native 层崩。
 
-**模型目录只有两条，都是 13MB 的 Piper int8**：
-`chaowen`（CC0，默认）与 `xiao_ya`（数据集 BZNSYP，**非商用**）。选择标准是「小 + 授权说得清」。
+**模型目录 = 四条游戏角色音色**（2026-10-21）：刻晴 / 优菈（原神）、德丽莎 / 理之律者
+（崩坏 3）。都是社区训练、k2-fsa 转成 ONNX 的 VITS，22.05kHz、中/日混读、每条 120MB。
+原来那两条 13MB 的 Piper int8（`chaowen` CC0 / `xiao_ya` 非商用）已删除。
+
+**为什么不是塔菲 / 菲比**（挑音色的完整过程，省得下次重查）：
+
+| 目标 | 结论 |
+|---|---|
+| 永雏塔菲 | 公开权重**全是 Bert-VITS2** 的 `G_*.pth`（HF Spaces：`MelodyYuuka/Taffy-Bert`、`songdaooi/Taffy-Bert-VITS2`、`xiao666/Taffy-Bert-VITS2.0.2666`），另有 so-vits-svc 模型（`cynika/taffy`，是**变声**不是合成）。sherpa-onnx 的 `OfflineTtsModelConfig` 只有 vits / matcha / kokoro / kitten / zipvoice / pocket —— **没有 Bert-VITS2**，而且两者架构不同（它的文本编码器吃的是 BERT 特征，1024 维/字，不是 token id），**不能靠转换塞进 VITS 那条路** |
+| 鸣潮·菲比 | **全网没有 TTS 权重**：HF 的 models / spaces / datasets 全量搜（phoebe / 菲比 / feibi / wuwa / wuthering / 鸣潮 / sovits / vits）、GitHub 仓库 + 代码搜索、k2-fsa 的 646 个 `tts-models` 资产 —— 都没有。只有一个 RVC 变声模型（`PGR-RVC/Wuthering_Waves_RVC_v2` 的 `JP/PhoebeJP_*`）和一个**空仓库**（`suannaige/GPT-Sovitsv4-Phoebe`，只有 README）。ModelScope 要登录搜不了、爱发电/网盘够不着，这两处是盲区 |
+| 自建 Bert-VITS2 引擎的代价 | ONNX Runtime + 生成器自己导出 + BERT（1.3GB fp32）+ 可选 g2pW + Kotlin 侧中文文本前端；下载 0.7–2GB，每句 2–6 秒（现在 Piper 是 0.3 秒），**以周计** —— 用户判定「完全不值得」 |
+
+### 4.1 `sid` 是**角色**，不是常量（2026-10-21）
+
+这批模型是「**一个游戏一份多说话人模型**」，角色只是里面的某一行：
+
+- 导出脚本把 `sid` 做成了 ONNX 的**输入**（`vits-zh-hf-models.py` 里 `torch.onnx.export` 的
+  `input_names` 含 `sid`，元数据 `n_speakers=804`）—— 所以 `generate(sid=)` 选的是说话人。
+- **填错不报错，只是读出别人的声音**，只有耳朵能发现。`TtsModel.sid` 因此是必填项，
+  值来自源合集 `zomehwh/vits-models-genshin-bh3` 的 `pretrained_models/info.json`
+  （它的试听页用的就是这一份）：刻晴 115 / 优菈 124 / 德丽莎 193 / 理之律者 193。
+  `TtsModelCatalogTest` 逐个钉住。
+- **改了音色要真机听一遍**：这一层没有别的判据（PC 上用 sherpa 的 Windows 版能合成、
+  能证明「sid 确实换声音」，但证明不了「这一行就是那个角色」）。
+- 归档里除了模型还有 `dict/`（jieba 分词）与四个 FST；我们挂 `phone.fst,number.fst,date.fst`
+  三个（`new_heteronym.fst` 是给词典用的，不挂）。
+
+**加条目的标准**（别放宽）：地址是公开、稳定、直接可下的 GitHub release 资产，与本仓库的
+应用内更新同一个来源，不引入第二个下载域；授权必须说得清，且显示在下载按钮旁边。
+**这四条授权都不干净**（游戏角色音，米哈游没授权）—— 那是用户明确知情后的选择，
+别拿它当先例。
 **MeloTTS 没进来**不是授权问题（它是 MIT），是产物问题：GitHub 归档里的 `model.int8.onnx`
 是个 133 字节的 **git-lfs 指针**（真身在 HF，53MB），归档里能用的只有 170MB 的 fp32，
 手机上又大又慢。要收它得改从 HF 下载，那会引入第二个下载域，而 HF 墙内直连不通。

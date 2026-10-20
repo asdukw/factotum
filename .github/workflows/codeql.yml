@@ -2,10 +2,16 @@ name: CodeQL
 
 # GitHub 自带的语义级扫描（公开仓库免费）。与 ktlint/detekt 的分工：那两个看风格与坏味道，
 # 这个找数据流上的安全问题（注入、路径穿越、不安全的加密用法等）。
+# 只改文档不跑 CodeQL：没有可分析的代码变更。定时扫描不受影响。
 on:
   push:
     branches: [master]
+    paths-ignore: &docs-paths
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
   pull_request:
+    paths-ignore: *docs-paths
   schedule:
     - cron: "0 3 * * 1" # 每周一 03:00 UTC：上游查询集更新后也能重扫
   workflow_dispatch:

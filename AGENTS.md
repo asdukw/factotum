@@ -1,7 +1,7 @@
 # Tappet — AGENTS.md
 
 Project memory for coding agents. Read §1–§9 before changing code; details live in `docs/`
-(Chinese). §11 says which doc to load for which change.
+(Chinese). §11 says which doc to load for which change; §12 governs edits to this file.
 
 ## 1. What this is
 
@@ -94,6 +94,14 @@ docs/                     deep docs + releases/<tag>.md
 committed**; `tools/` assembles them at pinned versions (see `.gitignore`).
 
 ## 6. Hard constraints
+
+**Ask first** before a change that spans Kotlin + plugin + profile in one go, adds a dependency or
+permission, deletes or replaces a shipped capability, or moves a boundary in §6.1.
+
+**Never:** commit secrets or real identifiers; log screen, UI-tree, or chat content; hand-edit
+generated assets (`assets/dsh-runtime.zip`, `libnode/`, `jniLibs/`); add to `detekt` `baseline.xml`;
+rewrite pushed history or force-push `master` without explicit approval; re-introduce anything the
+2026-10-03 red lines deleted.
 
 ### 6.1 Security and privacy
 
@@ -217,7 +225,7 @@ key must match the profile key exactly. Full rules: `docs/providers.md`.
 |---|---|---|
 | Connectors (Gmail etc.) | `docs/email-connector.md` | plugin name in three places + `bundle-dsh.ps1` + reinstall |
 | Web search | `docs/web-search.md` | `bundle-dsh.ps1` + reinstall; verify the search model actually searches |
-| Voice (TTS/STT) | `docs/voice.md` | unit tests; device check per §9 |
+| Voice (TTS/STT) | `docs/voice.md` | unit tests; device check per §8 |
 | In-app updates | `docs/app-updater.md` | `UpdateDownloaderResumeTest` |
 | Linux on the phone | `docs/termux.md` | plugin commit first + `bundle-dsh.ps1` |
 | Memory / context injection | `docs/memory.md` | — |
@@ -297,6 +305,18 @@ Never hardcode the package or session directory; read `applicationId`. Keep dura
 - Run gates and unit tests before committing; don't commit unverified work.
 - Merging a PR and pushing require explicit user approval.
 
+**Done means the command actually ran**, and the report says what ran — not "tests pass":
+
+| Change | Evidence |
+|---|---|
+| Kotlin | `:app:testDebugUnitTest` + §4 gates |
+| UI / database / permissions | device check per §8.1 |
+| dsh runtime / profile / plugin | `bundle-dsh.ps1` + reinstall + one real task |
+| Release | §7.6 checklist |
+
+Run the focused tests that cover the change; don't re-run an unrelated passing suite. Behavior
+changes carry their test in the same commit.
+
 ## 10. Troubleshooting
 
 Full table: `docs/pitfalls.md`.
@@ -337,3 +357,13 @@ Full table: `docs/pitfalls.md`.
 | `docs/roadmap.md` | Planning direction (unverified hypotheses, not commitments) |
 | `docs/releases/<tag>.md` | Release notes |
 | `README.md` / `CHANGELOG.md` | Public overview and visible changes |
+
+## 12. Editing this file
+
+- `AGENTS.md` is the only project memory; `CLAUDE.md` imports it. Edit here, never there.
+- One home per fact: this file keeps the rule and the link, depth goes to `docs/`. Keep each rule
+  self-contained — a reader must be able to obey it without opening the link.
+- If a rule can be checked mechanically, add the test in the same change instead of more prose:
+  the §6.3 identity list, the §7.3 tool list, and the §7.3 coordinate contract are all testable.
+- Delete stale rules instead of letting them rot; update §11 when a doc is added or removed.
+- Keep this file under ~400 lines — new detail belongs in `docs/`, not here.

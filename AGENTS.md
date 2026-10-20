@@ -18,11 +18,6 @@ calls. The only runtime is the Android app (Kotlin).
 | Linux on phone | Termux + proot Debian, `tools/termux/bridge.py` (127.0.0.1 + token) → plugin `run_command` (bypasses accessibility) |
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
-- Dev machine: Windows + PowerShell 7. Device: OnePlus 15T (PLZ110, Android 16 / API 36, ColorOS).
-- **Direction red lines:** no notification capture, no QQ/WeChat chat pipelines, no knowledge
-  graph, no Python side, no PC/Electron client. Do not reintroduce any of them. The hand-written
-  `LlmClient` protocol / `AgentLoop` / chat integration is deprecated — don't extend it.
-
 ## 2. One-time setup
 
 Environment: **JDK 21** (`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`), Node 24 + npm on the
@@ -105,8 +100,7 @@ permission, deletes or replaces a shipped capability, or moves a boundary in §6
 
 **Never:** commit secrets or real identifiers; log screen, UI-tree, or chat content; hand-edit
 generated assets (`assets/dsh-runtime.zip`, `libnode/`, `jniLibs/`); add to `detekt` `baseline.xml`;
-rewrite pushed history or force-push `master` without explicit approval; re-introduce anything the
-§1 red lines forbid.
+rewrite pushed history or force-push `master` without explicit approval.
 
 ### 6.1 Security and privacy
 
@@ -138,7 +132,7 @@ push, not later.
 ### 6.2 Runtime and execution
 
 - **Keep the contract decoupled from the ROM.** The execution layer depends only on `DeviceBridge`
-  and `OemProfile`. QQ/WeChat are test targets, not integrations.
+  and `OemProfile`. Third-party apps are test targets, not integrations.
 - **The bridge listens on `127.0.0.1` with a per-process random token**, exposes only
   `POST /action`, and installs nothing on the device.
 - **Do not enable touch exploration during tasks**: it swallows injected `dispatchGesture` events

@@ -19,6 +19,7 @@ on:
       - "android/gradle/**"
       - ".gitmodules"
       - ".github/workflows/assemble.yml"
+      - "!tools/**/*.md" # 只改 tools 下的文档不需要跑装配
   pull_request:
     paths: *assembly-paths
   workflow_dispatch:

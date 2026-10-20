@@ -18,7 +18,7 @@ calls. The only runtime is the Android app (Kotlin).
 | Linux on phone | Termux + proot Debian, `tools/termux/bridge.py` (127.0.0.1 + token) → plugin `run_command` (bypasses accessibility) |
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
-## 2. One-time setup
+## 2. Setup and assembly
 
 Environment: **JDK 21** (`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`), Node 24 + npm on the
 PC, Android SDK (compileSdk 36), `ndk;29.0.14206865`, `cmake;3.31.6` (last three via `sdkmanager`).
@@ -73,7 +73,6 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 CI (`.github/workflows/`): `ci.yml` runs the gates above plus `:app:testDebugUnitTest` on every push
 and PR; `assemble.yml` re-runs the whole assembly path (libnode → dsh → JNI → APK) when `tools/**`,
 `app/src/main/cpp/**`, or Gradle files change; `release.yml` builds the signed APK on a `v*` tag.
-No workflow has a device — §8.1 still applies.
 
 ## 5. Repository map
 
@@ -186,7 +185,8 @@ enough. Scrub real-world data before committing.
    first, then update the submodule pointer here.
 2. Run `.\tools\bundle-dsh.ps1` — it validates the profile with the real parser; broken YAML kills
    the app because Node runs in-process.
-3. Run `:app:testDebugUnitTest` and reinstall the APK (the runtime is re-extracted on first launch).
+3. Run `:app:testDebugUnitTest`, reinstall the APK (the runtime is re-extracted on first launch), and
+   run one real task on the device (§9).
 4. Plugin releases come from the plugin repo's `v*` tag workflow.
 
 ### 7.3 Add or change a device action
@@ -311,22 +311,6 @@ changes carry their test in the same commit.
 
 Full table: `docs/pitfalls.md`.
 
-| Symptom | Cause / fix |
-|---|---|
-| First Gradle install hangs ~5 min then fails | ColorOS blocks the install channel → `adb install -r` manually |
-| Accessibility dies after install | `install -r` removes the service → re-run `settings put secure` |
-| `dlopen failed: libc++_shared.so not found` | Re-run `fetch-libnode.ps1`; confirm the file is in `jniLibs/<abi>/` |
-| App crashes at task end (FORTIFY/SIGABRT) | `process.exit()` (including SDK `shutdown`) → record, never exit |
-| Broadcast stalls at `debug task start` | Cached app freezer → bring the app to the foreground with `am start` |
-| JSON-RPC stops responding | Logs on stdout → no stdout logger in the phone profile |
-| `bad indentation of a mapping entry`, app crashes | `!!js` object literal in the profile → quote the whole expression |
-| No readable UI nodes (WeChat) | Tree hidden → visual path (`EMPTY_TREE_HINT`) |
-| Taps land ~12.6% left/up | Use `tap_target` image pixels, not screen pixels |
-| `type_text` fails with an unreadable tree | Read the code: `text_no_channel` → tap the field first |
-| `ERR_MODULE_NOT_FOUND` after install | `bundle-dsh.ps1` ran under PowerShell 5.1 → use `pwsh` 7 |
-| Push rejected with `GH013` | Distinguish PR rules from push protection; the latter means GitHub sees a secret |
-| Model download says the network is unreachable | Phone has no VPN → tap **retry** on that row; it resumes from the partial file. No auto-retry by design (`UpdateHttp.failReason`) |
-
 ## 11. Routing index
 
 | Change / question | Read | Then |
@@ -336,18 +320,15 @@ Full table: `docs/pitfalls.md`.
 | Providers, models, modalities, runtime routing | `docs/providers.md` | §7.4 |
 | Connectors (Gmail etc.) | `docs/email-connector.md` | plugin name in three places + `bundle-dsh.ps1` + reinstall |
 | Web search | `docs/web-search.md` | `bundle-dsh.ps1` + reinstall; verify the search model actually searches |
-| Voice (TTS/STT) | `docs/voice.md` | unit tests; device check per §8 |
-| In-app updates | `docs/app-updater.md` | `UpdateDownloaderResumeTest` |
+| Voice (TTS/STT, ASR decoding) | `docs/voice.md` | §7.5 invariants; unit tests; device check per §8 |
+| In-app updates, download failure policy | `docs/app-updater.md` | §7.5; `UpdateDownloaderResumeTest` |
 | Linux on the phone | `docs/termux.md` | plugin commit first + `bundle-dsh.ps1` |
 | Memory / context injection | `docs/memory.md` | — |
 | Scheduled tasks | `docs/scheduled-tasks.md` | — |
 | `ask_user_question` | `docs/user-questions.md` | — |
 | On-device inference | `docs/on-device-inference.md` | — |
 | Releasing, signing material | `docs/releasing.md` | §7.6 |
-| Troubleshooting | `docs/pitfalls.md` | §10 |
 | Planning direction (unverified hypotheses) | `docs/roadmap.md` | — |
-| Release notes | `docs/releases/<tag>.md` | §7.6 |
-| Public overview / visible changes | `README.md` / `CHANGELOG.md` | §7.6 |
 
 ## 12. Editing this file
 

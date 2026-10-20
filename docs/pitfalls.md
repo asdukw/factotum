@@ -117,3 +117,4 @@
 |---|---|
 | llama.cpp 在骁龙上报 `HTP0 failed to open session ... 0x80000406` | 没设 `ADSP_LIBRARY_PATH=<lib 目录>`。HTP 的 skel URI 是硬编码的 `file:///libggml-htp-v81.so`，由 DSP 侧 fastrpc 按这个变量搜索；官方 README 与 `run.py` 都没写。见 `docs/on-device-inference.md` |
 | `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ **必须 `useLegacyPackaging = true`** —— Android 10+ 的 W^X 不许应用执行自己可写目录里的文件，而 AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。别被 `run-as …/rg --version` 骗了：那能跑是因为 run-as 的 SELinux 域还是 shell |
+| Push 被 `GH013` 拒 | 先分清 PR 分支保护与 push protection；后者说明 GitHub 在提交里看到了密钥 → 按 AGENTS.md §6.1 处理，别硬推 |

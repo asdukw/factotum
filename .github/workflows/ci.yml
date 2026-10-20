@@ -3,10 +3,16 @@ name: CI
 # 本仓库此前没有 CI，验证全靠「本机构建 / 单测 / 真机」。这里把**能在无设备环境跑的部分**
 # 固定下来。注意边界：**CI 绿 ≠ 能用** —— 无障碍执行层、内嵌 Node 的启动、dsh 运行时装配
 # 都只能在真机上验证（见 AGENTS.md「真机」）。CI 只保证编译、单测、静态检查这三关。
+# 只改文档（README / AGENTS / docs / CHANGELOG）不跑 CI：这些改动不碰编译、单测或静态检查。
 on:
   push:
     branches: [master]
+    paths-ignore: &docs-paths
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
   pull_request:
+    paths-ignore: *docs-paths
   workflow_dispatch:
 
 # 同一分支连推时取消上一次：既省 runner，也让「最新一次是否绿」没有歧义

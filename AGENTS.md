@@ -516,9 +516,14 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 - **焦点被抢走就停，不自动续读**；**不在后台继续读**（没有前台服务，退到后台可能被冻住）。
 - **本地引擎要跑 `tools/fetch-sherpa.ps1`**（拉 24MB 的 `libsherpa-onnx-jni.so`，不入库）；
   用 static-link 变体，单个 .so，不依赖 `libc++_shared.so`。
-- **模型只有 `chaowen`（CC0）与 `xiao_ya`（非商用）两条**：目录里不许放授权不明的权重，
-  界面必须把授权显示在下载按钮旁边。MeloTTS（MIT）因为 GitHub 归档里 int8 是 LFS 指针、
-  fp32 又 170MB 而没收 —— 细节见 `docs/voice.md` §4。
+- **模型目录 = 四条游戏角色音色**（2026-10-21：刻晴 / 优菈 / 德丽莎 / 理之律者，
+  22.05kHz、每条 120MB）：原来那两条 Piper（`chaowen` / `xiao_ya`）已删；塔菲只有
+  Bert-VITS2 权重、鸣潮菲比全网没有 TTS 权重，两个都跑不了 —— 检索记录见 `docs/voice.md` §4。
+- **`sid` 是角色，不是常量**：这批是一个游戏一份多说话人模型，角色只是里面的一行
+  （导出脚本把 `sid` 做成了 ONNX 的输入）。**填错不报错、只是读出别人的声音** ——
+  `TtsModel.sid` 必填、`TtsModelCatalogTest` 逐个钉住；换音色只能在真机上听。
+- 加条目的标准不变：公开稳定可直接下载（GitHub release 资产，不引入第二个下载域）、
+  授权说得清、界面把授权显示在下载按钮旁边。
 - **解包是「解到 staging → rename」**，且必须挡路径穿越：直接解到正式目录，解到一半被杀会
   留下「看起来装好了」的目录，然后在 native 层崩。`SherpaArchiveTest` 用自造的 tar.bz2 钉住。
 - **vendor 的 `Tts.kt` 不要手改**：JNI 按字段名取值，少一个字段不报编译错、会在 native 层崩。
@@ -709,16 +714,25 @@ adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
 
 带空格的参数必须把整条 `am broadcast` 再用 `adb shell "..."` 包一层引号，否则会被设备 shell 拆词。
 
-## 提交纪律（2026-10-03 用户约定；2026-10-18 改为 PR 流程）
+## 提交纪律（2026-10-03 用户约定；2026-10-21 明确：**分支开发，合并回 master**）
 
 - **完成一个可验证的里程碑时自行提交**，不要攒大改动等用户开口。判据：构建 / 单测通过，
   或真机验证完成，即提交一个内聚的 commit。
-- **master 已开启分支保护，改动走 PR**：从 master 拉分支 → 提交 → 开 PR → CI 三项检查
-  （静态检查 / 单元测试 / 离线自检）通过 → 合并。保护是 GitHub **Ruleset**（不是旧版 branch
-  protection）：禁删除 / 禁 force push / 要求 PR / 要求三项 CI 且 strict。**仓库管理员被显式
-  列为 bypass actor（`bypass_mode: always`），可以直推 master** —— 这是个人项目的刻意选择；
-  非 admin 的贡献者仍会被远端拒绝。`v*` tag 的 release 不受影响。
-  仓库默认分支叫 **master**（不是 main）。
+- **一律在新分支上开发，不在 master 上直接改、直接提交**：先 `git switch -c <feat|fix|docs>/<主题>`
+  （开 worktree 本身就满足这一条）。**不能因为「管理员能直推」就省掉分支** —— 那是两件事：
+  分支管的是「开发在哪里发生」，直推管的是「合并之后谁还需要批准」。
+  master 上的每个提交都应当是**从分支合并进来的、已完成的一步**，不是开发中的半成品。
+  （原先这条写成「改动走 PR」，却被同一 bullet 里的「管理员可直推」架空，
+  实际被读成「可以在 master 上开发」—— 2026-10-21 澄清。）
+- **这条有 hook 兜底**：`tools/hooks/pre-commit` 在 HEAD 是 `master` 时**拒绝提交**
+  （合并 / cherry-pick / revert 产生的提交除外 —— 那正是「合回 master」这个动作）。
+  `core.hooksPath` 指向 `tools/hooks`，对所有 worktree 一起生效。确实要在 master 上
+  提交时用 `git commit --no-verify`；那条出口只说明你知道自己在做什么，CI 不会因此放过。
+- **开发完成之后合回 master**：本地 `git merge --no-ff <分支>` 再推，或者开 PR 让远端合并，
+  两条都行（需要别人看的时候走 PR）。**管理员可以直推 master**（GitHub Ruleset 的
+  bypass actor，`bypass_mode: always`），直推的是**合并后的结果**；分支保护（禁删除 /
+  禁 force push / 要求 PR / 要求三项 CI 且 strict）对非 admin 的贡献者仍然生效。
+  `v*` tag 的 release 不受影响。仓库默认分支叫 **master**（不是 main）。
 - **合并 PR 与 push 一样，必须由用户逐次明确授权**：「改完就提交」是默认动作，
   「开 PR / 合并 / 推上去」不是。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、

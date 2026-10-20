@@ -315,6 +315,9 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
 - 现在坐标一律是**最近一次 `capture_screenshot` 那张图的图像像素**，换算在设备侧的纯函数
   `ScreenFrame.toScreen`（`round(offset + x*screenW/imageW)`，夹到 `screenW-1`）。
   屏幕尺寸取**缩放前的捕获位图**而不是 `displayMetrics`；两者不一致时打 `ev=frame_mismatch`。
+- `capture_screenshot` 的 payload 带 `screenshotId / width / height / screenWidth /
+  screenHeight / offsetX / offsetY`；插件把它渲染成**模型可见的图例文本** ——
+  模型只看得见文本，尺寸不写进文本它就拿不到。
 - 截图是**有状态的**：界面变了旧截图作废（`STALE_SCREENSHOT`）；bbox 越界直接拒（`OUT_OF_SCREENSHOT`），不 clamp。
 - 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔不回图。`changed=false` 时 `ok` 仍为 true
   （`NO_VISIBLE_CHANGE`）—— 它是提示不是失败，插件把 `ok=false` 当异常抛。
@@ -347,7 +350,20 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
 943×2047 → 1080×2344 的换算与那条 12.6% 偏差）、插件 `npm test`（10 个工具 + 真实 `defineTool` 校验）、
 `check-profile.mjs`。**待验**：模型在图上估的绝对像素 bbox 准不准（仓库从没测过坐标回归）、
 `takeScreenshot` 的限流窗口与验证截图是否打架、`image-offload` 与自定义附件实现是否配合、
-ColorOS 下捕获位图尺寸是否等于 `displayMetrics`。验证步骤见 `AGENTS.md` 的真机一节。
+ColorOS 下捕获位图尺寸是否等于 `displayMetrics`。验证步骤见本节末尾。
+
+#### 截图契约怎么验（2026-10-17 起，尚无真机记录 —— 验完把结论写回本节）
+
+1. **换算**（确定性，不依赖模型）：`CAPTURE_FRAME` 的 summary 应报「图像 943×2047｜屏幕
+   1080×2344」；对某个已知元素 `TAP_TARGET`，logcat 里换算出的屏幕坐标要落在该元素的
+   `getBoundsInScreen` 内（用 `READ_SCREEN` 复核）。建议先开「开发者选项 → 指针位置」，
+   点击坐标肉眼可见。再故意用过期 `screenshot_id` → 应报 `STALE_SCREENSHOT`；`x2` 超出
+   图像宽 → 应报 `OUT_OF_SCREENSHOT`。
+2. **动作生效**：对会翻页 / 开新页的按钮 `TAP_TARGET`，要求 `changed=true` 且页面确实变了；
+   `NO_VISIBLE_CHANGE` 只说明「看着没变」，不判失败。
+3. **空树端到端**：微信已在后台运行时提交「打开微信，点开第一个会话」，工具序列应是
+   `capture_screenshot → tap_target`（不再是「读屏 1 个节点后停下请用户强停」）。
+4. **回归**：系统设置这类可读树的 App 仍应走 `read_ui_tree + tap_node`，不该掉进视觉路径。
 
 ## 10. 控件树不可读时的文字输入：无障碍文本注入通道（2026-10-20）
 
@@ -395,6 +411,8 @@ input method capabilities: get the InputConnection and get text selection change
 
 - **顺序不能反**：控件树优先（它自己会 `ACTION_FOCUS`，不要求输入框先有焦点），通道兜底。
 - `press(enter)` 走同一条顺序 —— 只补上打字、补不上发送，任务还是做不完。
+- **清单里少这一条 flag 是静默失败**（编译过、无障碍照样启用、只有输入时才发现）→
+  `AccessibilityServiceConfigTest` 钉住；真机验证步骤见本节末尾。
 - 失败码五条，每条对应一个不同的下一步：`text_unsupported_os`（Android 13 以下）/
   `text_flag_missing`（升级后没重新启用无障碍）/ `text_commit_rejected`（有连接但写不进去）/
   `text_no_channel`（**最常见**：没有输入框聚焦 → 先点一下输入框）/ `text_set_text_rejected`。

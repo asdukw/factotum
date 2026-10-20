@@ -36,6 +36,29 @@ VoiceSettings   偏好：引擎 / 自动朗读 / 语速 / 音色
 切分**不在引擎里**（在 `SpeakableText.chunks`，由 `VoiceReader` 驱动）：两个引擎的差异面
 因此只剩 `maxChunk` 一个数字。
 
+### 文件地图
+
+| 位置 | 管什么 |
+|---|---|
+| `voice/SpeakableText.kt` | 纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测钉住） |
+| `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
+| `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
+| `voice/LocalTtsEngine.kt` | 本地引擎：sherpa-onnx 合成 + AudioTrack 流式播放 |
+| `voice/VoiceModel.kt` | 合成与识别共用的模型抽象：怎么下、怎么解、装到哪 |
+| `voice/VoiceModelStore\|Downloader\|Installer.kt` | 模型落盘 / 下载（复用更新那套续传）/ 单例安装状态 |
+| `voice/SherpaArchive.kt` | 解 sherpa 的 `.tar.bz2`（剥顶层目录 + 挡路径穿越） |
+| `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**） |
+| `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门 |
+| `voice/AudioCapture.kt` | 麦克风采集：16kHz 单声道 → `FloatArray` + RMS |
+| `voice/VadSegmenter.kt` | 端点判定：sherpa-onnx 自带的 silero VAD（`assets/silero_vad.onnx`，629KB） |
+| `voice/DictationEnd.kt` | 纯 Kotlin：会话的三个收尾条件（单测钉住） |
+| `voice/RecognizedText.kt` | 纯 Kotlin：识别结果清理 + 回填输入框（单测钉住） |
+| `voice/VoiceInput.kt` | 单例：语音输入的唯一状态源、按模型 id 缓存识别器 |
+| `voice/VoiceSettings.kt` | 偏好：朗读引擎 / 自动朗读 / 语速 / 音色 + 识别模型（**非密**） |
+| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `Vad` / `FeatureConfig` / `WaveReader`）；与 `fetch-sherpa.ps1` 同 tag，别手改 |
+| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」（朗读 + 语音输入两节） |
+| `debug/.../VoiceDebugReceiver.kt` | **仅 debug**：把 WAV 喂给识别引擎 / 无 UI 装模型（`op ASR` / `INSTALL` / `MODELS`） |
+
 ## 2. 为什么不能把正文直接交给 TTS
 
 模型写的是给人**看**的 Markdown。直接念出来：
@@ -210,6 +233,10 @@ Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Go
 同样的理由排除云端 ASR（各家 `/audio/transcriptions`）：它们确实比端侧准，
 但那是把麦克风里的东西交给另一个服务。**多一条出网路径要有明确理由，「更准」还不是。**
 
+**`OfflineRecognizer` 不是线程安全的**，而协程取消打断不了阻塞的 native 调用 ——
+并发进去就是 `FORTIFY ... destroyed mutex` + 整个 App 闪退。合成那边是同一道闸门
+（`LocalTtsEngine` 串行化），两边都别绕开。
+
 推论：语音输入必须先下模型（82–239MB，见 §8），没下就是「点了麦克风告诉你还没下」。
 
 **音频的边界**：只在本进程内存里活到识别完，不落盘、不进日志。
@@ -294,6 +321,13 @@ whisper-tiny 在英文样例上与归档里的参考文本**逐字一致**（`te
 英文音频被硬解成中文（输出「前來的大,在前來的大,…」），**不报错**。
 sherpa 的原话是「多语言模型不给语种就从音频里推断」，所以这里留空。
 `AsrModelCatalogTest` 钉住了「whisper 的语种必须为空」。
+
+**`modelType` 只有 paraformer / whisper 能填**：sherpa 认的值就那几个，sense-voice 填了
+会走到「猜类型」那条路上（多 load 一遍模型 + 一行 `Invalid model_type` 日志），留空即可
+（类型在 ONNX 元数据里）。
+
+**识别器按模型 id 缓存**（`VoiceInput.engineKey`）：建一次要把几十上百 MB 的模型读进内存，
+每次说话都重建就是每次等好几秒。
 
 **Dolphin（Apache-2.0，104MB，多语言）验过但没收**：定位与 whisper-tiny 重叠，
 而它是 CTC 非自回归、更快。留着 whisper 的理由是「与 whisper 同源」对用户更好懂、

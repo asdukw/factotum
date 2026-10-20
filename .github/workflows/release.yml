@@ -26,7 +26,7 @@ env:
 jobs:
   build:
     name: 构建并签名
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 签名与 OAuth 凭据应从仓库级 secret 迁到 environment secret（见 docs/releasing.md）。
     # 环境保护规则只允许 v* tag 部署，并要求人工批准。
     environment: release
@@ -48,16 +48,7 @@ jobs:
           fetch-depth: 0 # release notes / tag 信息要完整历史
           submodules: recursive # 设备工具插件在独立仓库
 
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "24" # 装配 dsh 运行时用（npm）
-      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
-      # ③ NDK/CMake 装一次就是几百 MB～1.5GB，按版本缓存（版本号要与 build.gradle.kts 的
-      # ndkVersion / CMakeLists 的 cmake 版本一致；改了版本 key 自然失配，会重新装）
+      - uses: ./.github/actions/setup-build
       # tag 与包内版本号是**两处独立的信息**：versionName 来自 build.gradle.kts，tag 来自你推的那个名字。
       # 忘了改 build.gradle 就会发出「叫 v0.9.0、装上去显示 0.8.0」的包 —— 用户与应用内更新
       # 都会看错版本（更新检查比的就是 versionName）。组包前先拦一次，比发完再发现便宜得多。
@@ -72,46 +63,12 @@ jobs:
             exit 1
           fi
 
-      - name: 缓存 NDK / CMake
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
-            ${{ env.ANDROID_HOME }}/cmake/3.31.6
-          key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
-      - name: 装 SDK 平台 / NDK / CMake
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
-        with:
-          validate-wrappers: true
-
       # ① 先过门禁再出包：触发条件是「推了 tag」，不检查那个 commit 的 CI 绿不绿 ——
       # CI 正红照样能把包装出去。这里跑一遍同样的检查，比查 API 判断「这个 commit 绿了吗」可靠，
       # 也覆盖「tag 打在一个 CI 从没见过的 commit 上」这种情况。
       - name: 出包前过门禁（与 ci.yml 同一套）
         working-directory: android
         run: ./gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest --console=plain
-
-      # ③ dsh 的 npm 暂存（~200MB）：key 跟着装配脚本与插件走，pin 的版本一变就重新装
-      - name: 缓存 dsh 装配暂存
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: android/.dsh-cache/runtime
-          key: v2-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
-
-      # 装配脚本是 PowerShell —— ubuntu runner 自带 pwsh。代理跟随 HTTPS_PROXY（CI 上没有 = 直连）。
-      - name: 装配运行时（libnode + dsh）
-        run: |
-          pwsh -NoProfile -File tools/fetch-libnode.ps1
-          # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
-          # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
-          pwsh -NoProfile -File tools/fetch-rg.ps1
-          # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
-          # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
-          pwsh -NoProfile -File tools/fetch-sherpa.ps1
-          pwsh -NoProfile -File tools/bundle-dsh.ps1
 
       - name: 还原签名材料
         env:
@@ -141,27 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/release/app-release.apk
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
-          SIGNER="${BT}apksigner"
-          "$SIGNER" verify --print-certs "$APK"
-          # 未签名的包不该被发出去（配错 secret 时最容易出这种情况）
-          "$SIGNER" verify "$APK" > /dev/null
-          # **产物结构检查**：与 assemble.yml 同一套。v0.6.0 第一次发出去的包缺 librg.so，
-          # 而当时 assemble.yml 只查 debug 包 —— release 这条路上没人验，构建是"成功"的。
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
-            unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
-          done
-          if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then
-            echo "::error::assets/dsh-runtime.zip 不是 zip —— 装到设备上会解压失败"
-            exit 1
-          fi
-          # 结构性保证的回归检查：构建期已经不带密钥，这里确认没被谁改回去。
-          # 只扫常见形状，不做「真实密钥」的判定 —— 那需要密钥本体，而 CI 上没有、也不该有。
-          unzip -p "$APK" 'classes*.dex' > "$RUNNER_TEMP/dex.bin"
-          if grep -aoE 'oc_sk_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9]{32,}|ghp_[A-Za-z0-9]{20,}' "$RUNNER_TEMP/dex.bin"; then
-            echo "::error::包内出现疑似密钥形状，已中止发布"
-            exit 1
-          fi
+          bash tools/verify-apk.sh "$APK" --scan-secrets
 
       - name: 暂存 release 资产
         run: |
@@ -181,7 +118,7 @@ jobs:
   publish:
     name: 发布 release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # 只在这一步创建 release

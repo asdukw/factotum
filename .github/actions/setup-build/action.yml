@@ -1,0 +1,55 @@
+name: Setup build
+description: Shared JDK / Node / Android / Gradle setup, caches, and dsh runtime assembly.
+
+# assemble.yml 与 release.yml 共用这一段。差异只剩「出 debug 还是 release」「是否签名」，
+# 产物校验统一走 tools/verify-apk.sh —— v0.6.0 的 librg.so 就是两条路只有一条验造成的。
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      with:
+        distribution: temurin
+        java-version: "21"
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: "24"
+    - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+    - name: 缓存 NDK / CMake
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: |
+          ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+          ${{ env.ANDROID_HOME }}/cmake/3.31.6
+        key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
+    - name: 装 SDK 平台 / build-tools / NDK / CMake
+      shell: bash
+      run: |
+        yes | sdkmanager --licenses > /dev/null || true
+        sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.31.6"
+    - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+      with:
+        validate-wrappers: true
+    - name: 缓存 libnode / rg / sherpa 下载
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: |
+          android/.libnode-cache
+          android/.rg-cache
+          android/.sherpa-cache
+        key: v1-fetch-cache-${{ runner.os }}-${{ hashFiles('tools/fetch-libnode.ps1', 'tools/fetch-rg.ps1', 'tools/fetch-sherpa.ps1') }}
+    - name: 缓存 dsh 装配暂存
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: android/.dsh-cache/runtime
+        key: v3-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/fetch-libnode.ps1', 'tools/fetch-rg.ps1', 'tools/fetch-sherpa.ps1', 'tools/dsh-phone/**') }}
+    - name: 装配运行时（libnode + dsh）
+      shell: pwsh
+      run: |
+        ./tools/fetch-libnode.ps1
+        # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
+        # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
+        ./tools/fetch-rg.ps1
+        # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
+        # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
+        ./tools/fetch-sherpa.ps1
+        ./tools/bundle-dsh.ps1

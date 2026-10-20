@@ -151,8 +151,8 @@ jobs:
       # js-yaml 从 npm 现取（本仓库不引入 npm 依赖，只在这条 job 里装）。
       - name: 校验 phone profile
         run: |
-          # 钉 4.x：5.x 换掉了自定义 tag 的 API，脚本只支持 4.x（vendored 运行时里也是 4.x）
-          npm install --no-save --no-audit --no-fund 'js-yaml@^4'
+          # 钉 4.3.2：5.x 换掉了自定义 tag 的 API，脚本只支持 4.x（vendored 运行时里也是 4.x）
+          npm install --no-save --no-audit --no-fund --ignore-scripts 'js-yaml@4.3.2'
 
           node tools/dsh-phone/check-profile.mjs tools/dsh-phone/profile/cordis.patch.yml node_modules
       # 连接器的「只读」与「令牌不外泄」两条承诺靠插件测试守住（docs/email-connector.md §6）。

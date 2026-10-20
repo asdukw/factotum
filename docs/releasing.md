@@ -24,6 +24,10 @@
   显式开 `validate-wrappers: true`，PR 改 `gradle-wrapper.jar` 会在 CI 红。
 - **release 的写权限只在 publish job**：build 只读并产出 artifact，publish 才拿 `contents: write`；
   `rg.yml` 同样拆成 build / publish。
+- **assemble 与 release 共用装配入口**：`.github/actions/setup-build` 负责 JDK / Node / Android /
+  Gradle、NDK/CMake 与 fetch 缓存、dsh 装配；产物校验统一走 `tools/verify-apk.sh`
+  （release 加 `--scan-secrets`）。两条路都钉 `ubuntu-24.04`，`apksigner` 用显式安装的
+  build-tools 36.0.0，不再用 `sort -V` 猜最新。
 
 ### 分支保护与 push protection
 

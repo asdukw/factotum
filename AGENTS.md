@@ -70,9 +70,11 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 - Spotless resolves `.editorconfig` from the **Gradle project directory**, not the repo root.
 - ktlint `ktlint_*` properties do not pass through Spotless; repeat them in `editorConfigOverride`.
 
-CI (`.github/workflows/`): `ci.yml` runs the gates above plus `:app:testDebugUnitTest` on every push
-and PR; `assemble.yml` re-runs the whole assembly path (libnode → dsh → JNI → APK) when `tools/**`,
-`app/src/main/cpp/**`, or Gradle files change; `release.yml` builds the signed APK on a `v*` tag.
+CI (`.github/workflows/`): `ci.yml` always runs a change-scope job; code changes run the gates plus
+`:app:testDebugUnitTest`, docs-only changes skip them while still reporting the required checks
+(skipped counts as pass). `assemble.yml` re-runs the whole assembly path (libnode → dsh → JNI → APK)
+when `tools/**`, `app/src/main/cpp/**`, or Gradle files change; `release.yml` builds and signs the
+APK on a `v*` tag inside the `release` environment (manual approval; secrets live there).
 
 ## 5. Repository map
 
@@ -233,8 +235,9 @@ short body is an error (`TRANSFER_TRUNCATED`), not a finished file. See `docs/pi
 ### 7.6 Release
 
 Bump `versionCode` / `versionName` → write `docs/releases/<tag>.md` and update `CHANGELOG.md` →
-commit → tag `v*`. The in-app version comes from `build.gradle.kts`, not the tag. Full process and
-signing material: `docs/releasing.md`.
+commit → tag `v*`. The in-app version comes from `build.gradle.kts`, not the tag. Releases run in the
+`release` environment (manual approval); signing and Gmail secrets live there, not at repo level.
+Full process and signing material: `docs/releasing.md`.
 
 ## 8. Verification
 

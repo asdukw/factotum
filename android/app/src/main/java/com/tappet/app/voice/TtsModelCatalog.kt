@@ -4,7 +4,7 @@ package com.tappet.app.voice
  * 一个可下载的本地**合成**模型。
  *
  * 「怎么下、怎么解、装到哪」在 [VoiceModel] 那一层（与识别共用），这里只多出
- * **怎么用**：运行时按 [modelFile] / [tokensFile] / [lexiconFile] / [ruleFsts] 拼
+ * **怎么用**：运行时按 [modelFile] / [tokensFile] / [lexiconFile] / [ruleFsts] / [sid] 拼
  * [com.k2fsa.sherpa.onnx.OfflineTtsConfig]。字段对不上时表现为「模型下好了但点朗读报错」，
  * 所以 [TtsModelCatalog] 里的每一条都要照着**真实的归档**写。
  */
@@ -23,6 +23,14 @@ data class TtsModel(
   val lexiconFile: String,
   /** 文本正则化用的 FST（电话号码 / 数字 / 日期），按顺序传给引擎。 */
   val ruleFsts: List<String>,
+  /**
+   * 多说话人模型的说话人编号，传给 `OfflineTts.generate(sid=)`。
+   *
+   * **不能一律填 0**：这些社区音色是「一个游戏一份多说话人模型」，角色是里面的某一行
+   * （导出脚本把 `sid` 做成了 ONNX 的输入，见 `docs/voice.md` §4）。填错的表现是
+   * **不报错、声音是别人** —— 只有耳朵能发现。单说话人模型忽略这个值，填 0 即可。
+   */
+  val sid: Int = 0,
   override val license: String,
   override val licenseNote: String,
 ) : VoiceModel {
@@ -34,56 +42,92 @@ data class TtsModel(
 }
 
 /**
- * 可选的本地模型目录。
+ * 可选的本地模型目录：四条**游戏角色音色**，都是社区训练、k2-fsa 转成 ONNX 的 VITS。
  *
- * **这里只放「公开、稳定、直接可下」的条目**：地址是 k2-fsa/sherpa-onnx 的 `tts-models`
- * release 资产，与本仓库的应用内更新走同一个来源（GitHub），不引入第二个下载域。
+ * 挑选过程（2026-10-21）：目标是永雏塔菲 → 她的公开权重全是 Bert-VITS2（当前引擎跑不了）；
+ * 换成《鸣潮》菲比 → 全网没有 TTS 权重（只有 RVC 变声）。最后落到「sherpa 官方已经转好的
+ * 中文角色音」这一批，用户选了刻晴 / 德丽莎 / 理之律者 / 优菈。完整检索记录与取舍见
+ * `docs/voice.md` §4。
  *
- * 挑选标准是「小 + 授权说得清」。目前两条都是 13MB 的 Piper int8 模型，只是音色与授权不同：
- * [CHAOWEN] 是 CC0（默认，可商用），[XIAO_YA] 的数据集只授权非商用。
- *
- * 不在这里放「授权不明」的模型（HF 上不少中文 VITS / Bert-VITS2 权重都是这种）——
- * 一个公开 App 的一键下载目录不该让用户替我们猜授权。
- *
- * **MeloTTS（MIT，中英混读）暂时没进来**，不是授权问题，是产物问题：它的 GitHub 归档里
- * `model.int8.onnx` 是个 133 字节的 **git-lfs 指针**（真身在 HF，53MB），归档里能用的只有
- * 170MB 的 fp32 —— 手机上又大又慢。要收它得改从 HF 下载，那会引入第二个下载域，
- * 而 HF 在墙内直连不通。等有别的来源再说。
+ * **加条目的标准**（别放宽）：地址是公开、稳定、直接可下的 GitHub release 资产，与本仓库的
+ * 应用内更新同一个来源，不引入第二个下载域；授权必须说得清，且显示在下载按钮旁边。
+ * 这四条**授权都不干净**（游戏角色音，版权方没授权），是用户明确知情后的选择 ——
+ * 别把它当成先例去加更多来路不明的东西。
  */
 object TtsModelCatalog {
-  val CHAOWEN =
+  /** 原神·刻晴。`sid=115` 来自源合集 `zomehwh/vits-models-genshin-bh3` 的 info.json。 */
+  val KEQING =
     TtsModel(
-      id = "chaowen",
-      label = "超文（中文女声）",
-      summary = "22.05kHz，体积小、出声快，适合日常朗读",
-      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-chaowen-medium-int8.tar.bz2",
-      sizeBytes = 14_016_000L,
-      archiveRoot = "vits-piper-zh_CN-chaowen-medium-int8",
-      modelFile = "zh_CN-chaowen-medium.onnx",
+      id = "keqing",
+      label = "刻晴（原神）",
+      summary = "22.05kHz，中/日混读",
+      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-keqing.tar.bz2",
+      sizeBytes = 120_592_220L,
+      archiveRoot = "vits-zh-hf-keqing",
+      modelFile = "keqing.onnx",
       tokensFile = "tokens.txt",
       lexiconFile = "lexicon.txt",
       ruleFsts = listOf("phone.fst", "number.fst", "date.fst"),
-      license = "CC0",
-      licenseNote = "训练数据来自 OHF-Voice/voice-datasets（CC0，公有领域），可商用。",
+      sid = 115,
+      license = "未授权（同人模型）",
+      licenseNote = "社区用《原神》的角色语音训练，米哈游未授权。自己听可以，商用不行。",
     )
 
-  val XIAO_YA =
+  /** 崩坏 3·德丽莎。 */
+  val THERESA =
     TtsModel(
-      id = "xiao_ya",
-      label = "小雅（中文女声）",
-      summary = "22.05kHz，与超文同源但音色不同",
-      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-zh_CN-xiao_ya-medium-int8.tar.bz2",
-      sizeBytes = 14_016_124L,
-      archiveRoot = "vits-piper-zh_CN-xiao_ya-medium-int8",
-      modelFile = "zh_CN-xiao_ya-medium.onnx",
+      id = "theresa",
+      label = "德丽莎（崩坏 3）",
+      summary = "22.05kHz，中/日混读",
+      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-theresa.tar.bz2",
+      sizeBytes = 120_596_617L,
+      archiveRoot = "vits-zh-hf-theresa",
+      modelFile = "theresa.onnx",
       tokensFile = "tokens.txt",
       lexiconFile = "lexicon.txt",
       ruleFsts = listOf("phone.fst", "number.fst", "date.fst"),
-      license = "非商用",
-      licenseNote = "数据集 BZNSYP（data-baker）只授权非商用；自己用没问题，做商业产品不行。",
+      sid = 193,
+      license = "未授权（同人模型）",
+      licenseNote = "社区用《崩坏 3》的角色语音训练，米哈游未授权。自己听可以，商用不行。",
     )
 
-  val ALL: List<TtsModel> = listOf(CHAOWEN, XIAO_YA)
+  /** 崩坏 3·理之律者。 */
+  val BRONYA =
+    TtsModel(
+      id = "bronya",
+      label = "理之律者（崩坏 3）",
+      summary = "22.05kHz，中/日混读",
+      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-bronya.tar.bz2",
+      sizeBytes = 120_595_102L,
+      archiveRoot = "vits-zh-hf-bronya",
+      modelFile = "bronya.onnx",
+      tokensFile = "tokens.txt",
+      lexiconFile = "lexicon.txt",
+      ruleFsts = listOf("phone.fst", "number.fst", "date.fst"),
+      sid = 193,
+      license = "未授权（同人模型）",
+      licenseNote = "社区用《崩坏 3》的角色语音训练，米哈游未授权。自己听可以，商用不行。",
+    )
+
+  /** 原神·优菈。 */
+  val EULA =
+    TtsModel(
+      id = "eula",
+      label = "优菈（原神）",
+      summary = "22.05kHz，中/日混读",
+      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-eula.tar.bz2",
+      sizeBytes = 120_562_119L,
+      archiveRoot = "vits-zh-hf-eula",
+      modelFile = "eula.onnx",
+      tokensFile = "tokens.txt",
+      lexiconFile = "lexicon.txt",
+      ruleFsts = listOf("phone.fst", "number.fst", "date.fst"),
+      sid = 124,
+      license = "未授权（同人模型）",
+      licenseNote = "社区用《原神》的角色语音训练，米哈游未授权。自己听可以，商用不行。",
+    )
+
+  val ALL: List<TtsModel> = listOf(KEQING, THERESA, BRONYA, EULA)
 
   fun byId(id: String?): TtsModel? = ALL.firstOrNull { it.id == id }
 }

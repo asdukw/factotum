@@ -50,7 +50,7 @@ import com.tappet.app.voice.VoiceModelKinds
  * 只把两者的状态与代价写清楚。
  *
  * 模型的**授权写在下载按钮旁边**：这些权重训练自不同来源的数据集，授权各不相同
- * （小雅那份明确写着非商用）。用户点之前就该知道自己在下什么，而不是等装完了去翻仓库。
+ * （有的数据集只授权非商用）。用户点之前就该知道自己在下什么，而不是等装完了去翻仓库。
  */
 @Composable
 fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {

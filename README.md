@@ -195,10 +195,21 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
 
 | 文件 | 内容 |
 |---|---|
-| [AGENTS.md](AGENTS.md) | 给 coding agent 的项目记忆：硬规则、命令、常见坑、发版流程 |
+| [AGENTS.md](AGENTS.md) | 给 coding agent 的项目记忆：硬规则、命令、改动入口、文档索引 |
 | [docs/dsh-android.md](docs/dsh-android.md) | agent runtime 选型（内嵌 dsh + libnode）与各阶段实测 |
-| [docs/android-accessibility.md](docs/android-accessibility.md) | 执行层系统探测与实测记录（含视觉路径的坐标契约） |
+| [docs/android-accessibility.md](docs/android-accessibility.md) | 执行层系统探测与实测记录（含视觉路径的坐标契约、文本注入通道） |
+| [docs/providers.md](docs/providers.md) | 提供商 / 模型 / 模态 / 运行时路由 |
+| [docs/voice.md](docs/voice.md) | 朗读与语音输入：引擎取舍、模型授权、VAD |
 | [docs/email-connector.md](docs/email-connector.md) | 连接器的边界、隐私闸门、OAuth 注册步骤 |
+| [docs/web-search.md](docs/web-search.md) | 联网搜索的边界、协议与实测 |
+| [docs/app-updater.md](docs/app-updater.md) | 应用内更新：断点续传与校验 |
+| [docs/termux.md](docs/termux.md) | 手机上的 Linux：Termux 桥与 `run_command` |
+| [docs/memory.md](docs/memory.md) | dsh 的记忆机制与移动端移植缺口 |
+| [docs/scheduled-tasks.md](docs/scheduled-tasks.md) | 定时任务：Android 没有 cron |
+| [docs/user-questions.md](docs/user-questions.md) | `ask_user_question` 的接法 |
+| [docs/on-device-inference.md](docs/on-device-inference.md) | 端侧推理调研与实测 |
+| [docs/releasing.md](docs/releasing.md) | CI 与发版流程、签名材料 |
+| [docs/pitfalls.md](docs/pitfalls.md) | 完整排障表 |
 | [docs/roadmap.md](docs/roadmap.md) | 技术路线畅想（未验证的假设） |
 | [docs/releases/](docs/releases/) | 每个版本的发布说明与「验到什么程度」 |
 | [CHANGELOG.md](CHANGELOG.md) | 对外可见的变化 |

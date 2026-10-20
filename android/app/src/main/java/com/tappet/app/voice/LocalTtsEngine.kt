@@ -171,7 +171,9 @@ class LocalTtsEngine(
       }
     return try {
       audio.play()
-      engine.generateWithCallback(text = text, sid = 0, speed = rate, callback = callback)
+      // sid 是**角色**不是常量：这些音色是「一个游戏一份多说话人模型」，角色是里面的某一行。
+      // 写死 0 不会报错，只会读出别人的声音（见 TtsModel.sid）。
+      engine.generateWithCallback(text = text, sid = model?.sid ?: 0, speed = rate, callback = callback)
       if (stopped) {
         Log.i(TAG, "合成被停止")
         false

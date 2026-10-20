@@ -11,42 +11,51 @@ on:
         description: 已存在的 tag 名（补发用）
         required: true
 
+# 同一个 tag 的重跑不并发：两次都可能在 --clobber 同一个 release。
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
+# tag 只在这个 env 里出现，不进 run 脚本插值；下面每一步都会先校验形状。
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
-  release:
-    name: 出签名 APK 并发 release
-    runs-on: ubuntu-latest
+  build:
+    name: 构建并签名
+    runs-on: ubuntu-24.04
+    # 签名与 OAuth 凭据应从仓库级 secret 迁到 environment secret（见 docs/releasing.md）。
+    # 环境保护规则只允许 v* tag 部署，并要求人工批准。
+    environment: release
+    timeout-minutes: 60
     permissions:
-      contents: write # 创建 release
+      contents: read
     steps:
+      - name: 校验 tag 形状
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法 tag: $TAG"; exit 1; }
+
       # 补发（workflow_dispatch）时**必须显式取 tag 指向的 commit**：checkout 默认拿
       # github.sha = 触发分支的 HEAD，于是「补发一个旧 tag」会静默地出成当前 master 的包 ——
       # 版本号与 tag 对不上，而且只有真去比对才会发现。tag push 时 ref_name 就是 tag，等价。
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          ref: ${{ env.TAG }}
           fetch-depth: 0 # release notes / tag 信息要完整历史
           submodules: recursive # 设备工具插件在独立仓库
+          persist-credentials: false
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24" # 装配 dsh 运行时用（npm）
-      - uses: android-actions/setup-android@v4
-      # ③ NDK/CMake 装一次就是几百 MB～1.5GB，按版本缓存（版本号要与 build.gradle.kts 的
-      # ndkVersion / CMakeLists 的 cmake 版本一致；改了版本 key 自然失配，会重新装）
+      - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
       # tag 与包内版本号是**两处独立的信息**：versionName 来自 build.gradle.kts，tag 来自你推的那个名字。
       # 忘了改 build.gradle 就会发出「叫 v0.9.0、装上去显示 0.8.0」的包 —— 用户与应用内更新
       # 都会看错版本（更新检查比的就是 versionName）。组包前先拦一次，比发完再发现便宜得多。
       - name: tag 与包内 versionName 一致
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           WANT="${TAG#v}"
           GOT=$(grep -oE 'versionName = "[^"]+"' android/app/build.gradle.kts | head -1 | cut -d'"' -f2)
           echo "tag=$TAG versionName=$GOT"
@@ -55,18 +64,8 @@ jobs:
             exit 1
           fi
 
-      - name: 缓存 NDK / CMake
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
-            ${{ env.ANDROID_HOME }}/cmake/3.31.6
-          key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
-      - name: 装 SDK 平台 / NDK / CMake
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
-      - uses: gradle/actions/setup-gradle@v6
+      - name: 离线自检（审计 / profile / 插件边界）
+        run: bash tools/offline-checks.sh
 
       # ① 先过门禁再出包：触发条件是「推了 tag」，不检查那个 commit 的 CI 绿不绿 ——
       # CI 正红照样能把包装出去。这里跑一遍同样的检查，比查 API 判断「这个 commit 绿了吗」可靠，
@@ -75,31 +74,12 @@ jobs:
         working-directory: android
         run: ./gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest --console=plain
 
-      # ③ dsh 的 npm 暂存（~200MB）：key 跟着装配脚本与插件走，pin 的版本一变就重新装
-      - name: 缓存 dsh 装配暂存
-        uses: actions/cache@v6
-        with:
-          path: android/.dsh-cache/runtime
-          key: v2-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
-
-      # 装配脚本是 PowerShell —— ubuntu runner 自带 pwsh。代理跟随 HTTPS_PROXY（CI 上没有 = 直连）。
-      - name: 装配运行时（libnode + dsh）
-        run: |
-          pwsh -NoProfile -File tools/fetch-libnode.ps1
-          # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
-          # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
-          pwsh -NoProfile -File tools/fetch-rg.ps1
-          # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
-          # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
-          pwsh -NoProfile -File tools/fetch-sherpa.ps1
-          pwsh -NoProfile -File tools/bundle-dsh.ps1
-
       - name: 还原签名材料
         env:
           KEYSTORE_B64: ${{ secrets.TAPPET_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then
-            echo "::error::缺少 secret TAPPET_KEYSTORE_BASE64（见 AGENTS.md 的「发版」一节）"
+            echo "::error::缺少 secret TAPPET_KEYSTORE_BASE64（见 docs/releasing.md）"
             exit 1
           fi
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
@@ -122,45 +102,76 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/release/app-release.apk
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
-          SIGNER="${BT}apksigner"
-          "$SIGNER" verify --print-certs "$APK"
-          # 未签名的包不该被发出去（配错 secret 时最容易出这种情况）
-          "$SIGNER" verify "$APK" > /dev/null
-          # **产物结构检查**：与 assemble.yml 同一套。v0.6.0 第一次发出去的包缺 librg.so，
-          # 而当时 assemble.yml 只查 debug 包 —— release 这条路上没人验，构建是"成功"的。
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
-            unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
-          done
-          if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then
-            echo "::error::assets/dsh-runtime.zip 不是 zip —— 装到设备上会解压失败"
-            exit 1
-          fi
-          # 结构性保证的回归检查：构建期已经不带密钥，这里确认没被谁改回去。
-          # 只扫常见形状，不做「真实密钥」的判定 —— 那需要密钥本体，而 CI 上没有、也不该有。
-          unzip -p "$APK" 'classes*.dex' > "$RUNNER_TEMP/dex.bin"
-          if grep -aoE 'oc_sk_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9]{32,}|ghp_[A-Za-z0-9]{20,}' "$RUNNER_TEMP/dex.bin"; then
-            echo "::error::包内出现疑似密钥形状，已中止发布"
-            exit 1
-          fi
+          bash tools/verify-apk.sh "$APK" --scan-secrets
+
+      - name: 暂存 release 资产
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          ASSET="tappet-$TAG-arm64-v8a.apk"
+          cp "$APK" "release-artifacts/$ASSET"
+          (cd release-artifacts && sha256sum "$ASSET" > "$ASSET.sha256")
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-artifacts
+          path: release-artifacts/
+          retention-days: 7
+
+  publish:
+    name: 发布 release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # 只在这一步创建 release
+      id-token: write # build provenance
+      attestations: write # 存 provenance attestation
+    steps:
+      - name: 校验 tag 形状
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法 tag: $TAG"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-artifacts
+          path: release-artifacts
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: release-artifacts/*.apk
+
+      - name: 写 job summary
+        run: |
+          set -euo pipefail
+          ASSET="tappet-$TAG-arm64-v8a.apk"
+          {
+            echo "### Release $TAG"
+            echo ""
+            echo "- APK: $(stat -c%s "release-artifacts/$ASSET") bytes"
+            echo "- SHA-256: \`$(cut -d' ' -f1 "release-artifacts/$ASSET.sha256")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 发 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          APK=android/app/build/outputs/apk/release/app-release.apk
           ASSET="tappet-$TAG-arm64-v8a.apk"
-          cp "$APK" "$ASSET"
-          sha256sum "$ASSET" > "$ASSET.sha256"
           NOTES="docs/releases/$TAG.md"
           # **幂等**：重跑时 release 可能已经存在（上一次跑到一半、或重新打过 tag）。
           # 以前这里直接 create，第二次必然失败在 "already exists"，而失败发生在
           # 「包已经签好、结构也验过」之后 —— 白跑一整轮。
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber "$ASSET" "$ASSET.sha256"
+            gh release upload "$TAG" --clobber "release-artifacts/$ASSET" "release-artifacts/$ASSET.sha256"
           else
             if [ -f "$NOTES" ]; then ARGS=(--notes-file "$NOTES"); else ARGS=(--generate-notes); fi
-            gh release create "$TAG" --title "$TAG" "${ARGS[@]}" "$ASSET" "$ASSET.sha256"
+            gh release create "$TAG" --verify-tag --title "$TAG" "${ARGS[@]}" "release-artifacts/$ASSET" "release-artifacts/$ASSET.sha256"
           fi

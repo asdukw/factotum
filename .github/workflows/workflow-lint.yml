@@ -1,0 +1,35 @@
+name: Workflow lint
+
+# 只在 workflow / action / Dependabot 配置变动时跑：actionlint 抓语法与表达式注入，
+# zizmor 抓未钉 SHA、危险触发器与权限边界。
+on:
+  pull_request:
+    paths: &workflow-paths
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/dependabot.yml"
+  push:
+    branches: [master]
+    paths: *workflow-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: actionlint + zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          version: 1.7.12
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          version: 1.31.1
+          # 不开 SARIF 上传，省掉 security-events: write；注解足够指出位置。
+          advanced-security: false
+          annotations: true

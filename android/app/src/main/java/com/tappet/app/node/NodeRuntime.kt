@@ -416,7 +416,7 @@ object NodeRuntime : NodeLineListener {
       ZipInputStream(BufferedInputStream(raw, 1 shl 16)).use { zip ->
         var entry = zip.nextEntry
         while (entry != null) {
-          val target = File(dir, entry.name)
+          val target = zipEntryTarget(dir, entry.name)
           if (entry.isDirectory) {
             target.mkdirs()
           } else {

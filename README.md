@@ -92,12 +92,14 @@ release notes. Only `arm64-v8a` is shipped.
 adb install -r tappet-v0.13.0-arm64-v8a.apk
 sha256sum -c tappet-v0.13.0-arm64-v8a.apk.sha256   # optional
 apksigner verify --print-certs tappet-v0.13.0-arm64-v8a.apk
+gh attestation verify tappet-v0.13.0-arm64-v8a.apk --repo asdukw/tappet
 ```
 
 `adb install -r` removes the enabled accessibility service. Re-enable it after installing.
 
-The APK is signed by CI on `v*` tags; signing material never enters the build, and no API key is
-compiled into the package.
+The APK is signed by CI on `v*` tags and carries a GitHub build-provenance attestation;
+`gh attestation verify` confirms it was produced by this repository's release workflow. Signing
+material never enters the build, and no API key is compiled into the package.
 
 > [!NOTE]
 > On ColorOS the first launch may show a "keep running" dialog. Accept it; the system may otherwise

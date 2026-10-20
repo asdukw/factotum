@@ -19,6 +19,7 @@ on:
       - "android/gradle/**"
       - ".gitmodules"
       - ".github/workflows/assemble.yml"
+      - ".github/actions/setup-build/**"
       - "!tools/**/*.md" # 只改 tools 下的文档不需要跑装配
   pull_request:
     paths: *assembly-paths
@@ -34,51 +35,18 @@ permissions:
 jobs:
   assemble:
     name: 装配 + 出包（不签名）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-      - uses: android-actions/setup-android@v4
-      - name: 缓存 NDK / CMake
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
-            ${{ env.ANDROID_HOME }}/cmake/3.31.6
-          key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
-      - name: 装 SDK 平台 / NDK / CMake
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.31.6"
-      - uses: gradle/actions/setup-gradle@v6
-      - name: 缓存 dsh 装配暂存
-        uses: actions/cache@v6
-        with:
-          path: android/.dsh-cache/runtime
-          key: v2-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/dsh-phone/**') }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
 
-      - name: 装配运行时（libnode + dsh）
-        run: |
-          pwsh -NoProfile -File tools/fetch-libnode.ps1
-          # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
-          # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
-          pwsh -NoProfile -File tools/fetch-rg.ps1
-          # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
-          # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
-          pwsh -NoProfile -File tools/fetch-sherpa.ps1
-          pwsh -NoProfile -File tools/bundle-dsh.ps1
-
-      - name: 出包
+      - name: 出包（debug + release）
         working-directory: android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --console=plain
 
 # 出包之后**验产物本身**，而不是只看构建退出码 —— tar 冒充 zip 那次，构建是成功的。
       - name: 验产物结构
@@ -87,42 +55,20 @@ jobs:
           # 按 glob 找 APK，而不是写死 app-debug.apk：签名配置一旦被设成 null，AGP 会产出
           # `app-debug-unsigned.apk`，写死路径只会得到一句 "No such file or directory"，
           # 看不出原因（真发生过一次）。
-          APK=$(ls android/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            echo "::error::出包步骤没产出任何 APK"
+          APK_DEBUG=$(find android/app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -print -quit)
+          APK_RELEASE=$(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)
+          if [ -z "$APK_DEBUG" ] || [ -z "$APK_RELEASE" ]; then
+            echo "::error::出包步骤没有同时产出 debug 与 release APK"
             exit 1
           fi
-          echo "APK: $APK"
-          ls -l "$APK"
-          # 必须已签名 —— 没配签名材料时 debug 变体应回落到 AGP 的默认 debug 签名。
-          # 未签名的包装不上，而这个错误在构建输出里是「成功」。
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
-          if ! "${BT}apksigner" verify "$APK" > /dev/null 2>&1; then
-            echo "::error::APK 未签名（$APK）—— 装不上"
-            exit 1
-          fi
-          # 失败时要能自己说明白：把 APK 里的 lib/ 与构建前的 jniLibs 都列出来
-          echo "--- APK 里的 lib/ ---"
-          unzip -l "$APK" | awk '{print $4}' | grep '^lib/' || echo "(一个都没有)"
-          echo "--- 构建前的 jniLibs ---"
-          ls -l android/app/src/main/jniLibs/*/ || echo "(jniLibs 是空的)"
-          # 这三个都是「缺了不会让构建失败、但装到设备上功能静默坏掉」的东西，所以逐个查。
-          # librg.so 是 v0.6.0 第一次出包时漏掉的那个：打包方式从「塞进运行时 zip」改成
-          # 「放 jniLibs」时，bundle-dsh 里那条「缺 rg 就 throw」的检查被一起删了，
-          # 而把 rg 放进 jniLibs 的 fetch-rg.ps1 没进 CI —— 于是构建成功、包是坏的。
-          for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
-            unzip -l "$APK" "$entry" > /dev/null || { echo "::error::APK 里缺 $entry"; exit 1; }
-          done
-          # 运行时资产必须是真 zip（头两个字节 PK）；v0.1.0 那次是 tar 冒充 zip，而构建是成功的
-          if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then
-            echo "::error::assets/dsh-runtime.zip 不是 zip —— 装到设备上会解压失败"
-            exit 1
-          fi
+          bash tools/verify-apk.sh "$APK_DEBUG"
+          # release 变体在 CI 上没有签名材料，AGP 会产出 unsigned 包；结构仍要验。
+          bash tools/verify-apk.sh "$APK_RELEASE" --allow-unsigned
 
       - name: 上传 APK（排障用）
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: assemble-debug-apk
           retention-days: 1
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/*/*.apk

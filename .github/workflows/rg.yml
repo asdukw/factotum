@@ -35,23 +35,39 @@ on:
         required: true
         default: "15.2.0"
 
+concurrency:
+  group: rg-${{ inputs.version || '15.2.0' }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write # 发 release 产物
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version || '15.2.0' }}
 
 jobs:
   build:
     name: 编 aarch64-linux-android 的 rg
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       NDK_VERSION: "29.0.14206865"
       # 与 android/app/build.gradle.kts 的 minSdk 对齐；NDK 里可用的最低 API level 是 21。
       ANDROID_API: "24"
     steps:
-      - uses: actions/checkout@v7
+      - name: 校验版本号
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法版本: $VERSION"; exit 1; }
 
-      - uses: android-actions/setup-android@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - name: 缓存 NDK
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
           key: android-ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
@@ -66,8 +82,6 @@ jobs:
           rustc --version
 
       - name: 交叉编译
-        env:
-          VERSION: ${{ inputs.version || '15.2.0' }}
         run: |
           set -euo pipefail
           NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -110,18 +124,45 @@ jobs:
           sha256sum rg-aarch64-linux-android > rg-aarch64-linux-android.sha256
           cat rg-aarch64-linux-android.sha256
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rg-artifacts
+          path: |
+            rg-aarch64-linux-android
+            rg-aarch64-linux-android.sha256
+          retention-days: 7
+
+  publish:
+    name: 发 release 产物
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # 只在这一步创建 release
+    steps:
+      - name: 校验版本号
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法版本: $VERSION"; exit 1; }
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: rg-artifacts
+          path: rg-artifacts
+
       - name: 发 release 产物
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || '15.2.0' }}
         run: |
           set -euo pipefail
           TAG="rg-$VERSION"
+          RG=rg-artifacts/rg-aarch64-linux-android
+          SHA=rg-artifacts/rg-aarch64-linux-android.sha256
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber rg-aarch64-linux-android rg-aarch64-linux-android.sha256
+            gh release upload "$TAG" --clobber "$RG" "$SHA"
           else
             gh release create "$TAG" \
               --title "ripgrep $VERSION (aarch64-linux-android)" \
               --notes "交叉编译给 Tappet 内嵌运行时用的 ripgrep。默认特性（无 pcre2），自包含，只依赖 bionic 的 libc/libdl。供 tools/fetch-rg.ps1 按版本下载，产物不入库。" \
-              rg-aarch64-linux-android rg-aarch64-linux-android.sha256
+              "$RG" "$SHA"
           fi

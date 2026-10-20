@@ -2,19 +2,24 @@ name: CodeQL
 
 # GitHub 自带的语义级扫描（公开仓库免费）。与 ktlint/detekt 的分工：那两个看风格与坏味道，
 # 这个找数据流上的安全问题（注入、路径穿越、不安全的加密用法等）。
-# 只改文档不跑 CodeQL：没有可分析的代码变更。定时扫描不受影响。
+# CodeQL 只分析 Java/Kotlin：只有 android/ 或本 workflow 变更才需要跑。
+# 定时扫描不受路径过滤影响。
 on:
   push:
     branches: [master]
-    paths-ignore: &docs-paths
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
+    paths: &code-paths
+      - "android/**"
+      - ".github/workflows/codeql.yml"
   pull_request:
-    paths-ignore: *docs-paths
+    paths: *code-paths
   schedule:
     - cron: "0 3 * * 1" # 每周一 03:00 UTC：上游查询集更新后也能重扫
   workflow_dispatch:
+
+# 连续推送时取消上一次：CodeQL 单次就要几分钟，排队等旧任务没有意义。
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -23,21 +28,27 @@ jobs:
   analyze:
     name: CodeQL（java-kotlin）
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
       actions: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - run: |
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36"
-      - uses: github/codeql-action/init@v4
+      # 缓存依赖与 wrapper；编译本身仍要 --rerun-tasks，CodeQL 才能观察到。
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          validate-wrappers: true
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: java-kotlin
       # 不能用 autobuild：它会去跑 assembleDebug，而那个需要按 pinned 版本拉来的 libnode，
@@ -46,6 +57,6 @@ jobs:
       - name: 编译（供 CodeQL 取数）
         working-directory: android
         run: ./gradlew :app:compileDebugKotlin --no-build-cache --rerun-tasks --console=plain
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: /language:java-kotlin

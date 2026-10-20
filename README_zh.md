@@ -85,11 +85,13 @@ Tappet 对「验到什么程度」说得比较直白：**单测通过 ≠ 真机
 adb install -r tappet-v0.13.0-arm64-v8a.apk
 sha256sum -c tappet-v0.13.0-arm64-v8a.apk.sha256   # 可选：确认包没被换过
 apksigner verify --print-certs tappet-v0.13.0-arm64-v8a.apk
+gh attestation verify tappet-v0.13.0-arm64-v8a.apk --repo asdukw/tappet
 ```
 
 `adb install -r` 会摘掉已启用的无障碍服务，装完重新开一次即可。
 
-APK 由 CI 在 `v*` tag 上用 release keystore 签名；密钥不参与构建，
+APK 由 CI 在 `v*` tag 上用 release keystore 签名，并附带 GitHub build-provenance；
+`gh attestation verify` 可以确认它确实由本仓库的 release workflow 构建。密钥不参与构建，
 包内不含、也不可能含编译进去的 API key。
 
 > [!NOTE]

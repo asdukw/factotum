@@ -196,9 +196,19 @@ Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Go
 在真机上被一个现象否掉：用户点开麦克风**什么都没说**，识别器照样「听」出一句像模像样的
 话（实测：静音 5 秒 → 7~11 个字），而**调阈值堵不住** —— 收紧之后重测，安静房间里的
 环境噪声一样越线，还是 7 个字。这正是 whisper 系模型众所周知的幻觉，公认的主修法就是
-**VAD 前置过滤**（faster-whisper 的 `vad_filter`、WhisperX 都这么干），而 sherpa-onnx
-恰好自带。换成 VAD 之后「静音喂出幻觉文本」**结构上不可能**：环境噪声根本不会被切成段，
-也就没有东西可喂。
+**VAD 前置过滤**，而 sherpa-onnx 恰好自带。换成 VAD 之后「静音喂出幻觉文本」**结构上
+不可能**：环境噪声根本不会被切成段，也就没有东西可喂。
+
+这不是拍脑袋定的，两处上游依据：
+
+- **sherpa-onnx 官方发布「VAD + non-streaming speech recognition」的 Android APK**
+  （<https://k2-fsa.github.io/sherpa/onnx/vad/apk-asr.html>），列表里每一个都是
+  `silero_vad.onnx` + 一个非流式识别模型 —— 与本仓库这套是同一个形状。
+- **openai/whisper discussion #1606「Hallucination on audio with no speech」**
+  （<https://github.com/openai/whisper/discussions/1606>）：报告者的现象与这里遇到的
+  一模一样，他用 prompt 压制**没用**（prompt 会被 decoder 当成上下文复读）。那里给的
+  流水线是 `microphone stream -> VAD / silence gate -> only transcribe chunks that
+  contain speech`，并点名 Silero VAD、以及「没有语音帧就返回空、**别调模型**」。
 
 调用的是上游 `vad-with-non-streaming-asr.py` 那个循环：喂 512 样本窗口 →
 `empty()` / `front()` / `pop()` 取走说完的段 → 段样本交给识别器。

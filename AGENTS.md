@@ -714,16 +714,21 @@ adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
 
 带空格的参数必须把整条 `am broadcast` 再用 `adb shell "..."` 包一层引号，否则会被设备 shell 拆词。
 
-## 提交纪律（2026-10-03 用户约定；2026-10-18 改为 PR 流程）
+## 提交纪律（2026-10-03 用户约定；2026-10-21 明确：**分支开发，合并回 master**）
 
 - **完成一个可验证的里程碑时自行提交**，不要攒大改动等用户开口。判据：构建 / 单测通过，
   或真机验证完成，即提交一个内聚的 commit。
-- **master 已开启分支保护，改动走 PR**：从 master 拉分支 → 提交 → 开 PR → CI 三项检查
-  （静态检查 / 单元测试 / 离线自检）通过 → 合并。保护是 GitHub **Ruleset**（不是旧版 branch
-  protection）：禁删除 / 禁 force push / 要求 PR / 要求三项 CI 且 strict。**仓库管理员被显式
-  列为 bypass actor（`bypass_mode: always`），可以直推 master** —— 这是个人项目的刻意选择；
-  非 admin 的贡献者仍会被远端拒绝。`v*` tag 的 release 不受影响。
-  仓库默认分支叫 **master**（不是 main）。
+- **一律在新分支上开发，不在 master 上直接改、直接提交**：先 `git switch -c <feat|fix|docs>/<主题>`
+  （开 worktree 本身就满足这一条）。**不能因为「管理员能直推」就省掉分支** —— 那是两件事：
+  分支管的是「开发在哪里发生」，直推管的是「合并之后谁还需要批准」。
+  master 上的每个提交都应当是**从分支合并进来的、已完成的一步**，不是开发中的半成品。
+  （原先这条写成「改动走 PR」，却被同一 bullet 里的「管理员可直推」架空，
+  实际被读成「可以在 master 上开发」—— 2026-10-21 澄清。）
+- **开发完成之后合回 master**：本地 `git merge --no-ff <分支>` 再推，或者开 PR 让远端合并，
+  两条都行（需要别人看的时候走 PR）。**管理员可以直推 master**（GitHub Ruleset 的
+  bypass actor，`bypass_mode: always`），直推的是**合并后的结果**；分支保护（禁删除 /
+  禁 force push / 要求 PR / 要求三项 CI 且 strict）对非 admin 的贡献者仍然生效。
+  `v*` tag 的 release 不受影响。仓库默认分支叫 **master**（不是 main）。
 - **合并 PR 与 push 一样，必须由用户逐次明确授权**：「改完就提交」是默认动作，
   「开 PR / 合并 / 推上去」不是。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、

@@ -9,6 +9,12 @@ package com.tappet.app.voice
 object VoiceModelKinds {
   const val TTS = "tts"
   const val ASR = "asr"
+
+  /**
+   * 标点模型（[PunctModelCatalog]）。**与 [ASR] 分开**：它不是某一个识别模型的附属物，
+   * 而是「装一次、谁需要谁用」的共享件 —— 见 [PunctModel] 的注释。
+   */
+  const val PUNCT = "punct"
 }
 
 /**
@@ -29,6 +35,22 @@ object VoiceModelKinds {
 interface VoiceModel {
   val id: String
   val label: String
+
+  /**
+   * 装到哪一类目录下（[VoiceModelKinds] 的字面量）。**存储身份**：改它 = 设备上已经下好的
+   * 模型找不到（与 AGENTS.md 里那几组 prefs / Keystore 别名同一条规矩）。
+   */
+  val kind: String
+
+  /**
+   * 装这个模型时**一起装**的伴生模型。
+   *
+   * 标点模型就是这样一个东西：它是 paraformer 那档的必需品（那档不产标点），但
+   * 「要不要标点」不是一个该由用户回答的问题 —— 所以它不做成设置页里的一个选项，
+   * 而是跟着识别模型一起下来。[VoiceModelInstaller] 按顺序装，**已经装好的跳过**，
+   * 所以老用户升级之后点一次「补下」只会拉缺的那一份。
+   */
+  val companions: List<VoiceModel> get() = emptyList()
 
   /** 一行说明，直接显示在设置页的模型列表里（体积 / 语言 / 速度这些取舍）。 */
   val summary: String

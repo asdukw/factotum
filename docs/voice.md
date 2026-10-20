@@ -252,9 +252,19 @@ Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Go
 在真机上被一个现象否掉：用户点开麦克风**什么都没说**，识别器照样「听」出一句像模像样的
 话（实测：静音 5 秒 → 7~11 个字），而**调阈值堵不住** —— 收紧之后重测，安静房间里的
 环境噪声一样越线，还是 7 个字。这正是 whisper 系模型众所周知的幻觉，公认的主修法就是
-**VAD 前置过滤**（faster-whisper 的 `vad_filter`、WhisperX 都这么干），而 sherpa-onnx
-恰好自带。换成 VAD 之后「静音喂出幻觉文本」**结构上不可能**：环境噪声根本不会被切成段，
-也就没有东西可喂。
+**VAD 前置过滤**，而 sherpa-onnx 恰好自带。换成 VAD 之后「静音喂出幻觉文本」**结构上
+不可能**：环境噪声根本不会被切成段，也就没有东西可喂。
+
+这不是拍脑袋定的，两处上游依据：
+
+- **sherpa-onnx 官方发布「VAD + non-streaming speech recognition」的 Android APK**
+  （<https://k2-fsa.github.io/sherpa/onnx/vad/apk-asr.html>），列表里每一个都是
+  `silero_vad.onnx` + 一个非流式识别模型 —— 与本仓库这套是同一个形状。
+- **openai/whisper discussion #1606「Hallucination on audio with no speech」**
+  （<https://github.com/openai/whisper/discussions/1606>）：报告者的现象与这里遇到的
+  一模一样，他用 prompt 压制**没用**（prompt 会被 decoder 当成上下文复读）。那里给的
+  流水线是 `microphone stream -> VAD / silence gate -> only transcribe chunks that
+  contain speech`，并点名 Silero VAD、以及「没有语音帧就返回空、**别调模型**」。
 
 调用的是上游 `vad-with-non-streaming-asr.py` 那个循环：喂 512 样本窗口 →
 `empty()` / `front()` / `pop()` 取走说完的段 → 段样本交给识别器。
@@ -292,6 +302,10 @@ Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Go
 段是**掐掉首尾静音**的（84,384 < 89,784），送进识别器的音频比录到的短 —— 这也是它更快更准的一部分原因。
 VAD 本身的耗时可以忽略：5.6 秒音频 20~53ms。
 
+切出多段时**每段各自识别、再把文本拼起来**（§10 的「按段识别」）：`5-henan.wav` 那两段是
+河南话里两个独立的句子，分开识别本来就更合理；而一句话被 `max_speech` 从中间切开时，
+分开识别会丢掉跨段上下文 —— 这是那个取值的代价，见 §10。
+
 ## 8. 识别模型（三条）与真机实测
 
 地址都是 k2-fsa/sherpa-onnx 的 `asr-models` release 资产（与朗读模型、应用内更新同一个
@@ -317,6 +331,18 @@ FunASR 那两条的授权**不是 OSI 标准许可**：条款是可自由使用 
 whisper-tiny 在英文样例上与归档里的参考文本**逐字一致**（`test_wavs/trans.txt`），
 中文这一档则明显不如另外两个，且慢几倍 —— 音频越长差得越多（自回归解码）。
 
+**同一段音频过完整路径**（`op VAD`：VAD → 逐段识别 → 拼起来 → 按需补标点，
+`0.wav`，VAD 切出 1 段 84,384 样本）：
+
+| 模型 | 解码 | 补标点 | 输出 |
+|---|---|---|---|
+| paraformer-zh-small | 48ms | **on**（38→41 字，9ms） | 对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢嗯。 |
+| sense-voice-int8 | 125ms | off（自带） | 对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。 |
+| whisper-tiny | 279ms | off（自带） | 对我做了介,我想说的是大家如果对我的究感趣呢 |
+
+标点模型（CT-Transformer）给 paraformer 补出来的结果与 sense-voice **自己带的**标点几乎
+逐字相同 —— 这是「标点这一环补上了」最直接的证据。
+
 **踩过的坑：whisper 的语种写死会静默做错。** 一开始给它写 `language = "zh"`，
 英文音频被硬解成中文（输出「前來的大,在前來的大,…」），**不报错**。
 sherpa 的原话是「多语言模型不给语种就从音频里推断」，所以这里留空。
@@ -333,6 +359,74 @@ sherpa 的原话是「多语言模型不给语种就从音频里推断」，所�
 而它是 CTC 非自回归、更快。留着 whisper 的理由是「与 whisper 同源」对用户更好懂、
 覆盖面也更广；真要换，改 `AsrModelCatalog` 一处即可。
 
+**结果里除了文本还有两个判定**（真机实测：paraformer 上两个字段是空的；sense-voice 是
+`<|zh|>` 与 `<|Speech|>`；whisper **只填语种**、而且写成不带尖括号的 `zh`）：
+
+| 字段 | 用途 |
+|---|---|
+| `lang` | 模型自己判的语种。**「whisper 把英文硬解成中文还不报错」那个坑的对照面** —— 出了怪结果时，日志里能看出模型认为这是什么语言 |
+| `event` | 音频事件。非语音的那些（`<|BGM|>` / `<|Applause|>` / `<|Laughter|>` …）由 `RecognizedText.clean` **不看文本直接判空** —— 模型对音乐段经常一边打事件记号、一边吐出一句像模像样的「歌词」，那正是要挡的东西 |
+
+两个字段都只进日志与判定，不进用户可见文本。**日志里的记号先过 `normalizeMarker`**
+（`<|zh|>` 与 `zh` 归一成 `zh`）：两种写法是真的都会出现，而这个字段的用处就是跨模型对比。
+
+判定是**只认非语音的那几个**（而不是「不是 `<|Speech|>` 就当噪声」）：上游哪天加一个新的
+语音类记号时，前者继续认它说的是话，后者会把正常说话判成噪声，而用户只能看到「没听清」。
+
+## 8.1 标点模型（跟着 Paraformer 一起装）
+
+paraformer-zh-small 的输出是**没有标点的裸文本**（真机实测：
+「对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢嗯」—— 一整句只有语气词把它
+断开），而这句话是要发给 agent 的指令，标点直接决定它怎么断句。另外两档不需要：
+sense-voice 的标点与数字正则化烘在模型里（`useInverseTextNormalization`，同一段音频它回的是
+「对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢嗯。」），whisper 自己会吐逗号。
+
+| | 值 |
+|---|---|
+| 模型 | CT-Transformer（中英），`sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8` |
+| 体积 | 归档 61.7MB，解出来 72MB 的 `model.int8.onnx`（fp32 那份 281MB，不收） |
+| 授权 | **Apache-2.0**（ModelScope 上 `iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch` 的 License 字段） |
+| 下载域 | 同一个仓库，但**另一个 release tag**（`punctuation-models`，不是 `asr-models`）—— 那条红线管的是域，不是 tag |
+
+**设置页里没有它的位置** —— 「要不要标点」不是一个该由用户回答的问题，它只取决于识别模型
+选的是哪个。所以它是一条数据（`AsrEngineSpec.needsPunctuation` → `AsrModel.companions`），
+`VoiceModelInstaller` 装本体时按顺序一起装。四件配套的事：
+
+- **仍然有自己的种类与目录**（`VoiceModelKinds.PUNCT`）：它是「装一次、谁需要谁用」的共享件，
+  挂在某个识别模型目录下的话，将来两个模型共用一份标点时用户要重下同样的 62MB。
+  `VoiceModel.kind` 因此由模型自己声明，而不是沿用调用方传进来的那个 ——
+  伴生模型装到的是**另一类**目录。
+- **已经装好的跳过**：老用户升级后 Paraformer 早就在了、只少了标点，那一条会显示
+  「还差 标点（中英） 61.7 MB」与一个「补下」按钮，点一次只拉缺的那一份（不会把 82MB
+  的识别模型重下一遍）。
+- **删掉 Paraformer 会顺带清掉没人再需要的标点模型**：不然设备上留下 62MB 谁也用不上、
+  界面上又看不到的东西。判据是「还有没有**别的装着的**模型需要它」，所以将来共用时
+  删其中一个不会把另一个的标点带走。
+- **它是改善，不是前置条件**：没装、引擎起不来、补出来是空的 —— 任何一种都只是原样返回，
+  语音输入照常可用。所以 `LocalPunctuator` 的失败处理与 `LocalRecognizer` 不同：那边失败
+  等于这次输入没成，这边只是少几个逗号。
+
+**标点是在段拼起来之后补一次**，不是逐段补：标点模型要看到完整的句子才知道该在哪断，
+逐段补会在段边界上塞进句号，而那里往往正是一句话的中间。
+
+**native 侧不用重新编译**：`Java_com_k2fsa_sherpa_onnx_OfflinePunctuation_*` 这些符号
+**本来就在** `libsherpa-onnx-jni.so` 里（`strings` 扫过），所以只差一层 vendor 的 Kotlin 声明
+（`com/k2fsa/sherpa/onnx/OfflinePunctuation.kt`）。流式识别（`OnlineRecognizer`）同理。
+
+## 8.2 两个「看着能用、其实是死旋钮」的字段（v1.13.8 源码确认）
+
+`OfflineRecognizerConfig` 里有两个字段，直觉上正好对上本仓库的两个已知失败模式，
+**但它们对这三个模型一个都不生效**。写在这里是为了别再加回来：
+
+| 字段 | 为什么不生效 |
+|---|---|
+| `decodingMethod = "modified_beam_search"` | paraformer / sense-voice / whisper 三个实现里都是 `if (decoding_method == "greedy_search") { ... } else { SHERPA_ONNX_EXIT(-1); }`（`offline-recognizer-{paraformer,sense-voice,whisper}-impl.h`）。填别的**不是退化成贪心，是直接退出进程** —— 内嵌 Node 与宿主同进程，退出就是 App 崩。beam search 只有 transducer 系有 |
+| `blankPenalty` | 只有 transducer 用（它被塞进 `offline-recognizer-transducer-impl.h` 的两个解码器）。想靠它压 whisper 的空转，得先换成 transducer 模型 |
+
+反过来，**`ruleFsts` / `ruleFars` / `hr` 是活的**：它们在基类
+（`offline-recognizer-impl.cc` 的 `Init`）里统一构造，对所有模型生效。要补 ITN 或同音字
+替换走那三个字段，不要碰上面两个。
+
 ## 9. 真机怎么验（不用开口）
 
 识别这条路上，「模型下没下好」「native 引擎起不起得来」「三种模型的配置拼得对不对」
@@ -344,20 +438,37 @@ sherpa 的原话是「多语言模型不给语种就从音频里推断」，所�
 adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op MODELS"
 
 # 走和设置页完全相同的那条链路装模型（下载 → 解包 → 原子换目录）
+# 识别模型与标点模型都走这一条，给目录里的 id 即可（标点那条是 punct_ct_transformer_zh_en）
 adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op INSTALL --es model paraformer_zh_small"
 
 # 把一段 WAV 喂给识别引擎；--ez logPayload true 才打印文本
 adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op ASR --es wav <设备上的路径> --es model paraformer_zh_small --ez logPayload true"
 
-# 把一段 WAV 推过 **VAD**，再走一遍「VAD 认过的段 → 识别」的真实路径
-# 打的是结构：input / segments / speech_samples / 每段样本数；文本同样要 logPayload
+# 把一段 WAV 推过 **VAD**，再走一遍「VAD 认过的段 → **逐段**识别 → 拼起来 → 补标点」的真实路径
+# 打的是结构：input / segments / speech_samples / 每段的样本数与它自己的 lang / event；文本同样要 logPayload
 adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op VAD --es wav <设备上的路径> --ez logPayload true"
+
+# 只验标点模型：不经过识别、不经过麦克风，给一段文本看它补出什么
+adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op PUNCT --es text '对我做了介绍啊那么我想说的是呢' --ez logPayload true"
 ```
+
+样例音频**就在装好的模型目录里**（`files/asr-models/<id>/test_wavs/`），不必从 PC 推：
+App 读自己的私有目录没有障碍，所以直接给绝对路径即可 ——
+`--es wav /data/user/0/com.tappet.app/files/asr-models/paraformer_zh_small/test_wavs/0.wav`。
+（`adb push` 那条路仍然要按下面第 1 点走，那是**别的进程**的文件读不到。）
 
 `op VAD` 是**换掉手写端点判定之后加的**：那条路原来只能靠人对着手机说话才能验，
 而样例音频是真实中文语音，喂进去就能回答「VAD 认不认得出人声」「切成了几段」
 「切出来的段交给识别器还出不出字」。**这条探针第一次跑就抓到了 `flush()` 缺失**
 （真实语音切出 0 段）—— 没有它，这个 bug 会一路走到用户手上，表现是「说完立刻按停，话没了」。
+
+**`op VAD` 按段识别，与真实路径一致**：早先它把切出来的段拼成一条音频再解码，
+而 `VoiceInput` 早就改成逐段做了 —— 探针要是照旧写法，它验的就不是用户遇到的东西。
+这条规矩（**探针必须复现真实调用形态**）与 Termux 那边「脚本要按 `bash -lc <文本>` 跑」
+是同一条。
+
+`op PUNCT` 单独存在是因为标点这条路有**三个独立的失败点**：模型没装、native 起不来、
+补出来的标点不对 —— 混在一次识别里看日志分不清是哪一个。
 
 样例音频就在模型归档里（`test_wavs/`），`adb push` 上去即可。**两个坑**：
 
@@ -378,15 +489,29 @@ adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappe
 ## 10. 已知边界
 
 - **不是流式**：说完才出字，不是边说边出。要流式得换 streaming 模型（zipformer 那类）。
+  native 侧不用重编（`OnlineRecognizer` 的 JNI 就在现有的 .so 里），代价在模型：
+  流式只有 transducer 系，中文准确率通常不如 paraformer / sense-voice，还要多下一个模型。
+  顺带一提，**hotwords（让模型认识 App 名 / 联系人名）也只支持 transducer** —— 对一个要听
+  「打开某某 App」的 agent，这一条可能比流式本身更值，但两者绑在同一个决定上。
+- **按段识别，段与段之间没有上下文**：VAD 每吐出一段就送去识别（边录边出结果），
+  收尾只需等最后那一段。代价是一句话被 `max_speech`（10 秒）从中间切开时，两半各自解码，
+  边界上可能多一个断句。早先的写法是把整场音频拼起来一次解码（上下文连贯），
+  但连续说话到 90 秒上限时就是**一次 decode 90 秒音频**：延迟与内存全压在最后一下。
 - **一次一段**：不做连续听写 —— 输入框里装的是**一条指令**，不是聊天记录。
 - **不做说话人区分、不做时间戳**：这是「把一句话变成指令」，不是转写会议。
-  （要这些的是 PC 侧的 WhisperX 那类工具，不是 App 里的事。）
+  （要这些的是 PC 侧的 WhisperX 那类工具，不是 App 里的事。`SpeechSegment.start` 那条
+  时间轴在绑定里是现成的，但这条路上用不到。）
 - **识别结果只进输入框，不自动发送**：用户要能改。追加而不是覆盖，连说两段也接得上。
 - **引擎常驻内存**（82–239MB）：按模型 id 缓存，换模型 / 删模型时才释放。
+  标点模型（72MB）另算一份。
+- **标点跟着 Paraformer 一起装**（61.7MB，设置页里没有它单独的入口）：paraformer 那档出来的
+  是没有断句的一整句，标点模型补上逗号句号；另外两档自带标点，不会下这一份。
+  老用户升级后在那一条上会看到「补下」。见 §8.1。
 - **识别模型不必手动选**：装好任意一个就能用（`AsrModelCatalog.selectedId` 会回落到第一个
   装好的）。**踩过**：以前只认设置页点过的那条，于是三个模型都装着、文件也齐，
   点麦克风却回一句「还没下载识别模型」—— 与事实相反。
 - **停顿 0.8 秒算说完**（VAD 的 `min_silence`）：换气久一点会被截断。再按一次麦克风
   接着说就行（结果**追加**到输入框，不覆盖）。
-- **一句话超过 10 秒会被切成两段**：两段分别识别再拼起来，边界上可能多一个空格或断句。
 - **不采集、不上传**：没有云端 ASR，音频不出设备、不落盘。
+- **「边说边出」目前没有**：按段识别让**总**等待时间变短（前几段在录音期间就识别完了），
+  但界面上仍然是「说完 → 一次性出文本」—— 输入框里不会先出现半句话。要那个效果是流式的事。

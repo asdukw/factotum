@@ -233,6 +233,15 @@ key must match the profile key exactly. Full rules: `docs/providers.md`.
 | `ask_user_question` | `docs/user-questions.md` | — |
 | On-device inference | `docs/on-device-inference.md` | — |
 
+STT invariants that break quietly: recognition runs **per VAD segment** (`RecognizedText.joinSegments`
+joins the texts — never concatenate the session into one decode), and the punctuation model is a
+**companion** of Paraformer (`AsrModel.companions`) that installs with it and has no settings entry.
+`decodingMethod` / `blankPenalty` are dead knobs for these three models (only `greedy_search` is
+accepted; anything else exits the process) — details in `docs/voice.md` §8.1–8.2.
+
+Downloads fail closed and stop: no auto-retry, actionable reason via `UpdateHttp.failReason`, and a
+short body is an error (`TRANSFER_TRUNCATED`), not a finished file. See `docs/pitfalls.md`.
+
 ### 7.6 Release
 
 Bump `versionCode` / `versionName` → write `docs/releases/<tag>.md` and update `CHANGELOG.md` →
@@ -335,6 +344,7 @@ Full table: `docs/pitfalls.md`.
 | `type_text` fails with an unreadable tree | Read the code: `text_no_channel` → tap the field first |
 | `ERR_MODULE_NOT_FOUND` after install | `bundle-dsh.ps1` ran under PowerShell 5.1 → use `pwsh` 7 |
 | Push rejected with `GH013` | Distinguish PR rules from push protection; the latter means GitHub sees a secret |
+| Model download says the network is unreachable | Phone has no VPN → tap **retry** on that row; it resumes from the partial file. No auto-retry by design (`UpdateHttp.failReason`) |
 
 ## 11. Docs index
 

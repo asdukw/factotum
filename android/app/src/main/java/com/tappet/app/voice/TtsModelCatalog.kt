@@ -34,6 +34,8 @@ data class TtsModel(
   override val license: String,
   override val licenseNote: String,
 ) : VoiceModel {
+  override val kind: String get() = VoiceModelKinds.TTS
+
   /** 装好了的判据：模型、词表、词典与三个文本正则化 FST 都在。 */
   override val requiredFiles: List<String>
     get() = listOf(modelFile, tokensFile, lexiconFile) + ruleFsts

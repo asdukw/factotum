@@ -124,6 +124,22 @@ class UpdateDownloaderResumeTest {
     assertTrue("取消后应当留下半截文件，实际 $written", written in 1 until body.size.toLong())
   }
 
+  @Test
+  fun `a connection closed mid-body fails instead of leaving a short file`() = runBlocking {
+    val body = body(64 * 1024)
+    // 服务器声明了完整长度，却只发一半就把连接关了 —— 而 `read` 对「下完了」与「断了」
+    // 给的是同一个 -1。不拦的话半截文件会被当成完整的一份：更新那边哈希会兜住（白下几十 MB），
+    // 模型那边 bzip2 解包失败、报的却是「归档坏了」。
+    val server = serve(body, truncateTo = body.size / 2)
+    val part = tempFile()
+
+    val error = runCatching { UpdateDownloader.fetchInto(server.url, part, tempFile(), {}) }.exceptionOrNull()
+
+    assertEquals(UpdateDownloader.TRANSFER_TRUNCATED, error?.message)
+    // 半截文件要**留着**：它是下一次续传的起点（与取消那条同一条规矩）。
+    assertEquals((body.size / 2).toLong(), part.length())
+  }
+
   // --- 测试脚手架 ---
 
   private class TestServer(val url: String, val ranges: MutableList<String?>, val server: HttpServer)
@@ -133,6 +149,9 @@ class UpdateDownloaderResumeTest {
    *
    * 关键点是 **206 的 `Content-Length` 只算剩余长度** —— 真实服务器就是这么做的，
    * 而本地那份已经落盘的字节要由客户端自己加上去（见 `totalBytes`）。
+   *
+   * [truncateTo] 只发这么多字节就关连接，但**声明的长度仍是完整的** —— 用来模拟
+   * 「代理断了 / 服务器中途挂了」那一种。
    */
   private fun serve(
     body: ByteArray,
@@ -140,12 +159,13 @@ class UpdateDownloaderResumeTest {
     supportsRange: Boolean = true,
     chunkBytes: Int = 0,
     chunkDelayMs: Long = 0,
+    truncateTo: Int = 0,
   ): TestServer {
     val ranges = mutableListOf<String?>()
     val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
     server.createContext("/apk") { exchange ->
       ranges += exchange.requestHeaders.getFirst("Range")
-      respond(exchange, body, etag, supportsRange, chunkBytes, chunkDelayMs)
+      respond(exchange, body, etag, supportsRange, chunkBytes, chunkDelayMs, truncateTo)
     }
     server.executor = java.util.concurrent.Executors.newCachedThreadPool()
     server.start()
@@ -160,6 +180,7 @@ class UpdateDownloaderResumeTest {
     supportsRange: Boolean,
     chunkBytes: Int,
     chunkDelayMs: Long,
+    truncateTo: Int,
   ) {
     val range = exchange.requestHeaders.getFirst("Range")
     val ifRange = exchange.requestHeaders.getFirst("If-Range")
@@ -173,14 +194,15 @@ class UpdateDownloaderResumeTest {
       return
     }
     val slice = body.copyOfRange(start, body.size)
+    val send = if (truncateTo > 0) minOf(truncateTo, slice.size) else slice.size
     exchange.sendResponseHeaders(if (start > 0) 206 else 200, slice.size.toLong())
     exchange.responseBody.use { out ->
       if (chunkBytes <= 0) {
-        out.write(slice)
+        out.write(slice, 0, send)
       } else {
         var at = 0
-        while (at < slice.size) {
-          val end = minOf(at + chunkBytes, slice.size)
+        while (at < send) {
+          val end = minOf(at + chunkBytes, send)
           out.write(slice, at, end - at)
           out.flush()
           at = end

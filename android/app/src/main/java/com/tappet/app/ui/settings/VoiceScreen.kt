@@ -287,7 +287,12 @@ private fun ModelRow(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-          text = "授权：${model.model.license} —— ${model.model.licenseNote}",
+          // 伴生模型（标点那种）也是用户要下的东西，它的授权同样得显示在下载按钮旁边 ——
+          // 它现在没有自己的一行，所以并到本体这一行里。只写许可名：完整条款在
+          // `PunctModelCatalog` 的 `licenseNote` 里，那一条只对开发者有意义。
+          text =
+            "授权：${model.model.license} —— ${model.model.licenseNote}" +
+              model.model.companions.joinToString("") { "；另含 ${it.label}（${it.license}）" },
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -303,7 +308,8 @@ private fun ModelRow(
         onSelect = onSelect,
       )
     }
-    if (installing != null) {
+    // 失败时不画进度条：那一条已经结束了，留着一条走到一半的进度条会让人以为还在下。
+    if (installing != null && installing.error == null) {
       Spacer(Modifier.height(8.dp))
       ModelProgress(installing)
     }
@@ -325,10 +331,21 @@ private fun ModelAction(
   onSelect: () -> Unit,
 ) {
   when {
+    // 失败：同一个位置直接变成「重试」。用户刚看完「连不上 github.com」，下一步动作就是
+    // 开 VPN 再点一次 —— 不该先让他点「取消」把错误清掉（以前这里就停在一个写着「取消」的
+    // 按钮上，语义和下一步动作正好相反）。
+    installing?.error != null -> Button(onClick = onInstall) { Text("重试") }
+
     installing != null -> TextButton(onClick = onCancel) { Text("取消") }
 
+    // 本体没装：一次把伴生的也下了，按钮上的数字是两样加起来 —— 用户不必知道里面有两份。
     !model.installed ->
-      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.model.sizeBytes)}") }
+      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.missingBytes)}") }
+
+    // 本体装好了、只差伴生的那几样（老用户升级后的情形）：按钮写「补下」而不是「下载」，
+    // 免得看着像是要把已经装好的那份重来一遍。装的时候已经装好的会被跳过。
+    model.missingCompanions.isNotEmpty() ->
+      Button(onClick = onInstall) { Text("补下 ${formatMegabytes(model.missingBytes)}") }
 
     selected -> TextButton(onClick = onDelete) { Text("删除") }
 
@@ -360,9 +377,14 @@ private fun ModelProgress(installing: VoiceModelInstaller.State) {
 private fun modelSubtitle(model: VoiceViewModel.ModelUi): String {
   val size =
     when {
+      model.installed && model.missingCompanions.isNotEmpty() ->
+        "还差 ${model.missingCompanions.joinToString("、") { it.label }} ${formatMegabytes(model.missingBytes)}"
+
       model.installed -> "已下载 ${formatMegabytes(model.installedBytes)}"
+
       model.partialBytes > 0 -> "已下载 ${formatMegabytes(model.partialBytes)}，会接着下"
-      else -> "需要下载 ${formatMegabytes(model.model.sizeBytes)}"
+
+      else -> "需要下载 ${formatMegabytes(model.missingBytes)}"
     }
   return "${model.model.summary} · $size"
 }

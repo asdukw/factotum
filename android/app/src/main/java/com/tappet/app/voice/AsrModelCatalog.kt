@@ -24,7 +24,19 @@ data class AsrModel(
   override val licenseNote: String,
   val engine: AsrEngineSpec,
 ) : VoiceModel {
+  override val kind: String get() = VoiceModelKinds.ASR
+
   override val requiredFiles: List<String> get() = engine.requiredFiles
+
+  /**
+   * 这一档不产标点时，标点模型**跟着它一起装**。
+   *
+   * 「要不要标点」不是一个该由用户回答的问题：它只取决于识别模型选的是哪个，做成设置页里的
+   * 一个选项等于把「哪档需要标点」这个内部知识推给用户，而他既不知道也不该知道。
+   * 所以它是一条数据（[AsrEngineSpec.needsPunctuation]），不是一个开关。
+   */
+  override val companions: List<VoiceModel>
+    get() = if (engine.needsPunctuation) PunctModelCatalog.ALL else emptyList()
 }
 
 /**
@@ -34,6 +46,15 @@ data class AsrModel(
 sealed interface AsrEngineSpec {
   /** 装好了的判据（相对模型目录的文件名）。 */
   val requiredFiles: List<String>
+
+  /**
+   * 这个引擎的输出**本身产不产标点**。`true` = 识别完之后再过一遍标点模型
+   * （[PunctModelCatalog]），没装标点模型就原样返回。
+   *
+   * 声明成必须实现的属性而不是默认 `false`：这是「换一个模型」时最容易漏掉的一格，
+   * 漏掉的表现是输入框里出现一整句没有断句的中文，而没人会想到那是模型选型的问题。
+   */
+  val needsPunctuation: Boolean
 
   /**
    * Paraformer：单文件 + 词表。中文，非自回归（一次前向出整句），手机上最快的一档。
@@ -47,6 +68,12 @@ sealed interface AsrEngineSpec {
     val tokensFile: String,
   ) : AsrEngineSpec {
     override val requiredFiles: List<String> get() = listOf(modelFile, tokensFile)
+
+    /**
+     * **要**：paraformer-zh-small 吐的是没有标点的裸文本（真机实测：一整句下来只有语气词
+     * 把它断开）。这是唯一一条需要标点模型的路线。
+     */
+    override val needsPunctuation: Boolean get() = true
   }
 
   /**
@@ -62,6 +89,9 @@ sealed interface AsrEngineSpec {
     val inverseTextNormalization: Boolean,
   ) : AsrEngineSpec {
     override val requiredFiles: List<String> get() = listOf(modelFile, tokensFile)
+
+    /** **不要**：标点与数字正则化是模型自己做的（`useInverseTextNormalization`）。 */
+    override val needsPunctuation: Boolean get() = false
   }
 
   /**
@@ -80,6 +110,13 @@ sealed interface AsrEngineSpec {
     val language: String,
   ) : AsrEngineSpec {
     override val requiredFiles: List<String> get() = listOf(encoderFile, decoderFile, tokensFile)
+
+    /**
+     * **不要**：whisper 自己会吐标点（真机实测的输出里带着逗号）。它吐得不一定对，
+     * 但再过一遍中文标点模型是**用中文的规则去改一个多语言模型的输出** —— 语言不对时
+     * 会改坏，而这条路上没有语言判定来挡。
+     */
+    override val needsPunctuation: Boolean get() = false
   }
 }
 

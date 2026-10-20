@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.voice.AsrModelCatalog
+import com.tappet.app.voice.PunctModelCatalog
 import com.tappet.app.voice.TtsModelCatalog
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
@@ -35,9 +36,21 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     val model: VoiceModel,
     val installed: Boolean,
     val installedBytes: Long,
-    /** 上次没下完的归档还剩多少（> 0 说明会续传）。 */
+    /** 上次没下完的归档还剩多少（> 0 说明会续传）。含伴生模型那份。 */
     val partialBytes: Long,
-  )
+    /**
+     * 还没装的**伴生模型**（[VoiceModel.companions]，目前就是标点那种）。
+     *
+     * 这个字段存在的唯一理由是**老用户升级**：他的 Paraformer 早就装好了，而标点是随
+     * 这次升级才出现的 —— 不显示出来的话，那份模型永远不会被下下来，而用户既不知道
+     * 少了什么、也没有入口去补。
+     */
+    val missingCompanions: List<VoiceModel> = emptyList(),
+  ) {
+    /** 点「下载」时还会拉多少字节（本体 + 还没装的伴生模型）。 */
+    val missingBytes: Long
+      get() = (if (installed) 0L else model.sizeBytes) + missingCompanions.sumOf { it.sizeBytes }
+  }
 
   data class UiState(
     val engineId: String = VoiceEngines.SYSTEM,
@@ -68,7 +81,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     val localReady: Boolean
       get() = models.any { it.model.id == selectedModelId && it.installed }
 
-    /** 语音输入能不能用（选了识别模型且装好了）。 */
+    /** 语音输入能不能用（选了识别模型且装好了）。**只看识别模型本身** —— 标点缺了也能用。 */
     val dictationReady: Boolean
       get() = asrModels.any { it.model.id == selectedAsrModelId && it.installed }
   }
@@ -93,7 +106,9 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     viewModelScope.launch {
       VoiceModelInstaller.state.collect { installing ->
         _state.update { it.copy(installing = installing) }
-        if (installing == null) refreshModels()
+        // 成功（null）与**失败**都要刷新：失败可能发生在伴生模型那一步（本体已经装好了），
+        // 也可能发生在第二个归档 —— 那一行的「还差什么 / 已下载多少」得跟着变。
+        if (installing == null || installing.error != null) refreshModels()
       }
     }
   }
@@ -163,8 +178,29 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
   ) {
     if (kind == VoiceModelKinds.TTS) VoiceReader.stop()
     VoiceModelStore.delete(appContext, kind, model.id)
+    deleteOrphanedCompanions(model)
     refreshModels()
     refreshEngine()
+  }
+
+  /**
+   * 顺带清掉**没人再需要**的伴生模型（标点那种）。
+   *
+   * 不做这一步的话，删掉 Paraformer 会在设备上留下 62MB 谁也用不上的标点模型：用户看不到它
+   * （界面上已经没有那一条了），也不知道该怎么清。判据是「还有没有**别的装着的**模型需要
+   * 它」—— 将来两个识别模型共用一份标点时，删其中一个不会把另一个的标点一起带走。
+   */
+  private fun deleteOrphanedCompanions(deleted: VoiceModel) {
+    val catalogs = TtsModelCatalog.ALL + AsrModelCatalog.ALL + PunctModelCatalog.ALL
+    deleted.companions.forEach { companion ->
+      val stillNeeded =
+        catalogs.any { other ->
+          other.id != deleted.id &&
+            VoiceModelStore.isInstalled(appContext, other.kind, other) &&
+            other.companions.any { it.id == companion.id }
+        }
+      if (!stillNeeded) VoiceModelStore.delete(appContext, companion.kind, companion.id)
+    }
   }
 
   /** 试听：读一句固定的中文，让用户听到当前引擎 + 语速 + 音色的实际效果。 */
@@ -206,8 +242,13 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
       model = model,
       installed = VoiceModelStore.isInstalled(appContext, kind, model),
       installedBytes = VoiceModelStore.installedBytes(appContext, kind, model.id),
-      partialBytes = VoiceModelStore.archivePart(appContext, kind, model.id).takeIf { it.isFile }?.length() ?: 0L,
+      partialBytes = (listOf(model) + model.companions).sumOf { archiveBytes(it) },
+      missingCompanions = model.companions.filterNot { VoiceModelStore.isInstalled(appContext, it.kind, it) },
     )
+
+  /** 已经下好但没解开的归档有多大（界面上的「会接着下」用它）。 */
+  private fun archiveBytes(model: VoiceModel): Long =
+    VoiceModelStore.archivePart(appContext, model.kind, model.id).takeIf { it.isFile }?.length() ?: 0L
 
   private companion object {
     const val PREVIEW_TEXT = "你好，我是 Tappet。这是当前的朗读效果，语速和音色都可以在设置里调整。"

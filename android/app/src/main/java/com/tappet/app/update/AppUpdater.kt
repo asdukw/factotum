@@ -98,8 +98,9 @@ object AppUpdater {
         UpdateCheck.UpToDate(currentVersion)
       }
     } catch (error: Exception) {
-      // 只报类型：异常消息里可能带 URL（URL 里没有凭据，但也没必要进日志）。
-      UpdateCheck.Failed(error.javaClass.simpleName)
+      // 翻译成可行动的一句话（连不上 = 开 VPN；404 = 重试没用）。**不报原始异常消息**：
+      // 消息里可能带 URL —— 虽然 URL 里没有凭据，也没必要进界面与日志。
+      UpdateCheck.Failed(UpdateHttp.failReason(error))
     }
   }
 

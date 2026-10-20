@@ -105,6 +105,11 @@
 | 语音输入报「端点检测没起来」 | `assets/silero_vad.onnx` 不在包里 → 跑 `tools/fetch-sherpa.ps1`（629KB，从 `asr-models` release 拉） |
 | `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 | `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数（**没有正文**），不用真人开口就能验 |
+| 识别结果是一整句没有标点的中文 | 正常：paraformer 那档本身不产标点（sense-voice / whisper 产）→ 标点模型是**跟着 Paraformer 一起下**的（`AsrModel.companions`），设置页里没有单独入口。**老用户升级后**那一条会显示「补下 61.7 MB」，点一次即可 |
+| 标点模型装了但输出没变 | 当前识别模型不 `needsPunctuation`（只有 paraformer 要）→ `op MODELS` 看 `punct model ... installed`；`op PUNCT --es text '...'` 单独验引擎 |
+| 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：三个模型只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
+| 下载模型报「连不上 github.com」 | 手机没开 VPN。**不做自动重试**（会让人以为已经在下了）→ 点那一条上的**重试**，从半截文件接着下。建连超时 15 秒、读超时 15 秒；失败原因由 `UpdateHttp.failReason` 翻译，别再退回「异常原文直接显示」 |
+| 模型解包报「归档坏了」/ 半截文件被当成下完了 | 先看是不是下载中途断线：`read` 对「读完」与「服务器关了连接」给的都是 -1 → `pump` 里按 `Content-Length` 比对，不够就抛 `TRANSFER_TRUNCATED`（半截文件留着续传） |
 
 ## 其他
 

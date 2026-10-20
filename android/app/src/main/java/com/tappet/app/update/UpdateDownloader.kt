@@ -49,6 +49,14 @@ object UpdateDownloader {
   /** 记上一次响应的 ETag，续传时用 `If-Range` 判断服务器上那份还是不是同一个文件。 */
   private const val ETAG_SUFFIX = ".part.etag"
 
+  /**
+   * 连接被提前关掉：服务器声明了长度，但 `read` 先返回了 -1。
+   *
+   * 抽成常量是因为它要被 [UpdateHttp.failReason] 认出来翻译成用户能懂的话 ——
+   * 两条路（应用内更新 / 模型下载）共用同一句文案。
+   */
+  internal const val TRANSFER_TRUNCATED = "TRANSFER_TRUNCATED"
+
   /** 一次下载的进度。`total` 未知（服务器没给 Content-Length）时为 -1。 */
   data class Progress(val done: Long, val total: Long) {
     val known: Boolean get() = total > 0
@@ -226,6 +234,13 @@ object UpdateDownloader {
     // 先报一次起点：续传时进度条应当从已下载的那一段开始，而不是从 0% 跳上去。
     onProgress(Progress(offset, total))
     val written = connection.inputStream.use { input -> copyInto(input, part, offset, total, onProgress) }
+    // **连接被干净地关掉（read 返回 -1）不等于下完了**：服务器可能声明了 62MB 却在中途
+    // 断掉，而 `read` 对「对方关了连接」与「读完了」给的是同一个 -1。不拦的话半截文件会被当成
+    // 完整的一份 —— 更新那边哈希能兜住（代价是白下了几十 MB），模型那边 bzip2 解包失败
+    // 但报的是「归档坏了」，与真正的原因隔了一层。
+    // curl / wget 在这里都是直接报错（`transfer closed with N bytes remaining`）。
+    // 半截文件**留着**：它是续传的起点，下一次从 [copyInto] 的 `written` 接着下。
+    if (total >= 0 && written < total) error(TRANSFER_TRUNCATED)
     onProgress(Progress(written, total))
   }
 

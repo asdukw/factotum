@@ -19,9 +19,9 @@ calls. The only runtime is the Android app (Kotlin).
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
 - Dev machine: Windows + PowerShell 7. Device: OnePlus 15T (PLZ110, Android 16 / API 36, ColorOS).
-- **Direction red lines (2026-10-03):** no notification capture, no QQ/WeChat chat pipelines, no
-  knowledge graph, no Python side, no PC/Electron client. Deleted code must not come back. The
-  hand-written `LlmClient` protocol / `AgentLoop` / chat integration is deprecated — don't extend it.
+- **Direction red lines:** no notification capture, no QQ/WeChat chat pipelines, no knowledge
+  graph, no Python side, no PC/Electron client. Do not reintroduce any of them. The hand-written
+  `LlmClient` protocol / `AgentLoop` / chat integration is deprecated — don't extend it.
 
 ## 2. One-time setup
 
@@ -106,13 +106,12 @@ permission, deletes or replaces a shipped capability, or moves a boundary in §6
 **Never:** commit secrets or real identifiers; log screen, UI-tree, or chat content; hand-edit
 generated assets (`assets/dsh-runtime.zip`, `libnode/`, `jniLibs/`); add to `detekt` `baseline.xml`;
 rewrite pushed history or force-push `master` without explicit approval; re-introduce anything the
-2026-10-03 red lines deleted.
+§1 red lines forbid.
 
 ### 6.1 Security and privacy
 
 1. **Secrets never enter the repo, logs, or build artifacts.** The only source is Settings →
    `SecretVault` (Keystore-wrapped), passed to dsh as env `TAPPET_LLM_KEY` at Node start.
-   Build-time injection is gone (`AGENT_API_KEY` no longer exists).
 2. **Never log screen or chat content.** Log counts, class names, coordinates, and error codes
    only. UI-tree payloads appear only in model tool results. `--ez logPayload true` is debug-only.
 3. **The visual path sends the full screen image to the model provider** (including all on-screen
@@ -122,8 +121,8 @@ rewrite pushed history or force-push `master` without explicit approval; re-intr
    it permanently. Export before uninstalling or clearing data.
 5. **`TappetDatabaseProvider` must call `System.loadLibrary("sqlcipher")`**; otherwise `nativeOpen`
    throws `UnsatisfiedLinkError`.
-6. **Do not collect other people's data.** Notification and chat pipelines were deleted. Any new
-   collection capability needs a documented boundary and privacy gate in `docs/` first.
+6. **Do not collect other people's data.** Any new collection capability needs a documented
+   boundary and privacy gate in `docs/` first.
 
 Pre-release scan — `-SelfTest` is mandatory; the scanner's identifier heuristic only warns:
 
@@ -142,8 +141,8 @@ push, not later.
   and `OemProfile`. QQ/WeChat are test targets, not integrations.
 - **The bridge listens on `127.0.0.1` with a per-process random token**, exposes only
   `POST /action`, and installs nothing on the device.
-- **Do not enable touch exploration during tasks** (2026-10-17): it swallows injected
-  `dispatchGesture` events and cannot rescue a running app. Keep the `touchExplorationActive`
+- **Do not enable touch exploration during tasks**: it swallows injected `dispatchGesture` events
+  and cannot rescue a running app. Keep the `touchExplorationActive`
   fallback branches — with TalkBack, those `performAction` branches are the only usable path.
 - **Do not use `boot()` or the CLI loader** (it needs `node-addon-require-builtin`, absent on
   Android). Use `launcher.mjs`; `patch-runtime.mjs` allows flock, publishes jsonl with rename, and
@@ -175,9 +174,8 @@ Also: `SecretVault` `prefsName` / `keyAlias` and `AgentConfigStore.PREFS_NAME`; 
 Components use `com.tappet.app/...`; `OemProfiles.TAPPET_ACCESSIBILITY_COMPONENT` reads
 `BuildConfig.APPLICATION_ID`.
 
-The public git history was rebuilt on 2026-10-12 (backup:
-`../memex-history-backup-2026-10-12.bundle`). The old package `com.memex.app` cannot read the new
-app's data; `adb uninstall com.memex.app` is enough. Scrub real-world data before committing.
+The legacy package `com.memex.app` cannot read this app's data; `adb uninstall com.memex.app` is
+enough. Scrub real-world data before committing.
 
 ## 7. Workflows
 
@@ -364,5 +362,7 @@ Full table: `docs/pitfalls.md`.
   self-contained — a reader must be able to obey it without opening the link.
 - If a rule can be checked mechanically, add the test in the same change instead of more prose:
   the §6.3 identity list, the §7.3 tool list, and the §7.3 coordinate contract are all testable.
-- Delete stale rules instead of letting them rot; update §11 when a doc is added or removed.
+- Describe current state only: no changelog, no "we used to", no migration history — git and
+  `docs/releases/` hold that. Delete stale rules rather than letting them rot; update §11 when a
+  doc is added or removed.
 - Keep this file under ~400 lines — new detail belongs in `docs/`, not here.

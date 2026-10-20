@@ -287,7 +287,12 @@ private fun ModelRow(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-          text = "授权：${model.model.license} —— ${model.model.licenseNote}",
+          // 伴生模型（标点那种）也是用户要下的东西，它的授权同样得显示在下载按钮旁边 ——
+          // 它现在没有自己的一行，所以并到本体这一行里。只写许可名：完整条款在
+          // `PunctModelCatalog` 的 `licenseNote` 里，那一条只对开发者有意义。
+          text =
+            "授权：${model.model.license} —— ${model.model.licenseNote}" +
+              model.model.companions.joinToString("") { "；另含 ${it.label}（${it.license}）" },
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

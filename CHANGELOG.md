@@ -5,7 +5,7 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
-## [未发布]
+## [0.12.0] - 2026-10-21
 
 ### 新增
 

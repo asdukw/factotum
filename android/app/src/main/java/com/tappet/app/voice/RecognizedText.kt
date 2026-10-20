@@ -12,6 +12,9 @@ package com.tappet.app.voice
  * 2. **静音时的占位符**：whisper 对没人说话的片段会回 `[BLANK_AUDIO]` / `[ Silence ]` /
  *    `(音乐)` 这类标记。它们不是识别结果，直接当空处理。
  * 3. **首尾空白**：模型常在句首留一个空格。
+ * 4. **非语音的音频事件**：SenseVoice 在结果里直接给了 `event` 字段（`<|BGM|>` / `<|Applause|>` /
+ *    `<|Laughter|>` 这类），比上面那张手写的字符串表可靠 —— 它是模型自己的判定。
+ *    见 [clean] 的 `event` 参数。
  */
 internal object RecognizedText {
   /**
@@ -35,15 +38,51 @@ internal object RecognizedText {
     )
 
   /**
+   * SenseVoice 的**非语音**音频事件（`event` 字段的取值）。
+   *
+   * 上游的记号是 `<|BGM|>` 这种，比较前先剥掉 `<|` / `|>` 再小写（[normalizeEvent]）——
+   * 钉死带尖括号的写法等于把上游哪天改记号的风险接到自己身上。
+   *
+   * **只列非语音的，且只按「认识」判定**：`<|Speech|>` 不是非语音，而空串 / 认不出的记号
+   * 一律放行，交给上面那张文本表兜底。反过来写（「不是 Speech 就当非语音」）会在上游
+   * 加一个新语音类记号时把正常说话判成噪声，而那种错用户只能看到「没听清」。
+   */
+  private val NON_SPEECH_EVENTS =
+    setOf(
+      "bgm",
+      "applause",
+      "laughter",
+      "cry",
+      "sneeze",
+      "breath",
+      "cough",
+    )
+
+  /**
    * 清理一段识别结果。**返回空串 = 这一段没有可用内容**，调用方据此说「没听清」，
    * 而不是往输入框里塞一个 `[BLANK_AUDIO]`。
+   *
+   * [event] 是引擎给的音频事件（只有 SenseVoice 会填，另外两种模型回空串）：
+   * 它说「这段是音乐 / 掌声」时**不看文本直接判空** —— 模型对这类片段经常一边打上事件记号、
+   * 一边吐出一句像模像样的「歌词」，而那正是要挡的东西。
    */
-  fun clean(raw: String): String {
+  fun clean(
+    raw: String,
+    event: String = "",
+  ): String {
+    if (isNonSpeechEvent(event)) return ""
     val trimmed = raw.trim()
     if (trimmed.isEmpty()) return ""
     if (isNonSpeechMarker(trimmed)) return ""
     return collapseCjkSpaces(trimmed)
   }
+
+  /**
+   * 把几段识别结果拼成一句。**按段识别之后必须经过它**：每段是各自解码出来的，
+   * 直接 `joinToString("")` 会在英文段之间粘成一个词，而 `joinToString(" ")` 又会在
+   * 中文段之间留下空格 —— 复用 [collapseCjkSpaces] 两头都对。
+   */
+  fun joinSegments(parts: List<String>): String = collapseCjkSpaces(parts.filter { it.isNotBlank() }.joinToString(" "))
 
   /**
    * 把一段听写结果接到输入框已有内容的后面。
@@ -65,6 +104,18 @@ internal object RecognizedText {
     val key = text.lowercase().filter { it.isLetterOrDigit() || it == '_' }
     return key in NON_SPEECH_MARKERS
   }
+
+  /**
+   * 把模型给的**记号**（语种 / 音频事件）归一成能直接比较的形态：`<|zh|>` 与 `zh` 都变成 `zh`。
+   *
+   * 两种写法是**真的都会出现**（真机实测：sense-voice 的语种回 `<|zh|>`，whisper 回 `zh`），
+   * 而这两个字段的用处就是**跨模型对比** —— 留着两种写法，对比时先要人肉认一遍格式。
+   * 认不出的形态原样留着（于是不会命中 [NON_SPEECH_EVENTS]）。
+   */
+  fun normalizeMarker(raw: String): String =
+    raw.trim().removePrefix("<|").removeSuffix("|>").trim().lowercase()
+
+  private fun isNonSpeechEvent(event: String): Boolean = normalizeMarker(event) in NON_SPEECH_EVENTS
 
   /** 删掉中日韩字符之间的空格（含全角空格）。 */
   private fun collapseCjkSpaces(text: String): String {

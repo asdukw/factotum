@@ -86,4 +86,14 @@ class AsrModelCatalogTest {
     // 默认那条是「装完不心疼」的那条：82MB 的 paraformer。
     assertEquals(AsrModelCatalog.PARAFORMER_ZH_SMALL, AsrModelCatalog.ALL.first())
   }
+
+  @Test
+  fun `只有 paraformer 需要标点模型`() {
+    // 这一格决定了「识别完要不要再过一遍标点模型」。写反的后果都不小：
+    // 该补的没补 = 输入框里一整句没有断句的中文；不该补的补了 = 用中文标点规则去改
+    // 一个多语言模型的输出，语言不对时会改坏。
+    assertTrue(AsrModelCatalog.PARAFORMER_ZH_SMALL.engine.needsPunctuation)
+    assertTrue(!AsrModelCatalog.SENSE_VOICE_INT8.engine.needsPunctuation)
+    assertTrue(!AsrModelCatalog.WHISPER_TINY.engine.needsPunctuation)
+  }
 }

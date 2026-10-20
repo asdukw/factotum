@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.voice.AsrModelCatalog
+import com.tappet.app.voice.PunctModelCatalog
 import com.tappet.app.voice.TtsModelCatalog
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
@@ -52,6 +53,11 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     val models: List<ModelUi> = emptyList(),
     /** 识别模型。 */
     val asrModels: List<ModelUi> = emptyList(),
+    /**
+     * 标点模型。**没有「选中」这一档**：它不是可选项的组合，而是「装了就生效」——
+     * 谁需要它由识别模型决定（`AsrEngineSpec.needsPunctuation`），不该让用户去配对。
+     */
+    val punctModels: List<ModelUi> = emptyList(),
     /** 朗读选中的本地模型 id；null = 还没选。 */
     val selectedModelId: String? = null,
     /** 识别选中的模型 id；null = 还没选。 */
@@ -71,6 +77,9 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     /** 语音输入能不能用（选了识别模型且装好了）。 */
     val dictationReady: Boolean
       get() = asrModels.any { it.model.id == selectedAsrModelId && it.installed }
+
+    /** 标点模型装了没有。装了就生效，没有「选中」这一步。 */
+    val punctReady: Boolean get() = punctModels.any { it.installed }
   }
 
   private val _state =
@@ -191,6 +200,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
       current.copy(
         models = TtsModelCatalog.ALL.map { modelUi(VoiceModelKinds.TTS, it) },
         asrModels = AsrModelCatalog.ALL.map { modelUi(VoiceModelKinds.ASR, it) },
+        punctModels = PunctModelCatalog.ALL.map { modelUi(VoiceModelKinds.PUNCT, it) },
       )
     }
     // 装完 / 删掉之后，本地引擎的「可用性」跟着变。

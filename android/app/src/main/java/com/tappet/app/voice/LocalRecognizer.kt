@@ -16,6 +16,29 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 
 /**
+ * 一段音频的识别结果。**除了文本，还有引擎自己给的两个判定**（sherpa 的
+ * `OfflineRecognizerResult` 里本来就有，以前只取了 `text` 就扔掉）：
+ *
+ * - [lang]：模型判定的语种（`<|zh|>` 这种），**只有 SenseVoice 会填**。它存在的意义是
+ *   「whisper 把英文硬解成中文还不报错」那个坑的对照面 —— 出了怪结果时，日志里能看出
+ *   模型自己认为这是什么语言。
+ * - [event]：音频事件（`<|Speech|>` / `<|BGM|>` / `<|Applause|>` 这类），同样只有
+ *   SenseVoice 会填。非语音的判定交给 [RecognizedText.clean]。
+ *
+ * 两个字段都**只进日志与判定，不进用户可见文本**：它们是结构（几个字符的记号），
+ * 不是用户说的话。
+ */
+internal data class Recognition(
+  val text: String,
+  val lang: String,
+  val event: String,
+) {
+  companion object {
+    val EMPTY = Recognition("", "", "")
+  }
+}
+
+/**
  * 本地识别引擎：sherpa-onnx 的 `OfflineRecognizer` + 手机上自己下的声学模型。
  *
  * **不走云端**：语音输入这条路上，音频是用户的声音 —— 比屏幕正文更私密，而 Android 的系统
@@ -90,20 +113,21 @@ internal class LocalRecognizer(
   /**
    * 识别一段 16kHz 单声道音频（样本归一化到 [-1,1]）。
    *
-   * @return 清理过的文本；**空串 = 没听出内容**（含模型明确回「这里是静音」的情况）。
-   *   失败也回空串 —— 这条路上没有「部分成功」，报错走日志与上层状态。
+   * @return 清理过的文本与引擎的语种 / 事件判定；**空文本 = 没听出内容**（含模型明确回
+   *   「这里是静音」「这段是音乐」的情况）。失败也回 [Recognition.EMPTY] —— 这条路上没有
+   *   「部分成功」，报错走日志与上层状态。
    */
-  suspend fun transcribe(samples: FloatArray): String {
-    if (samples.isEmpty()) return ""
-    if (released) return ""
-    val engine = recognizer ?: return ""
+  suspend fun transcribe(samples: FloatArray): Recognition {
+    if (samples.isEmpty()) return Recognition.EMPTY
+    if (released) return Recognition.EMPTY
+    val engine = recognizer ?: return Recognition.EMPTY
     return withContext(Dispatchers.IO) {
       if (!gate.tryAcquire(GATE_WAIT_MS, TimeUnit.MILLISECONDS)) {
         Log.w(TAG, "上一次识别还没退出 native，放弃这一段")
-        return@withContext ""
+        return@withContext Recognition.EMPTY
       }
       try {
-        if (released) return@withContext ""
+        if (released) return@withContext Recognition.EMPTY
         run(engine, samples)
       } finally {
         gate.release()
@@ -115,20 +139,26 @@ internal class LocalRecognizer(
   private fun run(
     engine: OfflineRecognizer,
     samples: FloatArray,
-  ): String {
+  ): Recognition {
     val startedAt = System.currentTimeMillis()
     return try {
       val stream = engine.createStream()
       try {
         stream.acceptWaveform(samples, SAMPLE_RATE)
         engine.decode(stream)
-        val text = RecognizedText.clean(engine.getResult(stream).text)
-        // 只记长度与耗时：正文（用户说的话）不进日志。
+        val result = engine.getResult(stream)
+        val text = RecognizedText.clean(result.text, result.event)
+        // 只记长度、耗时与两个**记号**（语种 / 音频事件）：正文（用户说的话）不进日志。
+        // 语种与事件是模型自己的判定，不是内容 —— 排「输出看着不对」时它们是唯一线索。
+        // 两个记号都过一遍归一（`<|zh|>` 与 `zh` 是同一件事，见 RecognizedText.normalizeMarker）：
+        // 否则跨模型对比时先要人肉认一遍格式。
         Log.i(
           TAG,
-          "识别完成 samples=${samples.size} chars=${text.length} ms=${System.currentTimeMillis() - startedAt}",
+          "识别完成 samples=${samples.size} chars=${text.length} " +
+            "lang=${marker(result.lang)} event=${marker(result.event)} " +
+            "ms=${System.currentTimeMillis() - startedAt}",
         )
-        text
+        Recognition(text, result.lang, result.event)
       } finally {
         stream.release()
       }
@@ -136,7 +166,7 @@ internal class LocalRecognizer(
       @Suppress("TooGenericExceptionCaught") error: Throwable,
     ) {
       Log.w(TAG, "识别失败：${error.javaClass.simpleName}")
-      ""
+      Recognition.EMPTY
     }
   }
 
@@ -175,6 +205,21 @@ internal class LocalRecognizer(
    *   「先猜一遍模型类型」那一步（官方原话：不填会 load 两遍模型）。
    * - **sense-voice 留空**：`modelType` 的合法值里没有它，填了反而会走到「猜」那条路上，
    *   还多打一行 `Invalid model_type` 的日志。它的类型在 ONNX 元数据里（`sense_voice_ctc`）。
+   *
+   * ## 两个「看着能用、其实是死旋钮」的字段（v1.13.8 源码确认，别再加回来）
+   *
+   * - **`decodingMethod` 不能动**：paraformer / sense-voice / whisper 三个实现里都是
+   *   `if (decoding_method == "greedy_search") { ... } else { SHERPA_ONNX_EXIT(-1); }`
+   *   （`offline-recognizer-{paraformer,sense-voice,whisper}-impl.h`）。填
+   *   `modified_beam_search` 不是「退化成贪心」，是**直接退出进程** —— 内嵌 Node 与宿主
+   *   同进程，退出就是 App 崩。beam search 只有 transducer 系有。
+   * - **`blankPenalty` 只有 transducer 用**：它被塞进 transducer 的两个解码器
+   *   （`offline-recognizer-transducer-impl.h`），paraformer / sense-voice / whisper
+   *   三条路上一个字都没读它。想靠它压 whisper 的空转，得先换成 transducer 模型。
+   *
+   * 反过来，**`ruleFsts` / `ruleFars` / `hr` 是活的**：它们在基类
+   * （`offline-recognizer-impl.cc` 的 Init）里统一构造，对所有模型生效 —— 要补 ITN 或
+   * 同音字替换走那三个字段，不要碰上面两个。
    */
   private fun configFor(
     model: AsrModel,
@@ -245,6 +290,9 @@ internal class LocalRecognizer(
 
   /** 识别用的线程数。给满会发烫掉电，给太少又跟不上 —— 与合成那边同一个上限。 */
   private fun threadsForDecoding(): Int = Runtime.getRuntime().availableProcessors().coerceIn(1, MAX_THREADS)
+
+  /** 日志里的记号：空串写成 `-`（三种模型里只有 SenseVoice 会填这两个字段）。 */
+  private fun marker(raw: String): String = RecognizedText.normalizeMarker(raw).ifBlank { "-" }
 
   private companion object {
     const val TAG = "TappetVoice"

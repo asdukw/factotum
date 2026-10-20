@@ -488,15 +488,16 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
 | `voice/VoiceModel.kt` | **合成与识别共用的模型抽象**：怎么下、怎么解、装到哪 |
 | `voice/VoiceModelStore\|Downloader\|Installer.kt` | 模型落盘 / 下载（复用更新那套续传）/ 单例安装状态 |
 | `voice/SherpaArchive.kt` | 解 sherpa 的 `.tar.bz2`（剥顶层目录 + 挡路径穿越） |
-| `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**） |
-| `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门 |
+| `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**）；`AsrEngineSpec.needsPunctuation` 声明这一档要不要补标点 |
+| `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门；返回 `Recognition`（文本 + `lang` + `event`） |
+| `voice/PunctModelCatalog.kt` / `LocalPunctuator.kt` | 标点模型（CT-Transformer，Apache-2.0）与补标点引擎；**只有 paraformer 需要**，装了就生效 |
 | `voice/AudioCapture.kt` | 麦克风采集：16kHz 单声道 → `FloatArray` + RMS |
 | `voice/VadSegmenter.kt` | 端点判定：**sherpa-onnx 自带的 silero VAD**（`assets/silero_vad.onnx`，629KB） |
 | `voice/DictationEnd.kt` | 纯 Kotlin：会话的三个收尾条件（单测钉住） |
 | `voice/RecognizedText.kt` | 纯 Kotlin：识别结果清理 + 回填输入框（单测钉住） |
 | `voice/VoiceInput.kt` | 单例：语音输入的唯一状态源、按模型 id 缓存识别器 |
 | `voice/VoiceSettings.kt` | 偏好：朗读引擎 / 自动朗读 / 语速 / 音色 + 识别模型（**非密**） |
-| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `Vad` / `FeatureConfig` / `WaveReader`）；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
+| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflinePunctuation` / `OfflineStream` / `Vad` / `FeatureConfig` / `WaveReader`）；与 `tools/fetch-sherpa.ps1` 同 tag，别手改。**加一个绑定不用重编 native**：`strings libsherpa-onnx-jni.so` 里 `OnlineRecognizer` / `OfflinePunctuation` / `KeywordSpotter` 这些符号本来就在 |
 | `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」（朗读 + 语音输入两节） |
 | `debug/.../VoiceDebugReceiver.kt` | **仅 debug**：把 WAV 喂给识别引擎 / 无 UI 装模型（`op ASR` / `INSTALL` / `MODELS`） |
 
@@ -552,6 +553,29 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   一段也会因为切到 `max_speech` 上限而吐出来，那时人还在说。
 - **识别器按模型 id 缓存**（`VoiceInput.engineKey`）：建一次要把几十上百 MB 的模型读进内存，
   每次说话都重建就是每次等好几秒。
+- **识别按段做，不把整场音频拼起来**（2026-10-21 改）：VAD 每吐出一段就立刻送识别，
+  边录边出结果，收尾只等最后一段。以前是攒完再一次性 `decode` —— 连续说话到 90 秒上限时
+  就是一次 decode 90 秒音频。代价是段与段之间没有上下文（一句话被 `max_speech` 切两半时
+  两半各自解码），文本用 `RecognizedText.joinSegments` 拼（**不是** `joinToString`：中文之间
+  不能留空格、英文之间要留）。**探针必须跟着改**：`op VAD` 早先是拼起来解码的，
+  那样验的就不是用户遇到的东西。
+- **结果里的 `lang` / `event` 要接住**（同一天）：`OfflineRecognizerResult` 本来就有这两个
+  字段（**SenseVoice 两个都填，whisper 只填 `lang`**，paraformer 都是空的），以前只取 `text`
+  就扔掉。`event` 是**模型自己的非语音判定**（`<|BGM|>` / `<|Applause|>` …），比手写的
+  字符串表可靠，判空时优先看它；`lang` 是「whisper 把英文硬解成中文」那个坑的对照面。
+  日志里的记号先过 `RecognizedText.normalizeMarker`（`<|zh|>` 与 `zh` 都出现过，不归一就没法
+  跨模型对比）。判定**只认非语音的那几个**，别写成「不是 `<|Speech|>` 就当噪声」
+  （上游加一个语音类记号就会把正常说话判成噪声）。
+- **`decodingMethod` / `blankPenalty` 是死旋钮，别加回来**（v1.13.8 源码确认）：
+  三个模型的实现里都是 `if (decoding_method == "greedy_search") { ... } else { SHERPA_ONNX_EXIT(-1); }`
+  —— 填 `modified_beam_search` **不是退化成贪心，是直接退出进程**（内嵌 Node 与宿主同进程，
+  退出就是 App 崩）；`blankPenalty` 只有 transducer 读它。`ruleFsts` / `ruleFars` / `hr`
+  反而是活的（基类统一构造，对所有模型生效）。
+- **标点是「装一次、谁需要谁用」**（同一天）：`PunctModelCatalog` + `VoiceModelKinds.PUNCT`，
+  **只有 paraformer 需要**（`AsrEngineSpec.needsPunctuation`）。装了就生效、没有「选中」，
+  没装/起不来就原样返回 —— **它是改善不是前置条件**，别写成「语音输入不可用」。
+  标点补在**段拼起来之后**（逐段补会在段边界塞句号）。下载域仍是 k2-fsa/sherpa-onnx，
+  只是另一个 release tag（`punctuation-models`）。
 - **与合成同一道闸门**：`OfflineRecognizer` 不是线程安全的，而协程取消打断不了阻塞的
   native 调用 —— 并发进去就是 `FORTIFY ... destroyed mutex` + 整个 App 闪退。
 - **`modelType` 只有 paraformer / whisper 能填**：sherpa 认的值就那几个，sense-voice 填了
@@ -690,9 +714,14 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action IME_ENTER
 
 # 语音（朗读 / 语音输入）：装识别模型、看模型状态、把 WAV 喂给识别引擎或 VAD。
-# **`op VAD` 打的是段数 / 样本数，没有正文** —— 验端点判定不必真人开口；详见 docs/voice.md §9
+# **`op VAD` 打的是段数 / 样本数 / 每段的 lang 与 event，没有正文** —— 验端点判定不必真人开口；
+# 它走的是**逐段识别 + 拼起来 + 补标点**的真实路径，与 `VoiceInput` 一致。详见 docs/voice.md §9
 adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
   -a com.tappet.app.debug.VOICE --es op VAD --es wav <设备上的路径> --ez logPayload true
+
+# 只验标点模型（不经过识别、不经过麦克风）：`--es op PUNCT --es text '...'`
+# 样例音频就在装好的模型目录里：files/asr-models/<id>/test_wavs/ —— 给绝对路径即可，
+# 不必 adb push（App 读自己的私有目录没有障碍）
 ```
 
 **截图契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
@@ -884,7 +913,11 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 语音输入报「端点检测没起来」 | `assets/silero_vad.onnx` 不在包里 → 跑 `tools/fetch-sherpa.ps1`（629KB，从 `asr-models` release 拉） |
 | `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 | `op ASR` / `op VAD` 广播了但日志里什么都没有 | Git Bash 把设备路径 `/data/...` 翻成了 `Files/Git/data/...`（MSYS 路径转换）→ 前面加 `MSYS_NO_PATHCONV=1`；另见「先 monkey 再广播」那条 |
-| `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数（**没有正文**），不用真人开口就能验 |
+| `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数 / 每段的 `lang` 与 `event`（**没有正文**），不用真人开口就能验 |
+| 识别结果是一整句没有标点的中文 | 正常：paraformer 那档本身不产标点（sense-voice / whisper 产）→ 设置 → 语音 → 标点里下 CT-Transformer（62MB，Apache-2.0），**装了就生效** |
+| 标点模型装了但输出没变 | 当前识别模型不 `needsPunctuation`（只有 paraformer 要）→ `op MODELS` 看 `punct model ... installed`，`op PUNCT --es text '...'` 单独验引擎 |
+| 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：三个模型只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
+| 日志里想看「模型认为这是什么语言 / 这段是不是语音」 | 识别完成后那一行有 `lang=` / `event=`（只有 SenseVoice 会填，其余打 `-`）；它们是**记号不是正文**，可以进日志 |
 
 ## 深度文档
 

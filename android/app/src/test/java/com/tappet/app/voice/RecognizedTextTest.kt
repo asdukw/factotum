@@ -54,4 +54,54 @@ class RecognizedTextTest {
     // 没听出东西时不动已有内容
     assertEquals("帮我", RecognizedText.appendToInput("帮我", ""))
   }
+
+  @Test
+  fun `非语音的音频事件直接判空`() {
+    // SenseVoice 在结果里直接给了事件记号。模型对音乐段经常一边打 <|BGM|> 一边吐出一句
+    // 像模像样的「歌词」—— 有事件记号时**不看文本**直接判空，那正是要挡的东西。
+    assertEquals("", RecognizedText.clean("啦啦啦", "<|BGM|>"))
+    assertEquals("", RecognizedText.clean("哈哈哈", "<|Laughter|>"))
+    assertEquals("", RecognizedText.clean("谢谢大家", "<|Applause|>"))
+  }
+
+  @Test
+  fun `人声事件不判空`() {
+    assertEquals("打开设置", RecognizedText.clean("打开设置", "<|Speech|>"))
+  }
+
+  @Test
+  fun `认不出的记号与空串都放行，交给文本表兜底`() {
+    // 上游哪天加一个新的语音类记号，这里必须继续认它说的是话 —— 反过来写
+    // （「不是 Speech 就当非语音」）会把正常说话判成噪声，而用户只能看到「没听清」。
+    assertEquals("打开设置", RecognizedText.clean("打开设置", "<|Singing|>"))
+    assertEquals("打开设置", RecognizedText.clean("打开设置", ""))
+    assertEquals("", RecognizedText.clean("[BLANK_AUDIO]", ""))
+  }
+
+  @Test
+  fun `记号归一：带尖括号与不带的两种写法是同一件事`() {
+    // 真机实测两种都会出现：sense-voice 的语种回 `<|zh|>`，whisper 回 `zh`。
+    // 这两个字段的用处就是跨模型对比，留着两种写法等于让人肉认格式。
+    assertEquals("zh", RecognizedText.normalizeMarker("<|zh|>"))
+    assertEquals("zh", RecognizedText.normalizeMarker("zh"))
+    assertEquals("speech", RecognizedText.normalizeMarker("<|Speech|>"))
+    assertEquals("", RecognizedText.normalizeMarker(""))
+  }
+
+  @Test
+  fun `多段拼起来时中文之间不留空格、英文之间留`() {
+    // 按段识别之后，每段是各自解码的：直接 joinToString("") 会把英文粘成一个词，
+    // 而 joinToString(" ") 又会在中文段之间留下空格。
+    assertEquals("打开设置", RecognizedText.joinSegments(listOf("打开", "设置")))
+    assertEquals("open settings", RecognizedText.joinSegments(listOf("open", "settings")))
+    assertEquals("打开 Settings 页面", RecognizedText.joinSegments(listOf("打开", "Settings", "页面")))
+  }
+
+  @Test
+  fun `拼接时丢掉空段`() {
+    // 某一段没听出东西（静音、纯音乐）时不该在中间留下一个空格。
+    assertEquals("打开设置", RecognizedText.joinSegments(listOf("打开", "", "  ", "设置")))
+    assertEquals("", RecognizedText.joinSegments(emptyList()))
+    assertEquals("", RecognizedText.joinSegments(listOf("", " ")))
+  }
 }

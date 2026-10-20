@@ -202,6 +202,11 @@ private fun ModelSection(
   onInstallModel: (String, VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
   onDeleteModel: (String, VoiceModel) -> Unit,
+  /**
+   * 这一组有没有「选中」这一档。标点模型是 `false`：装了就对所有需要它的识别模型生效，
+   * 多一个「使用」按钮只会让用户以为还得配对一次。
+   */
+  selectable: Boolean = true,
 ) {
   SectionLabel(title)
   SettingsGroup {
@@ -209,7 +214,8 @@ private fun ModelSection(
       if (index > 0) SettingsDivider()
       ModelRow(
         model = model,
-        selected = model.model.id == selectedId,
+        selected = selectable && model.model.id == selectedId,
+        selectable = selectable,
         // 同一时刻只装一个（VoiceModelInstaller），所以进度条只会出现在一条上；
         // 但要按**种类**匹配，否则装朗读模型时识别那一组也会跟着画进度条。
         installing = installing?.takeIf { it.kind == kind && it.modelId == model.model.id },
@@ -259,6 +265,29 @@ private fun DictationSection(
         "装好会自动选中它，装了多个也可以点某一条手动换。"
     },
   )
+  Spacer(Modifier.height(20.dp))
+  ModelSection(
+    title = "标点（可选）",
+    kind = VoiceModelKinds.PUNCT,
+    models = state.punctModels,
+    selectedId = null,
+    installing = state.installing,
+    onSelectModel = onSelectModel,
+    onInstallModel = onInstallModel,
+    onCancelInstall = onCancelInstall,
+    onDeleteModel = onDeleteModel,
+    selectable = false,
+  )
+  Spacer(Modifier.height(12.dp))
+  InfoBanner(
+    if (state.punctReady) {
+      "识别结果会补上逗号句号。只有 Paraformer 那档需要它 —— " +
+        "SenseVoice 自带标点，Whisper 自己会吐标点。"
+    } else {
+      "不装也能用：Paraformer 那档出来的是一整句没有标点的文本，" +
+        "装上之后它会补上逗号句号（其余两档不需要）。"
+    },
+  )
 }
 
 @Composable
@@ -270,6 +299,7 @@ private fun ModelRow(
   onInstall: () -> Unit,
   onCancel: () -> Unit,
   onDelete: () -> Unit,
+  selectable: Boolean = true,
 ) {
   Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -297,6 +327,7 @@ private fun ModelRow(
         model = model,
         installing = installing,
         selected = selected,
+        selectable = selectable,
         onInstall = onInstall,
         onCancel = onCancel,
         onDelete = onDelete,
@@ -323,6 +354,7 @@ private fun ModelAction(
   onCancel: () -> Unit,
   onDelete: () -> Unit,
   onSelect: () -> Unit,
+  selectable: Boolean = true,
 ) {
   when {
     installing != null -> TextButton(onClick = onCancel) { Text("取消") }
@@ -330,7 +362,9 @@ private fun ModelAction(
     !model.installed ->
       Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.model.sizeBytes)}") }
 
-    selected -> TextButton(onClick = onDelete) { Text("删除") }
+    // 没有「选中」这一档的组（标点模型）装好之后只剩「删除」—— 否则会多出一个
+    // 「使用」按钮，而点它什么也不会发生。
+    selected || !selectable -> TextButton(onClick = onDelete) { Text("删除") }
 
     else -> Button(onClick = onSelect) { Text("使用") }
   }

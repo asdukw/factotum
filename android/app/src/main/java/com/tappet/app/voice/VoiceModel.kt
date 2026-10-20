@@ -9,6 +9,12 @@ package com.tappet.app.voice
 object VoiceModelKinds {
   const val TTS = "tts"
   const val ASR = "asr"
+
+  /**
+   * 标点模型（[PunctModelCatalog]）。**与 [ASR] 分开**：它不是某一个识别模型的附属物，
+   * 而是「装一次、谁需要谁用」的共享件 —— 见 [PunctModel] 的注释。
+   */
+  const val PUNCT = "punct"
 }
 
 /**

@@ -239,8 +239,34 @@ CI 与本地跑的是同一套命令，**改完代码在 `android/` 下跑这三
   **不 clamp** —— clamp 会把「给错坐标」变成「点了个别的地方」。
 - 动作后验证：再截一张算 8×8 指纹比对，只回 `changed` 布尔**不回图**（图会进历史并被每轮重发）。
   `changed=false` 时 `ok` 仍是 true（`NO_VISIBLE_CHANGE`）—— 它是提示，不是失败。
-- **视觉路径不解决「输入文字」**：`type_text` / `press(enter)` 都走控件树找输入框，树不可读时没有通道，
-  只能如实告知用户做不到（自建 IME 是 roadmap §2.5 的事，还没做）。
+- **输入文字有两条路**（2026-10-20）：控件树优先，控件树不可读时走无障碍文本注入通道 —— 见下一节。
+
+### 输入文字 = 控件树 + 无障碍文本注入通道（2026-10-20）
+
+`type_text` / `press(enter)` 以前只有控件树一条路，树不可读的 App（微信一类）上**能点不能打字**。
+现在多一条：服务配置的 `accessibilityFlags` 里加了 `flagInputMethodEditor`（API 33+），
+`AccessibilityService.getInputMethod().currentInputConnection` 就是**当前聚焦输入框**的连接
+（`TextChannel`），可以 `commitText` / `performEditorAction` / `sendKeyEvent`。
+
+- **不需要用户切换输入法 —— 这一点决定了做法**：只有当前输入法能切回自己
+  （`setInputMethod` 要 IME 的 token 或 `WRITE_SECURE_SETTINGS`，普通应用都没有），所以自建 IME
+  等于把用户的键盘拿走、每做一个任务切一次。这条通道不用切：用户开着的无障碍服务就是通道，
+  键盘仍是用户自己那个。**别改回自建 IME。**
+- **顺序不能反**：控件树优先（它自己 `ACTION_FOCUS`，不要求输入框已有焦点），通道兜底。
+  `press(enter)` 同一条顺序 —— 只补打字、不补发送，任务还是做不完。
+- **前置条件只有一条：输入框必须先拿到焦点**（先 `tap_target` 点一下它）。没焦点就没有连接，
+  报 `text_no_channel`；这条码的说明**必须**给出「先点一下输入框」，否则模型只会原地重试。
+- **五个失败码各对应一个不同的下一步**，判定是纯函数（`device/TextInput.kt`，单测钉住）：
+  `text_unsupported_os` / `text_flag_missing` / `text_commit_rejected` / `text_no_channel` /
+  `text_set_text_rejected`。合成一个码等于什么都没说。
+- **通道只写不读**（不碰 `getSurroundingText`）：那条路**没有读回验证**，工具结果里如实写
+  「未读回验证」，别在文案里假装有；正文不进日志、不进审计。
+- **`flagInputMethodEditor` 属于服务配置**，启用无障碍时才解析：升级 APK 后没重新启用过就不生效。
+  `TextChannel.flagActive()` 读的是系统缓存的那份 `AccessibilityServiceInfo`，所以能分辨
+  「配置没生效」（用户重新开关一次无障碍）与「没有输入框聚焦」（模型先点输入框）。
+- **API 33 以下没有这条通道**（minSdk 28）：退回原行为，报 `text_unsupported_os`。
+- 清单里少这一条 flag 是**静默失败**（编译过、无障碍照样启用、只有输入时才发现）→
+  `AccessibilityServiceConfigTest` 钉住；真机验证步骤见 `docs/android-accessibility.md` §10。
 
 ### 加一个提供商 = 目录 + 存储 + 运行时
 
@@ -608,6 +634,17 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
   -a com.tappet.app.debug.ACTION --es action TAP_TARGET `
   --es frame_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
+
+# 文本注入通道此刻的状态（系统版本 / 配置是否生效 / 有没有输入框连接 / 输入框类型）
+# flagActive=false 就是配置没生效 → 去设置里把无障碍关掉再打开一次
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
+  -a com.tappet.app.debug.ACTION --es action TEXT_CHANNEL
+
+# 绕过控件树直接验文本注入通道的**写入 / 动作键**（树可读时正常路径走控件树，通道成没成看不出来）
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
+  -a com.tappet.app.debug.ACTION --es action IME_TEXT --es text "hello"
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver `
+  -a com.tappet.app.debug.ACTION --es action IME_ENTER
 ```
 
 **帧契约怎么验**（2026-10-17 起，尚无真机记录 —— 验完把结论写回
@@ -735,7 +772,7 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | `tap_target` 报 `OUT_OF_FRAME` | bbox 越出图像范围，**故意不 clamp** → 让模型重给坐标，别改成夹取 |
 | `tap_target` 回「界面似乎没有变化」 | 8×8 指纹的启发式：小面积变化（勾选框、行高亮）它看不出来 → 只能读成「可能没点中」，不是「点击失败」 |
 | 长视觉任务请求报 `IMAGE_OFFLOAD_REQUIRED` | 请求图像预算 20MiB 吃穿 → profile 里 `image-offload` 已启用（丢最老的图重试）；它**永久丢帧**，模型之后拿不到那张图 |
-| 树不可读时 `type_text` 失败 | 没有控件树就没有输入框可写 —— 视觉路径**不解决输入**（自建 IME 见 roadmap §2.5），如实告知用户 |
+| 树不可读时 `type_text` 失败 | 控件树不可读，文本注入通道也没拿到连接 → **先看码**：`text_no_channel` = 输入框没聚焦（先 `tap_target` 点它一下），`text_flag_missing` = 升级后没重新启用过无障碍，`text_unsupported_os` = 设备在 Android 13 以下。见 `docs/android-accessibility.md` §10 |
 | 截图报 `Could not load the "sharp" module` | 生效的是 dsh 自带的 `attachment-local`（依赖 sharp，无 Android 产物）→ profile 里禁用它、挂 `dsh-android-attachments` |
 | 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
 | 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.tappet.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |

@@ -321,8 +321,10 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
 
 ### 已知限制
 
-- **视觉路径不解决输入**：`type_text` / `press(enter)` 都走控件树找输入框，树不可读时没有通道，
-  只能如实告诉用户做不到。要补的是 roadmap §2.5 的自建 IME（`InputConnection.commitText`），还没做。
+- **视觉路径不解决输入**（**2026-10-20 补上了通道，见 §10**）：`type_text` / `press(enter)` 原先
+  只有控件树一条路，树不可读时没有通道，只能如实告诉用户做不到。现在多了一条**不依赖控件树**的
+  注入通道，但它要求输入框**已经拿到焦点** —— 先 `tap_target` 点中输入框才谈得上输入，
+  点不中就仍然做不到。
 - **视觉路径不新增定位能力**。它消掉的是**确定性**的换算错误（12.6% 的系统性偏移），消不掉
   「模型能不能在图上找到目标」这个能力问题。首点命中率要靠真机实测，不能靠契约保证。
 - 图会占请求预算（20MiB、每轮重发历史图）：profile 里已启用 `image-offload`，把「超预算整轮硬失败」
@@ -346,4 +348,82 @@ ListView 滚动都能用语义动作完成；但**部分节点（如聊天列表
 `check-profile.mjs`。**待验**：模型在图上估的绝对像素 bbox 准不准（仓库从没测过坐标回归）、
 `takeScreenshot` 的限流窗口与验证截图是否打架、`image-offload` 与自定义附件实现是否配合、
 ColorOS 下捕获位图尺寸是否等于 `displayMetrics`。验证步骤见 `AGENTS.md` 的真机一节。
+
+## 10. 控件树不可读时的文字输入：无障碍文本注入通道（2026-10-20）
+
+### 问题
+
+`type_text` / `press(enter)` 原先只有一条路：在控件树里找 `isEditable` 的节点，对它
+`ACTION_SET_TEXT` / `ACTION_IME_ENTER`。控件树不可读的 App（微信一类，见 §9）上这条路直接断了 ——
+**没有节点可找**；自绘输入框还会出现「有节点但被拒绝」。于是视觉路径**能点不能打字**：
+「打开微信，给某人发一条消息」这类任务永远差最后一步。
+
+### 先排除的两条路
+
+- **自建 IME**（roadmap §2.5 原先写的做法）：要用户把 Tappet 切成当前输入法才有效果。而
+  **只有当前输入法能切回自己**（`InputMethodManager.setInputMethod` 要 IME 自己的 token 或
+  `WRITE_SECURE_SETTINGS`，普通应用两样都没有），所以「任务前切过去、任务后切回来」做不到；
+  一个无键盘的输入法当默认输入法 = 把用户的键盘拿走。**每做一个需要输入的任务切一次**，不可接受。
+- **剪贴板 + 长按粘贴**：`ACTION_PASTE` 同样要节点；退化成「长按输入框 → 点系统浮层里的粘贴」
+  要赌那个浮层的位置与可用性，而且正文得先进剪贴板（API 29+ 虽然只有持有焦点的应用读得到，
+  仍是多一处落点）。
+
+### 现在的做法：`FLAG_INPUT_METHOD_EDITOR`（API 33+）
+
+系统给无障碍服务留了一条侧门：服务配置里声明 `flagInputMethodEditor` 之后，
+`AccessibilityService.getInputMethod()` 给出一个 `InputMethod`，它的 `currentInputConnection`
+就是**当前聚焦输入框**的连接：
+
+```
+commitText(text, cursor, null)   // 写文本
+performEditorAction(action)      // 按输入框自己声明的动作键（发送 / 搜索）
+sendKeyEvent(KEYCODE_ENTER)      // 没声明动作时的退路
+```
+
+AOSP 对这条 flag 的原话是「makes the AccessibilityService an input method editor with a subset of
+input method capabilities: get the InputConnection and get text selection change notifications」——
+**不需要权限、不需要用户切换输入法、不需要额外授权**：用户已经开着的那个无障碍服务就是通道，
+键盘仍是用户自己那个。连接由系统按「谁拿着焦点」发出，**与控件树可不可读无关**。
+
+### 实现（两处 + 一个纯函数）
+
+| 位置 | 管什么 |
+|---|---|
+| `res/xml/accessibility_service_config.xml` | `accessibilityFlags` 里加 `flagInputMethodEditor`（一行） |
+| `accessibility/TextChannel.kt` | 通道本体：拿连接、写文本、按动作键、报状态（只写不读） |
+| `device/TextInput.kt` | 两条路都不通时报哪个码 —— **纯函数**，单测钉住 |
+
+- **顺序不能反**：控件树优先（它自己会 `ACTION_FOCUS`，不要求输入框先有焦点），通道兜底。
+- `press(enter)` 走同一条顺序 —— 只补上打字、补不上发送，任务还是做不完。
+- 失败码五条，每条对应一个不同的下一步：`text_unsupported_os`（Android 13 以下）/
+  `text_flag_missing`（升级后没重新启用无障碍）/ `text_commit_rejected`（有连接但写不进去）/
+  `text_no_channel`（**最常见**：没有输入框聚焦 → 先点一下输入框）/ `text_set_text_rejected`。
+- 审计：`ev=text_input via=tree|ime_channel|none chars=N`、`ev=ime_enter via=…`。
+
+### 已知限制
+
+- **输入框必须先有焦点**。这是这条通道唯一的前置条件，也是它最实际的短板：视觉路径点不中
+  输入框时，它一样帮不上忙。模型侧拿到的提示是「先 `tap_target` 点一下输入框」。
+- **只写不读**：`getSurroundingText` 用不到，所以通道那条路**没有读回验证**（控件树那条有
+  `readback`）。工具结果里如实写「未读回验证」，确认留给下一步动作。
+- **API 33 以下没有这条通道**（minSdk 28）：退回原来的行为，失败码 `text_unsupported_os`。
+- **`flagInputMethodEditor` 属于服务配置**：启用无障碍时才解析。升级 APK 之后没重新启用过的话
+  它不生效 —— `TextChannel.flagActive()` 读的是系统缓存的那份 `AccessibilityServiceInfo`，
+  所以能**分辨**「配置没生效」与「没有输入框聚焦」这两种完全不同的原因。
+- 正文不进日志、不进审计：`TextChannel` 只报系统版本 / 配置 / 有没有连接 / 输入框类型。
+
+### 真机验证（待做）
+
+1. `adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action TEXT_CHANNEL`
+   → logcat（`TappetDevice`）应报 `text channel: supported=true flagActive=true connection=… editor=…`。
+   **`flagActive=false` 就是没生效**：去设置里把无障碍关掉再打开一次，再验一遍。
+2. 树可读的界面（系统设置搜索框）：点中输入框 → `TYPE_TEXT` → 应报 `via=tree`（**不该**掉进通道）。
+3. **通道的写入与动作键**（隔离验证）：点中一个输入框，
+   `--es action IME_TEXT --es text "hello"` → logcat 应报 `ime text: ok=true chars=5`，
+   且文字真的出现在框里；`--es action IME_ENTER` → 应报 `ime enter: ok=true`，
+   搜索框/输入框自己的动作键被触发。这两步绕开控件树，是「通道成没成」的唯一确定性判据 ——
+   正常路径在树可读时走的是控件树。
+4. 树不可读的界面（微信）：`capture_frame` → `tap_target` 点中输入框 → `TYPE_TEXT` → 应报
+   `via=ime_channel`；再 `PRESS --es key ENTER` 验动作键。
+5. 没点中输入框时 `TYPE_TEXT` → 应报 `text_no_channel`（而不是含糊的「没有可见输入框」）。
 

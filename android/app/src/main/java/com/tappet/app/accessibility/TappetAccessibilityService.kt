@@ -35,6 +35,7 @@ import com.tappet.app.device.SwipeDirection
 import com.tappet.app.device.VisionCode
 import com.tappet.app.device.hasNoReadableNode
 import com.tappet.app.device.renderSnapshot
+import com.tappet.app.device.textInputFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -342,21 +343,47 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     )
   }
 
+  /**
+   * 输入文本：**控件树优先，无障碍文本注入通道兜底**（见 [TextChannel]）。
+   *
+   * 顺序不能反 —— 控件树那条路自己会 `ACTION_FOCUS`，不需要输入框先有焦点；而通道必须有焦点
+   * 才有连接。先试能自己搞定焦点的那条，成功率更高；两条都试过才算失败。
+   *
+   * 树不可读的 App（微信一类）以前到这里就结束了（「没有可见输入框」），
+   * 视觉路径于是**能点不能打字**。现在这条路补上了（AGENTS.md §2.5）。
+   */
   private suspend fun executeTypeText(text: String): DeviceActionResult = withContext(Dispatchers.Default) {
-    val root = applicationRoot() ?: return@withContext DeviceActionResult(false, "应用窗口不可读")
-    val target = findEditable(root) ?: return@withContext DeviceActionResult(false, "当前界面没有可见输入框")
-    if (!target.isFocused) target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-    val accepted = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setTextArguments(text))
-    if (!accepted) return@withContext DeviceActionResult(false, "ACTION_SET_TEXT 被拒绝")
-    // Compose / 自绘输入框异步刷新，等一拍再读回
-    delay(TEXT_VERIFY_DELAY_MS)
-    target.refresh()
-    val readBack = target.text?.toString()
-    if (readBack == text) {
-      DeviceActionResult(true, "已输入 ${text.length} 字符（读回一致）")
-    } else {
-      DeviceActionResult(true, "已尝试输入 ${text.length} 字符（App 未回读一致，实际可能已生效）")
+    val target = applicationRoot()?.let { findEditable(it) }
+    if (target != null) {
+      if (!target.isFocused) target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+      val accepted = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setTextArguments(text))
+      if (accepted) {
+        // Compose / 自绘输入框异步刷新，等一拍再读回
+        delay(TEXT_VERIFY_DELAY_MS)
+        target.refresh()
+        val readBack = target.text?.toString()
+        audit("text_input", "via" to "tree", "chars" to text.length, "readback" to (readBack == text))
+        return@withContext if (readBack == text) {
+          DeviceActionResult(true, "已输入 ${text.length} 字符（读回一致）")
+        } else {
+          DeviceActionResult(true, "已尝试输入 ${text.length} 字符（App 未回读一致，实际可能已生效）")
+        }
+      }
     }
+    if (TextChannel.commit(text)) {
+      // 这条通道只写不读（不碰 getSurroundingText），所以没有读回验证 —— 别在文案里假装有
+      audit("text_input", "via" to "ime_channel", "chars" to text.length)
+      return@withContext DeviceActionResult(true, "已输入 ${text.length} 字符（经无障碍文本注入通道，未读回验证）")
+    }
+    val failure =
+      textInputFailure(
+        hadEditableNode = target != null,
+        channelSupported = TextChannel.supported(),
+        flagActive = TextChannel.flagActive(),
+        channelReady = TextChannel.isReady(),
+      )
+    audit("text_input", "via" to "none", "code" to failure.code)
+    DeviceActionResult(false, failure.summary, code = failure.code)
   }
 
   private fun setTextArguments(text: String): Bundle =
@@ -600,7 +627,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     return jpeg to "image/jpeg"
   }
 
-  private fun executePress(key: PressKey): DeviceActionResult =
+  private suspend fun executePress(key: PressKey): DeviceActionResult =
     when (key) {
       PressKey.BACK -> executeGlobalAction(GLOBAL_ACTION_BACK, "返回")
       PressKey.HOME -> executeGlobalAction(GLOBAL_ACTION_HOME, "主页")
@@ -613,14 +640,36 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     return DeviceActionResult(ok, if (ok) "已按$label" else "$label 失败")
   }
 
-  private fun executeImeEnter(): DeviceActionResult {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-      return DeviceActionResult(false, "press(enter) 需要 Android 11+")
+  /**
+   * 「按输入框自己的动作键」（发送 / 搜索 / 前往）—— 与 [executeTypeText] 同一条顺序：
+   * 控件树优先，无障碍文本注入通道兜底。
+   *
+   * 这一步值得有兜底，因为「发一条消息」的最后一下往往就是它：只补上打字、补不上发送，
+   * 任务还是做不完。
+   */
+  private suspend fun executeImeEnter(): DeviceActionResult {
+    val target = applicationRoot()?.let { findEditable(it) }
+    // ACTION_IME_ENTER 是 API 30 起才有的语义动作，更早的系统只能走下面的通道。
+    if (target != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      val ok = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+      if (ok) {
+        audit("ime_enter", "via" to "tree")
+        return DeviceActionResult(true, "已触发输入框发送/搜索")
+      }
     }
-    val root = applicationRoot() ?: return DeviceActionResult(false, "应用窗口不可读")
-    val target = findEditable(root) ?: return DeviceActionResult(false, "当前界面没有可见输入框")
-    val ok = target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-    return DeviceActionResult(ok, if (ok) "已触发输入框发送/搜索" else "输入框拒绝 IME ENTER")
+    if (TextChannel.enter()) {
+      audit("ime_enter", "via" to "ime_channel")
+      return DeviceActionResult(true, "已触发输入框发送/搜索（经无障碍文本注入通道）")
+    }
+    val failure =
+      textInputFailure(
+        hadEditableNode = target != null,
+        channelSupported = TextChannel.supported(),
+        flagActive = TextChannel.flagActive(),
+        channelReady = TextChannel.isReady(),
+      )
+    audit("ime_enter", "via" to "none", "code" to failure.code)
+    return DeviceActionResult(false, failure.summary, code = failure.code)
   }
 
   private suspend fun executeLaunchApp(query: String): DeviceActionResult = withContext(Dispatchers.Default) {

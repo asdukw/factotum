@@ -29,7 +29,13 @@ import kotlinx.coroutines.launch
  * adb shell ... --es action SWIPE --es direction DOWN
  * adb shell ... --es action CAPTURE_FRAME
  * adb shell ... --es action TAP_TARGET --es frame_id f1 --ei x1 .. --ei y1 .. --ei x2 .. --ei y2 ..
+ * adb shell ... --es action TEXT_CHANNEL
+ * adb shell ... --es action IME_TEXT --es text "hello"   # 绕过控件树，只验文本注入通道
  * ```
+ *
+ * `TEXT_CHANNEL` 不驱动动作，只把无障碍文本注入通道的状态打到 logcat（系统版本 / 配置是否
+ * 生效 / 有没有输入框连接 / 输入框类型）；`IME_TEXT` 直接调通道的写入 —— 两者合起来能在
+ * 没有 UI 的情况下把这条通道验完（正常路径在树可读时走控件树，通道有没有写成功看不出来）。
  *
  * `--ez logPayload true` 会把读屏全文打进 logcat —— **仅供调试**，默认关闭（隐私红线）。
  */
@@ -50,6 +56,42 @@ class DeviceActionReceiver : BroadcastReceiver() {
           { Log.i(TAG, "action=AGENT_MODE on=$on touchExploration=" + service.touchExplorationActive) },
           600L,
         )
+      return
+    }
+    if (actionName == "TEXT_CHANNEL") {
+      // 不驱动任何动作，只报文本注入通道此刻的状态（无 UI 时验证它）。
+      // 只打结构：系统版本 / 配置是否生效 / 有没有连接 / 输入框类型 —— 不打正文。
+      val pending = goAsync()
+      CoroutineScope(Dispatchers.Default).launch {
+        try {
+          Log.i(TAG, "text channel: ${TextChannel.describe()}")
+        } finally {
+          pending.finish()
+        }
+      }
+      return
+    }
+    if (actionName == "IME_TEXT" || actionName == "IME_ENTER") {
+      // 绕过控件树，直接把文本交给无障碍文本注入通道 —— 用来**隔离**验证这条通道：
+      // 树可读的界面上正常路径走的是控件树，通道有没有成功从外面看不出来。
+      // IME_TEXT 只打长度，不打正文（隐私红线）。
+      val text = intent.getStringExtra(EXTRA_TEXT)
+      if (actionName == "IME_TEXT" && text == null) {
+        Log.w(TAG, "IME_TEXT 缺 $EXTRA_TEXT")
+        return
+      }
+      val pending = goAsync()
+      CoroutineScope(Dispatchers.Default).launch {
+        try {
+          if (actionName == "IME_TEXT") {
+            Log.i(TAG, "ime text: ok=${TextChannel.commit(text!!)} chars=${text.length}")
+          } else {
+            Log.i(TAG, "ime enter: ok=${TextChannel.enter()}")
+          }
+        } finally {
+          pending.finish()
+        }
+      }
       return
     }
     val action = parse(actionName, intent)

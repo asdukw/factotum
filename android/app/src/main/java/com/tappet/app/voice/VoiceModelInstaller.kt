@@ -1,6 +1,7 @@
 package com.tappet.app.voice
 
 import android.content.Context
+import com.tappet.app.update.UpdateHttp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,11 +43,6 @@ object VoiceModelInstaller {
 
   private var job: Job? = null
 
-  /** 装完 / 失败后由界面调一次，把状态清掉。 */
-  fun clear() {
-    if (job?.isActive != true) _state.value = null
-  }
-
   fun install(
     context: Context,
     kind: String,
@@ -60,26 +56,31 @@ object VoiceModelInstaller {
         try {
           // 先装本体、再装伴生模型（[VoiceModel.companions]，目前就是标点那种）：
           // 中途取消时留下的是「识别能用、标点还差一点」，反过来则是一份没人用得上的标点。
-          // **已经装好的跳过** —— 老用户升级后点一次「补下」只拉缺的那一份，不会把 82MB 的
-          // 识别模型再下一遍。
+          // **已经装好的跳过** —— 老用户升级后点一次「补下」只拉缺的那一份。
           //
           // 进度条会**从头走两遍**（两条归档是两次下载），这是如实反映而不是 bug：
           // 界面上那一行的按钮写的就是两样加起来的大小。
-          for (target in listOf(model) + model.companions) {
-            if (VoiceModelStore.isInstalled(app, target.kind, target)) continue
+          for (target in installOrder(model) { VoiceModelStore.isInstalled(app, it.kind, it) }) {
             VoiceModelDownloader.install(app, target.kind, target) { progress ->
               _state.value = State(kind, model.id, progress = progress)
             }
           }
           _state.value = null
         } catch (cancelled: CancellationException) {
+          // 用户取消 / 被下一次安装顶掉：**不留错误**，回到「没在装」。
           _state.value = null
           throw cancelled
         } catch (
-          // 兜底：网络断、磁盘满、归档坏了都从这里出去，消息直接给用户看。
+          // 兜底：网络断、磁盘满、归档坏了都从这里出去。
           @Suppress("TooGenericExceptionCaught") error: Throwable,
         ) {
-          _state.value = State(kind, model.id, error = error.message ?: error.javaClass.simpleName)
+          // 原因翻译成用户能行动的一句话 —— 这条路径上九成是「连不上 GitHub」（VPN 没开），
+          // 而原始异常消息（带 IP、端口、30000ms）对用户没有一句话是可行动的。
+          //
+          // **失败状态留着不自动清**：界面据此把那一行的按钮换成「重试」。用户开好 VPN
+          // 回来还是同一个页面，点一下就从半截文件接着下（[VoiceModelDownloader] 的续传）。
+          // 不做自动重试：这条链路上自动重试会让人以为「已经在下了」，而其实一次都没连上。
+          _state.value = State(kind, model.id, error = UpdateHttp.failReason(error))
         }
       }
   }
@@ -90,3 +91,18 @@ object VoiceModelInstaller {
     _state.value = null
   }
 }
+
+/**
+ * 这次安装真正要下的那几份：本体 + 伴生模型（[VoiceModel.companions]），**已经装好的跳过**。
+ *
+ * 抽成纯函数是为了能离开设备验证 —— 它决定了「老用户点一次『补下』只拉缺的那 62MB」。
+ * 写反了（无条件把本体也下一遍）在界面上**看不出来**：进度条照样走，只是流量莫名多花了
+ * 82MB，而且要等第二次下载失败才会有人怀疑。
+ *
+ * 顺序也有意义：**本体在前**。中途取消时留下的是「识别能用、标点还差一点」；
+ * 反过来则是一份没人用得上的标点模型。
+ */
+internal fun installOrder(
+  model: VoiceModel,
+  installed: (VoiceModel) -> Boolean,
+): List<VoiceModel> = (listOf(model) + model.companions).filterNot(installed)

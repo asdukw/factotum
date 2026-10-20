@@ -106,7 +106,9 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     viewModelScope.launch {
       VoiceModelInstaller.state.collect { installing ->
         _state.update { it.copy(installing = installing) }
-        if (installing == null) refreshModels()
+        // 成功（null）与**失败**都要刷新：失败可能发生在伴生模型那一步（本体已经装好了），
+        // 也可能发生在第二个归档 —— 那一行的「还差什么 / 已下载多少」得跟着变。
+        if (installing == null || installing.error != null) refreshModels()
       }
     }
   }

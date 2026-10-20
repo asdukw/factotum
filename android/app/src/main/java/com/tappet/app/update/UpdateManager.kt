@@ -147,7 +147,9 @@ object UpdateManager {
           .onFailure { error ->
             // 取消不是失败：半截文件留着，状态退回「可更新」让用户再点一次就能接着下。
             if (error is CancellationException) throw error
-            _state.value = State.Failed(error.message ?: error.javaClass.simpleName, release)
+            // 失败原因翻译成用户能行动的一句话（连不上 GitHub = 开 VPN，服务器 404 = 重试没用），
+            // 而不是把异常消息原样甩出去。见 UpdateHttp.failReason。
+            _state.value = State.Failed(UpdateHttp.failReason(error), release)
           }
       }
   }

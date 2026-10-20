@@ -303,7 +303,8 @@ private fun ModelRow(
         onSelect = onSelect,
       )
     }
-    if (installing != null) {
+    // 失败时不画进度条：那一条已经结束了，留着一条走到一半的进度条会让人以为还在下。
+    if (installing != null && installing.error == null) {
       Spacer(Modifier.height(8.dp))
       ModelProgress(installing)
     }
@@ -325,6 +326,11 @@ private fun ModelAction(
   onSelect: () -> Unit,
 ) {
   when {
+    // 失败：同一个位置直接变成「重试」。用户刚看完「连不上 github.com」，下一步动作就是
+    // 开 VPN 再点一次 —— 不该先让他点「取消」把错误清掉（以前这里就停在一个写着「取消」的
+    // 按钮上，语义和下一步动作正好相反）。
+    installing?.error != null -> Button(onClick = onInstall) { Text("重试") }
+
     installing != null -> TextButton(onClick = onCancel) { Text("取消") }
 
     // 本体没装：一次把伴生的也下了，按钮上的数字是两样加起来 —— 用户不必知道里面有两份。

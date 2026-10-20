@@ -829,6 +829,9 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 广播后卡在 `debug task start`、再没有下文 | **cached app freezer 把进程冻住了**（Android 11+，约 10 秒）。首次启动要解压 dsh 运行时（模拟器实测 **122 秒**），期间没有前台服务就必冻 → 先 `am start` 把 App 拉到前台再广播。广播**不在前台的 FGS 白名单里**，`startForegroundService` 会抛 `ForegroundServiceStartNotAllowedException`，所以接收器里那一步是尽力而为（AlarmManager 那条路有白名单，不受影响） |
 | llama.cpp 在骁龙上报 `HTP0 failed to open session ... 0x80000406` | 没设 `ADSP_LIBRARY_PATH=<lib 目录>`。HTP 的 skel URI 是硬编码的 `file:///libggml-htp-v81.so`，由 DSP 侧 fastrpc 按这个变量搜索；官方 README 与 `run.py` 都没写。见 `docs/on-device-inference.md` |
 | 更新时下载失败报 `failed to connect to github.com` | 模拟器 `adb emu network speed` 会把 NAT 弄坏（宿主能连通、模拟器连不上同一个 IP）→ 冷启一次（`-no-snapshot-load`）。`-no-snapshot-save` 只防存，**不防读** |
+| 真机下载模型报「连不上 github.com」 | 手机没开 VPN。**不做自动重试**（会让人以为已经在下了）→ 点那一条上的**重试**，从半截文件接着下。建连超时 15 秒、读超时 15 秒（单次 read，不影响慢速下载）。失败原因由 `UpdateHttp.failReason` 翻译，别再退回「异常消息原样显示」 |
+| 下载失败后那一行停在「取消」 | 已经不再这样：失败状态留着，按钮变成**重试**。要是又看到了，检查 `VoiceModelInstaller` 的失败分支有没有把 `error` 放进 `State`（放进去了，`ModelAction` 才会走重试那一支） |
+| 模型解包报「归档坏了」/ 下了一半的文件被当成完整 | 先看是不是下载中途断线：`read` 对「读完」与「服务器关了连接」给的都是 -1 → `pump` 里按 `Content-Length` 比对，不够就抛 `TRANSFER_TRUNCATED`（半截文件留着续传） |
 | 点「更新」回一句「更新没完成：NO_SETTINGS」 | 从 application context 起系统设置页少了 `FLAG_ACTIVITY_NEW_TASK` → `AppUpdater.unknownSourcesIntent` |
 | 进度条一直显示「已下载 0 B」 | 服务器没给 `Content-Length`（分块传输）→ 显示不确定进度条，不编一个假百分比。**不要**改成「卡在 0% 的确定进度条」 |
 | 取消下载后进度条又从 0% 开始 | 半截文件没被复用：`update-<版本>.apk.part` 与它的 `.etag` 要一起留着；`.etag` 丢了就只能裸 `Range` |

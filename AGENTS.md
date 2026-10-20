@@ -227,17 +227,7 @@ key must match the profile key exactly. Full rules: `docs/providers.md`.
 
 ### 7.5 Other subsystems
 
-| Change | Read first | Then |
-|---|---|---|
-| Connectors (Gmail etc.) | `docs/email-connector.md` | plugin name in three places + `bundle-dsh.ps1` + reinstall |
-| Web search | `docs/web-search.md` | `bundle-dsh.ps1` + reinstall; verify the search model actually searches |
-| Voice (TTS/STT) | `docs/voice.md` | unit tests; device check per §8 |
-| In-app updates | `docs/app-updater.md` | `UpdateDownloaderResumeTest` |
-| Linux on the phone | `docs/termux.md` | plugin commit first + `bundle-dsh.ps1` |
-| Memory / context injection | `docs/memory.md` | — |
-| Scheduled tasks | `docs/scheduled-tasks.md` | — |
-| `ask_user_question` | `docs/user-questions.md` | — |
-| On-device inference | `docs/on-device-inference.md` | — |
+Everything else is routed by §11: change → document → follow-up steps.
 
 STT invariants that break quietly: recognition runs **per VAD segment** (`RecognizedText.joinSegments`
 joins the texts — never concatenate the session into one decode), and the punctuation model is a
@@ -300,17 +290,10 @@ Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, `TERMUX`, voice `ASR`/`V
 
 ### 8.3 Task audit
 
-```powershell
-node tools/audit/selftest.mjs
-node tools/audit/run-suite.mjs
-node tools/audit/collect.mjs --label <name>
-```
-
-`tools/audit/` collects; `.claude/agents/tappet-auditor.md` judges (details: `tools/audit/README.md`).
-`tools/audit/runs/` contains screen text — treat it as sensitive; reports carry structure only.
-`suite.json`: changing task text invalidates history; add new ids. Keep `runs/index.json` across runs.
-Never hardcode the package or session directory; read `applicationId`. Keep durable artifacts in
-`tools/` or `docs/`, not `tmp/`.
+`node tools/audit/selftest.mjs` → `run-suite.mjs` → `collect.mjs --label <name>`;
+`.claude/agents/tappet-auditor.md` judges. Rules (sensitive `runs/`, stable `suite.json` ids,
+keep `runs/index.json`, never hardcode the package) live in `tools/audit/README.md`. Keep durable
+artifacts in `tools/` or `docs/`, not `tmp/`.
 
 ## 9. Commit and PR conventions
 
@@ -352,27 +335,27 @@ Full table: `docs/pitfalls.md`.
 | Push rejected with `GH013` | Distinguish PR rules from push protection; the latter means GitHub sees a secret |
 | Model download says the network is unreachable | Phone has no VPN → tap **retry** on that row; it resumes from the partial file. No auto-retry by design (`UpdateHttp.failReason`) |
 
-## 11. Docs index
+## 11. Routing index
 
-| Doc | Read when |
-|---|---|
-| `docs/dsh-android.md` | Changing the agent runtime, embedded Node, or dsh assembly |
-| `docs/android-accessibility.md` | Changing the execution layer, visual path, text injection, or device/ROM |
-| `docs/providers.md` | Changing providers, models, modalities, or runtime routing |
-| `docs/voice.md` | Changing TTS/STT: engine trade-offs, model licenses, VAD thresholds, device checks |
-| `docs/email-connector.md` | Changing connectors: boundaries, privacy gates, OAuth registration |
-| `docs/web-search.md` | Changing web search: protocol gate, real-search gate, privacy |
-| `docs/app-updater.md` | Changing in-app updates: resume details, verification |
-| `docs/termux.md` | Changing Linux-on-phone: token delivery, script constraints, ColorOS lifecycle |
-| `docs/memory.md` | Changing memory / context injection |
-| `docs/scheduled-tasks.md` | Changing scheduled tasks |
-| `docs/user-questions.md` | Changing `ask_user_question` |
-| `docs/on-device-inference.md` | Changing on-device models / inference |
-| `docs/releasing.md` | Changing workflows, releasing, or signing material |
-| `docs/pitfalls.md` | Troubleshooting |
-| `docs/roadmap.md` | Planning direction (unverified hypotheses, not commitments) |
-| `docs/releases/<tag>.md` | Release notes |
-| `README.md` / `CHANGELOG.md` | Public overview and visible changes |
+| Change / question | Read | Then |
+|---|---|---|
+| Agent runtime, embedded Node, dsh assembly | `docs/dsh-android.md` | — |
+| Execution layer, visual path, text injection, device/ROM | `docs/android-accessibility.md` | — |
+| Providers, models, modalities, runtime routing | `docs/providers.md` | §7.4 |
+| Connectors (Gmail etc.) | `docs/email-connector.md` | plugin name in three places + `bundle-dsh.ps1` + reinstall |
+| Web search | `docs/web-search.md` | `bundle-dsh.ps1` + reinstall; verify the search model actually searches |
+| Voice (TTS/STT) | `docs/voice.md` | unit tests; device check per §8 |
+| In-app updates | `docs/app-updater.md` | `UpdateDownloaderResumeTest` |
+| Linux on the phone | `docs/termux.md` | plugin commit first + `bundle-dsh.ps1` |
+| Memory / context injection | `docs/memory.md` | — |
+| Scheduled tasks | `docs/scheduled-tasks.md` | — |
+| `ask_user_question` | `docs/user-questions.md` | — |
+| On-device inference | `docs/on-device-inference.md` | — |
+| Releasing, signing material | `docs/releasing.md` | §7.6 |
+| Troubleshooting | `docs/pitfalls.md` | §10 |
+| Planning direction (unverified hypotheses) | `docs/roadmap.md` | — |
+| Release notes | `docs/releases/<tag>.md` | §7.6 |
+| Public overview / visible changes | `README.md` / `CHANGELOG.md` | §7.6 |
 
 ## 12. Editing this file
 

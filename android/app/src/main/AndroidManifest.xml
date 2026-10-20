@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 语音输入：麦克风。音频只在本进程内存里活到识别完（本地模型，不出设备），
+         权限弹窗由聊天页的麦克风按钮触发。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- 设置闹钟（set_alarm → AlarmClock.ACTION_SET_ALARM）。AOSP / Pixel 的 DeskClock 把
          处理这个 action 的 HandleSetApiCalls 声明成 android:permission=...SET_ALARM，
          不声明就 SecurityException（模拟器实测）。protectionLevel=normal，装包即授，

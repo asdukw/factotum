@@ -54,9 +54,12 @@ internal class LocalRecognizer(
   fun unavailableReason(): String? =
     when {
       model == null && modelId == null -> "还没下载识别模型"
+
       model == null -> "模型 $modelId 不在可选目录里"
+
       !VoiceModelStore.isInstalled(appContext, VoiceModelKinds.ASR, model) ->
         "模型「${model.label}」还没下载完"
+
       else -> null
     }
 

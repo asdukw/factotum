@@ -3,12 +3,14 @@ package com.tappet.app.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.tappet.app.voice.TtsModel
+import com.tappet.app.voice.AsrModelCatalog
 import com.tappet.app.voice.TtsModelCatalog
-import com.tappet.app.voice.TtsModelInstaller
-import com.tappet.app.voice.TtsModelStore
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
+import com.tappet.app.voice.VoiceModel
+import com.tappet.app.voice.VoiceModelInstaller
+import com.tappet.app.voice.VoiceModelKinds
+import com.tappet.app.voice.VoiceModelStore
 import com.tappet.app.voice.VoiceReader
 import com.tappet.app.voice.VoiceSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,15 +20,19 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * 语音设置页状态：引擎、自动朗读、语速、音色，以及本地模型的下载与管理。
+ * 语音设置页状态：朗读（引擎 / 自动朗读 / 语速 / 音色）与语音输入（识别模型），
+ * 以及本地模型的下载与管理。
+ *
+ * 朗读与识别**各有一套模型列表与选中项**（`models` / `asrModels`）：它们是两件独立的事，
+ * 一个用户完全可能想用本地识别 + 系统朗读。共用一套槽位等于逼他二选一。
  *
  * 引擎有「可用 / 不可用」两态，不可用时把原因原样显示给用户（本地引擎没下模型就是最常见的
  * 那条）—— 一个选了却没反应的选项比一个写着「还没下载模型」的选项糟糕得多。
  */
 class VoiceViewModel(private val appContext: Context) : ViewModel() {
-  /** 目录里的一个模型在这台设备上的状态。 */
+  /** 目录里的一个模型在这台设备上的状态。合成与识别共用这个形状。 */
   data class ModelUi(
-    val model: TtsModel,
+    val model: VoiceModel,
     val installed: Boolean,
     val installedBytes: Long,
     /** 上次没下完的归档还剩多少（> 0 说明会续传）。 */
@@ -42,11 +48,16 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     /** 每个引擎不可用的原因（null = 可用）。两个都显示，用户不必先切过去才知道能不能用。 */
     val engineReasons: Map<String, String?> = emptyMap(),
     val loadingVoices: Boolean = false,
+    /** 朗读模型。 */
     val models: List<ModelUi> = emptyList(),
-    /** 选中的本地模型 id；null = 还没选。 */
+    /** 识别模型。 */
+    val asrModels: List<ModelUi> = emptyList(),
+    /** 朗读选中的本地模型 id；null = 还没选。 */
     val selectedModelId: String? = null,
+    /** 识别选中的模型 id；null = 还没选。 */
+    val selectedAsrModelId: String? = null,
     /** 正在下载 / 解包的模型；null = 没有在装。 */
-    val installing: TtsModelInstaller.State? = null,
+    val installing: VoiceModelInstaller.State? = null,
   ) {
     /** 界面上的语速文案。`1.0x` 读起来比 `100%` 更像语速。 */
     val rateLabel: String get() = "%.1fx".format(rate)
@@ -56,6 +67,10 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     /** 本地引擎是否已经可用（选了模型且装好了）。 */
     val localReady: Boolean
       get() = models.any { it.model.id == selectedModelId && it.installed }
+
+    /** 语音输入能不能用（选了识别模型且装好了）。 */
+    val dictationReady: Boolean
+      get() = asrModels.any { it.model.id == selectedAsrModelId && it.installed }
   }
 
   private val _state =
@@ -66,6 +81,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
         rate = VoiceSettings.rate(appContext),
         selectedVoice = VoiceSettings.systemVoice(appContext),
         selectedModelId = VoiceSettings.localModel(appContext),
+        selectedAsrModelId = VoiceSettings.asrModel(appContext),
       ),
     )
   val state: StateFlow<UiState> = _state.asStateFlow()
@@ -75,7 +91,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     refreshModels()
     // 下载结束后刷新一次：装好了模型，「本地引擎」那一行与可用性都要立刻变。
     viewModelScope.launch {
-      TtsModelInstaller.state.collect { installing ->
+      VoiceModelInstaller.state.collect { installing ->
         _state.update { it.copy(installing = installing) }
         if (installing == null) refreshModels()
       }
@@ -110,26 +126,43 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     VoiceReader.currentEngine(appContext).selectVoice(voiceId)
   }
 
-  /** 选中一个本地模型。选完顺手切到本地引擎 —— 用户点了模型就是想说这个声音。 */
-  fun selectModel(model: TtsModel) {
-    VoiceSettings.setLocalModel(appContext, model.id)
-    VoiceReader.stop()
-    _state.update { it.copy(selectedModelId = model.id) }
-    selectEngine(VoiceEngines.LOCAL)
+  /**
+   * 选中一个模型。朗读那边顺手切到本地引擎（用户点了模型就是想说这个声音）；
+   * 识别那边不用切引擎 —— 语音输入只有本地这一条路。
+   */
+  fun selectModel(
+    kind: String,
+    model: VoiceModel,
+  ) {
+    if (kind == VoiceModelKinds.TTS) {
+      VoiceSettings.setLocalModel(appContext, model.id)
+      VoiceReader.stop()
+      _state.update { it.copy(selectedModelId = model.id) }
+      selectEngine(VoiceEngines.LOCAL)
+    } else {
+      VoiceSettings.setAsrModel(appContext, model.id)
+      _state.update { it.copy(selectedAsrModelId = model.id) }
+    }
   }
 
-  fun installModel(model: TtsModel) {
-    TtsModelInstaller.install(appContext, model)
+  fun installModel(
+    kind: String,
+    model: VoiceModel,
+  ) {
+    VoiceModelInstaller.install(appContext, kind, model)
   }
 
   fun cancelInstall() {
-    TtsModelInstaller.cancel()
+    VoiceModelInstaller.cancel()
   }
 
   /** 删除一个已下载的模型。删的正是当前选中的那个时，引擎要重新判定可用性。 */
-  fun deleteModel(model: TtsModel) {
-    VoiceReader.stop()
-    TtsModelStore.delete(appContext, model.id)
+  fun deleteModel(
+    kind: String,
+    model: VoiceModel,
+  ) {
+    if (kind == VoiceModelKinds.TTS) VoiceReader.stop()
+    VoiceModelStore.delete(appContext, kind, model.id)
     refreshModels()
     refreshEngine()
   }
@@ -154,20 +187,27 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
   }
 
   private fun refreshModels() {
-    val models =
-      TtsModelCatalog.ALL.map { model ->
-        ModelUi(
-          model = model,
-          installed = TtsModelStore.isInstalled(appContext, model),
-          installedBytes = TtsModelStore.installedBytes(appContext, model.id),
-          partialBytes = TtsModelStore.archivePart(appContext, model.id).takeIf { it.isFile }?.length() ?: 0L,
-        )
-      }
-    _state.update { it.copy(models = models) }
+    _state.update { current ->
+      current.copy(
+        models = TtsModelCatalog.ALL.map { modelUi(VoiceModelKinds.TTS, it) },
+        asrModels = AsrModelCatalog.ALL.map { modelUi(VoiceModelKinds.ASR, it) },
+      )
+    }
     // 装完 / 删掉之后，本地引擎的「可用性」跟着变。
     val localReason = VoiceReader.reasonFor(appContext, VoiceEngines.LOCAL)
     _state.update { current -> current.copy(engineReasons = current.engineReasons + (VoiceEngines.LOCAL to localReason)) }
   }
+
+  private fun modelUi(
+    kind: String,
+    model: VoiceModel,
+  ): ModelUi =
+    ModelUi(
+      model = model,
+      installed = VoiceModelStore.isInstalled(appContext, kind, model),
+      installedBytes = VoiceModelStore.installedBytes(appContext, kind, model.id),
+      partialBytes = VoiceModelStore.archivePart(appContext, kind, model.id).takeIf { it.isFile }?.length() ?: 0L,
+    )
 
   private companion object {
     const val PREVIEW_TEXT = "你好，我是 Tappet。这是当前的朗读效果，语速和音色都可以在设置里调整。"

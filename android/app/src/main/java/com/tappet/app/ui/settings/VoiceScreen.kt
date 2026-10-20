@@ -35,11 +35,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.tappet.app.voice.TtsModel
-import com.tappet.app.voice.TtsModelDownloader
-import com.tappet.app.voice.TtsModelInstaller
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
+import com.tappet.app.voice.VoiceModel
+import com.tappet.app.voice.VoiceModelDownloader
+import com.tappet.app.voice.VoiceModelInstaller
+import com.tappet.app.voice.VoiceModelKinds
 
 /**
  * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色，以及本地模型的下载管理。
@@ -83,10 +84,10 @@ internal fun VoiceScreen(
   onRateChange: (Float) -> Unit,
   onSelectVoice: (String?) -> Unit,
   onPreview: () -> Unit,
-  onSelectModel: (TtsModel) -> Unit,
-  onInstallModel: (TtsModel) -> Unit,
+  onSelectModel: (String, VoiceModel) -> Unit,
+  onInstallModel: (String, VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
-  onDeleteModel: (TtsModel) -> Unit,
+  onDeleteModel: (String, VoiceModel) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   var voiceSheetOpen by remember { mutableStateOf(false) }
@@ -105,7 +106,11 @@ internal fun VoiceScreen(
       // 模型列表只在选了本地引擎时出现：没选它的时候，这一组只是噪音。
       if (state.engineId == VoiceEngines.LOCAL) {
         ModelSection(
-          state = state,
+          title = "朗读模型",
+          kind = VoiceModelKinds.TTS,
+          models = state.models,
+          selectedId = state.selectedModelId,
+          installing = state.installing,
           onSelectModel = onSelectModel,
           onInstallModel = onInstallModel,
           onCancelInstall = onCancelInstall,
@@ -140,6 +145,14 @@ internal fun VoiceScreen(
         Spacer(Modifier.height(12.dp))
         InfoBanner("当前引擎不可用：$reason")
       }
+
+      DictationSection(
+        state = state,
+        onSelectModel = onSelectModel,
+        onInstallModel = onInstallModel,
+        onCancelInstall = onCancelInstall,
+        onDeleteModel = onDeleteModel,
+      )
       Spacer(Modifier.height(24.dp))
     }
   }
@@ -180,34 +193,78 @@ private fun EngineSection(state: VoiceViewModel.UiState, onSelectEngine: (String
 /** 本地模型：下载 / 选中 / 删除。下载中的那一条把进度画在原地。 */
 @Composable
 private fun ModelSection(
-  state: VoiceViewModel.UiState,
-  onSelectModel: (TtsModel) -> Unit,
-  onInstallModel: (TtsModel) -> Unit,
+  title: String,
+  kind: String,
+  models: List<VoiceViewModel.ModelUi>,
+  selectedId: String?,
+  installing: VoiceModelInstaller.State?,
+  onSelectModel: (String, VoiceModel) -> Unit,
+  onInstallModel: (String, VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
-  onDeleteModel: (TtsModel) -> Unit,
+  onDeleteModel: (String, VoiceModel) -> Unit,
 ) {
-  SectionLabel("本地模型")
+  SectionLabel(title)
   SettingsGroup {
-    state.models.forEachIndexed { index, model ->
+    models.forEachIndexed { index, model ->
       if (index > 0) SettingsDivider()
       ModelRow(
         model = model,
-        selected = model.model.id == state.selectedModelId,
-        installing = state.installing?.takeIf { it.modelId == model.model.id },
-        onSelect = { onSelectModel(model.model) },
-        onInstall = { onInstallModel(model.model) },
+        selected = model.model.id == selectedId,
+        // 同一时刻只装一个（VoiceModelInstaller），所以进度条只会出现在一条上；
+        // 但要按**种类**匹配，否则装朗读模型时识别那一组也会跟着画进度条。
+        installing = installing?.takeIf { it.kind == kind && it.modelId == model.model.id },
+        onSelect = { onSelectModel(kind, model.model) },
+        onInstall = { onInstallModel(kind, model.model) },
         onCancel = onCancelInstall,
-        onDelete = { onDeleteModel(model.model) },
+        onDelete = { onDeleteModel(kind, model.model) },
       )
     }
   }
+}
+
+/**
+ * 语音输入：识别模型的选择与管理。
+ *
+ * **没有「引擎」可选**，与朗读那边不对称，这是刻意的：识别只有本机一条路。
+ * Android 的系统识别（`SpeechRecognizer`）在多数 ROM 上会把音频发给厂商的云 ——
+ * 用户的**声音**比屏幕正文更私密，这条出网路径需要一个比「省事」更硬的理由。
+ * 理由与实测见 `docs/voice.md`。
+ */
+@Composable
+private fun DictationSection(
+  state: VoiceViewModel.UiState,
+  onSelectModel: (String, VoiceModel) -> Unit,
+  onInstallModel: (String, VoiceModel) -> Unit,
+  onCancelInstall: () -> Unit,
+  onDeleteModel: (String, VoiceModel) -> Unit,
+) {
+  Spacer(Modifier.height(20.dp))
+  ModelSection(
+    title = "语音输入（识别模型）",
+    kind = VoiceModelKinds.ASR,
+    models = state.asrModels,
+    selectedId = state.selectedAsrModelId,
+    installing = state.installing,
+    onSelectModel = onSelectModel,
+    onInstallModel = onInstallModel,
+    onCancelInstall = onCancelInstall,
+    onDeleteModel = onDeleteModel,
+  )
+  Spacer(Modifier.height(12.dp))
+  InfoBanner(
+    if (state.dictationReady) {
+      "语音输入在本机识别，音频不出设备、不落盘。说话停顿约 1 秒自动结束，也可以点麦克风结束。"
+    } else {
+      "还没有可用的识别模型：下载上面任意一个，聊天页的麦克风就能用了。"
+    },
+  )
 }
 
 @Composable
 private fun ModelRow(
   model: VoiceViewModel.ModelUi,
   selected: Boolean,
-  installing: TtsModelInstaller.State?,
+  installing: VoiceModelInstaller.State?,
   onSelect: () -> Unit,
   onInstall: () -> Unit,
   onCancel: () -> Unit,
@@ -259,7 +316,7 @@ private fun ModelRow(
 @Composable
 private fun ModelAction(
   model: VoiceViewModel.ModelUi,
-  installing: TtsModelInstaller.State?,
+  installing: VoiceModelInstaller.State?,
   selected: Boolean,
   onInstall: () -> Unit,
   onCancel: () -> Unit,
@@ -279,10 +336,10 @@ private fun ModelAction(
 }
 
 @Composable
-private fun ModelProgress(installing: TtsModelInstaller.State) {
+private fun ModelProgress(installing: VoiceModelInstaller.State) {
   val progress = installing.progress
   when (progress) {
-    is TtsModelDownloader.Progress.Downloading ->
+    is VoiceModelDownloader.Progress.Downloading ->
       if (progress.known) {
         LinearProgressIndicator(
           progress = { progress.percent / 100f },
@@ -293,7 +350,7 @@ private fun ModelProgress(installing: TtsModelInstaller.State) {
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
       }
 
-    TtsModelDownloader.Progress.Extracting -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    VoiceModelDownloader.Progress.Extracting -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
     null -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
   }

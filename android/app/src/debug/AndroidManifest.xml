@@ -18,6 +18,14 @@
                 <action android:name="com.tappet.app.debug.NODE" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".voice.VoiceDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.tappet.app.debug.VOICE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

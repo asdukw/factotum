@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -66,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +86,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -105,7 +108,6 @@ import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.ui.components.ProviderModelIcon
-import androidx.core.content.ContextCompat
 import com.tappet.app.voice.RecognizedText
 import com.tappet.app.voice.VoiceInput
 import com.tappet.app.voice.VoiceReader
@@ -282,6 +284,50 @@ private fun VoiceErrorLinger(error: String?) {
       delay(VOICE_ERROR_LINGER_MS)
       VoiceReader.clearError()
     }
+  }
+}
+
+/**
+ * 麦克风的点击入口：**没权限就申请，有权限就开录**。
+ *
+ * 权限弹窗只能从界面发起（ColorOS 会拦 adb 的 `pm grant`）。授完直接开录，
+ * 不让用户再点一次麦克风 —— 他刚才点的就是「我要说话」。
+ */
+@Composable
+private fun rememberDictationLauncher(): () -> Unit {
+  val context = LocalContext.current
+  val permission =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) VoiceInput.start(context) else VoiceInput.clearError()
+    }
+  return remember(context, permission) {
+    {
+      if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+        PackageManager.PERMISSION_GRANTED
+      ) {
+        permission.launch(Manifest.permission.RECORD_AUDIO)
+      } else {
+        VoiceInput.toggle(context)
+      }
+    }
+  }
+}
+
+/**
+ * 识别结果回填输入框：**追加**而不是覆盖 —— 用户可能已经打了半句，或者连着说了两段。
+ * 取走结果（[VoiceInput.clearResult]）再回填，避免旋转 / 重组时把同一段追加两遍。
+ *
+ * 回调过一层 `rememberUpdatedState`：回填时要用**最新**的输入内容，而
+ * `LaunchedEffect` 只在结果变化时重启。
+ */
+@Composable
+private fun DictationResultSink(onAppend: (String) -> Unit) {
+  val result by VoiceInput.result.collectAsStateWithLifecycle()
+  val append by rememberUpdatedState(onAppend)
+  LaunchedEffect(result?.id) {
+    val text = result?.text ?: return@LaunchedEffect
+    VoiceInput.clearResult()
+    append(text)
   }
 }
 
@@ -466,24 +512,9 @@ private fun ChatBody(
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
   val dictation by VoiceInput.state.collectAsStateWithLifecycle()
-  val dictationResult by VoiceInput.result.collectAsStateWithLifecycle()
-  val context = LocalContext.current
+  val onMicClick = rememberDictationLauncher()
 
-  // 权限弹窗只能从界面发起（ColorOS 会拦 adb 的 pm grant）。授完直接开录，
-  // 不让用户再点一次麦克风 —— 他刚才点的就是「我要说话」。
-  val micPermission =
-    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-      if (granted) VoiceInput.start(context) else VoiceInput.clearError()
-    }
-
-  // 识别结果回填输入框：**追加**而不是覆盖 —— 用户可能已经打了半句，
-  // 或者连着说了两段。清掉结果再回填，避免旋转 / 重组时重复追加同一段。
-  LaunchedEffect(dictationResult?.id) {
-    val text = dictationResult?.text ?: return@LaunchedEffect
-    VoiceInput.clearResult()
-    onInputChange(RecognizedText.appendToInput(state.input, text))
-  }
-
+  DictationResultSink { text -> onInputChange(RecognizedText.appendToInput(state.input, text)) }
   VoiceErrorLinger(voiceError)
   DictationErrorLinger(dictation)
   AutoReadOnFinish(messages = state.messages, sessionId = state.sessionId)
@@ -544,15 +575,7 @@ private fun ChatBody(
       onSend = onSend,
       onStop = onStop,
       onModelSwitchClick = onModelSwitchClick,
-      onMicClick = {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
-          PackageManager.PERMISSION_GRANTED
-        ) {
-          micPermission.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-          VoiceInput.toggle(context)
-        }
-      },
+      onMicClick = onMicClick,
     )
   }
 }

@@ -93,6 +93,13 @@ object VoiceInput {
   private var resultId = 0L
 
   /**
+   * 上一次估出来的环境噪声底，带进下一段（[EndpointDetector] 的「快降慢升」意味着
+   * 第一段在嘈杂环境里可能不准，第二段开始就准了）。进程内保留即可 ——
+   * 它只描述「刚才那个房间有多吵」，不值得落盘。
+   */
+  private var noiseFloor: Float? = null
+
+  /**
    * 现在能不能用。null = 可以；否则是给用户看的一句话（没权限 / 没下模型 / 模型没了）。
    *
    * 界面在**点之前**就要问一次：麦克风按钮不该是一个「点了才知道不能用」的按钮。
@@ -122,7 +129,7 @@ object VoiceInput {
       _state.value = State.Failed(reason)
       return
     }
-    val detector = EndpointDetector(sampleRate = SAMPLE_RATE)
+    val detector = EndpointDetector(sampleRate = SAMPLE_RATE, initialNoiseFloor = noiseFloor)
     val buffer = SampleBuffer()
     val finished = CompletableDeferred<EndpointDetector.Decision.End>()
     stopSignal = finished
@@ -160,6 +167,7 @@ object VoiceInput {
         // 采集线程自己死了（麦克风被抢走）不会再有人点亮信号，所以给一个宽于
         // EndpointDetector 上限（60 秒）的兜底。
         val end = withTimeoutOrNull(SESSION_TIMEOUT_MS) { finished.await() }
+        noiseFloor = detector.noiseFloorEstimate()
         recorder.stop()
         capture = null
         stopSignal = null

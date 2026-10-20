@@ -81,5 +81,4 @@ object VoiceModelDownloader {
     kind: String,
     id: String,
   ): Long = VoiceModelStore.archivePart(context, kind, id).takeIf { it.isFile }?.length() ?: 0L
-
 }

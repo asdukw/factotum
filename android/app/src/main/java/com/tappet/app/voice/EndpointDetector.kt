@@ -3,27 +3,49 @@ package com.tappet.app.voice
 /**
  * 「说完了没有」的判定 —— **纯 Kotlin、纯函数式推进**，不碰 Android、不碰音频设备。
  *
- * 为什么不用模型：sherpa-onnx 自带 silero VAD（多下 2MB 模型），判定比这里准得多，
+ * 为什么不用模型：sherpa-onnx 自带 silero VAD（多下 2MB 模型，判定比这里准得多），
  * 但那是一条额外的下载与一套额外的失败模式。v1 先用**能量法**：算每一帧的 RMS，
- * 高于阈值算说话，连续静音超过 [silenceToEndMs] 就算说完。代价写在 `docs/voice.md` 里：
- * 嘈杂环境下噪声底抬起来，会早停或不停。手动停止键一直在，是它的兜底。
+ * 高于阈值算说话，连续静音超过 [silenceToEndMs] 就算说完。它的失效场景写在
+ * `docs/voice.md` 里（嘈杂环境、以及长时间连续说话），手动停止键一直是兜底。
  *
- * 阈值是**自适应**的：先估计环境噪声底（开场那一小段），再把阈值定成噪声底的
- * [noiseFactor] 倍，且不低于 [minRms]。固定阈值在安静房间与地铁上不可能同时可用。
+ * ## 阈值是自适应的，而「怎么跟」是这里唯一的难点
  *
- * 三个结束条件：说够了且静音够久（[Decision.End.Silence]）、一直没人说话（[Decision.End.NoSpeech]）、
+ * 固定阈值不可能同时应付安静房间与地铁，所以要估计**噪声底**再取它的 [noiseFactor] 倍。
+ * 估计的规矩是「**快降慢升**」：
+ *
+ * - **降要快**：这一帧比估计值低 → 立刻跟下去。环境安静下来是瞬间的事，
+ *   不跟下去就会把安静当成语音、一直录到时长上限。
+ * - **升要慢**：每帧最多涨 [FLOOR_RISE_PER_FRAME]。涨得快会出大问题 ——
+ *   用户**开口就说**时，一开始那几帧就是他自己的声音，估计值要是跟着冲上去，
+ *   阈值会顶到他的音量之上，于是「说了半天它说没听到」。慢升让他怎么都能被听见。
+ *
+ * 代价是：**底噪高到超过 [minRms] 时，第一次说话可能被判成静音**（估计值还没升上来）。
+ * 所以估计值会**跨段保留**（[VoiceInput] 把它传给下一段），同一环境里第二次就准了。
+ *
+ * ## 三个结束条件
+ *
+ * 说够了且静音够久（[Decision.End.Silence]）、一直没人说话（[Decision.End.NoSpeech]）、
  * 说太久（[Decision.End.TooLong]）。**没有「识别到某个词就停」这种条件** ——
  * 那要靠关键词 spotting，不是这里的事。
  */
 internal class EndpointDetector(
   private val sampleRate: Int,
-  private val silenceToEndMs: Int = DEFAULT_SILENCE_TO_END_MS,
-  private val minSpeechMs: Int = DEFAULT_MIN_SPEECH_MS,
-  private val maxUtteranceMs: Int = DEFAULT_MAX_UTTERANCE_MS,
-  private val noSpeechTimeoutMs: Int = DEFAULT_NO_SPEECH_TIMEOUT_MS,
-  private val minRms: Float = DEFAULT_MIN_RMS,
-  private val noiseFactor: Float = DEFAULT_NOISE_FACTOR,
+  initialNoiseFloor: Float? = null,
+  private val tuning: Tuning = Tuning(),
 ) {
+  /**
+   * 阈值与时长这一组旋钮。打成一个包是为了让构造函数的签名说明**这件事**：
+   * 它们是一组要一起调的取舍（调短尾静音就要调长最小语音长度），不是八个独立开关。
+   */
+  data class Tuning(
+    val silenceToEndMs: Int = DEFAULT_SILENCE_TO_END_MS,
+    val minSpeechMs: Int = DEFAULT_MIN_SPEECH_MS,
+    val maxUtteranceMs: Int = DEFAULT_MAX_UTTERANCE_MS,
+    val noSpeechTimeoutMs: Int = DEFAULT_NO_SPEECH_TIMEOUT_MS,
+    val minRms: Float = DEFAULT_MIN_RMS,
+    val noiseFactor: Float = DEFAULT_NOISE_FACTOR,
+  )
+
   /** 这一帧之后该怎么办。 */
   sealed interface Decision {
     data object Continue : Decision
@@ -40,7 +62,7 @@ internal class EndpointDetector(
     }
   }
 
-  private var noiseFloor = -1f
+  private var noiseFloor = (initialNoiseFloor ?: FLOOR_PRIOR).coerceIn(FLOOR_PRIOR, FLOOR_CEILING)
 
   private var totalMs = 0
 
@@ -51,6 +73,9 @@ internal class EndpointDetector(
   /** 当前说话时的 RMS 水平，界面拿它画电平条。 */
   var level: Float = 0f
     private set
+
+  /** 估出来的环境噪声底。跨段传给下一段用（见类注释）。 */
+  fun noiseFloorEstimate(): Float = noiseFloor
 
   /**
    * 喂一帧。
@@ -65,13 +90,9 @@ internal class EndpointDetector(
     val frameMs = frameSamples * 1000 / sampleRate
     totalMs += frameMs
     level = rms
+    trackNoiseFloor(rms)
 
-    // 噪声底只在**非语音**帧上更新，否则说话声会把阈值顶上去，越说越听不见自己。
-    if (noiseFloor < 0f) noiseFloor = rms
-    val speaking = rms > threshold()
-    if (!speaking) noiseFloor = noiseFloor * NOISE_FLOOR_DECAY + rms * (1 - NOISE_FLOOR_DECAY)
-
-    if (speaking) {
+    if (rms > threshold()) {
       speechMs += frameMs
       silenceMs = 0
     } else {
@@ -79,15 +100,25 @@ internal class EndpointDetector(
     }
 
     return when {
-      totalMs >= maxUtteranceMs -> Decision.End.TooLong
-      speechMs >= minSpeechMs && silenceMs >= silenceToEndMs -> Decision.End.Silence
-      speechMs < minSpeechMs && totalMs >= noSpeechTimeoutMs -> Decision.End.NoSpeech
+      totalMs >= tuning.maxUtteranceMs -> Decision.End.TooLong
+      speechMs >= tuning.minSpeechMs && silenceMs >= tuning.silenceToEndMs -> Decision.End.Silence
+      speechMs < tuning.minSpeechMs && totalMs >= tuning.noSpeechTimeoutMs -> Decision.End.NoSpeech
       else -> Decision.Continue
     }
   }
 
   /** 当前生效的阈值。测试与调试用。 */
-  fun threshold(): Float = maxOf(minRms, noiseFloor * noiseFactor)
+  fun threshold(): Float = maxOf(tuning.minRms, noiseFloor * tuning.noiseFactor)
+
+  /** 快降慢升。见类注释 —— 「慢」这个字是这里唯一不能改的东西。 */
+  private fun trackNoiseFloor(rms: Float) {
+    noiseFloor =
+      if (rms < noiseFloor) {
+        rms
+      } else {
+        (noiseFloor + FLOOR_RISE_PER_FRAME).coerceAtMost(FLOOR_CEILING)
+      }
+  }
 
   private companion object {
     /** 尾静音多久算说完。1.2 秒：短了会在换气的停顿上截断，长了显得反应慢。 */
@@ -112,7 +143,17 @@ internal class EndpointDetector(
     /** 阈值 = 噪声底 × 这个倍数。3 倍是「明显高于环境」的经验值。 */
     const val DEFAULT_NOISE_FACTOR = 3f
 
-    /** 噪声底用慢速 EMA 跟，避免一句话里的气音把它顶起来。 */
-    const val NOISE_FLOOR_DECAY = 0.95f
+    /** 噪声底的起点。取得低（而不是从第一帧直接采）是为了「开口就说」那种情形，见类注释。 */
+    const val FLOOR_PRIOR = 0.0008f
+
+    /** 每帧最多涨这么多（32ms 一帧 → 约 0.0006/秒）。 */
+    const val FLOOR_RISE_PER_FRAME = 0.00002f
+
+    /**
+     * 噪声底的上限（对应阈值 0.06）。比这还吵的环境不该靠能量法：
+     * 再往上抬，正常说话的音量就会被判成静音，与其给一个必然失败的估计，
+     * 不如停在「大声说话仍能被听见」这一档。
+     */
+    const val FLOOR_CEILING = 0.02f
   }
 }

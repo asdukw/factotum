@@ -14,7 +14,7 @@ package com.tappet.app.voice
 data class AsrModel(
   override val id: String,
   override val label: String,
-  val summary: String,
+  override val summary: String,
   override val url: String,
   override val sizeBytes: Long,
   override val archiveRoot: String,
@@ -64,7 +64,12 @@ sealed interface AsrEngineSpec {
 
   /**
    * Whisper：编码器 + 解码器 + 词表 + 语种。多语言，但**自回归解码**（一个 token 一个 token
-   * 往外吐），手机上比上面两种慢一个量级 —— 这是选它时要知道的代价。
+   * 往外吐），实测比上面两种慢几倍（一加 15T：6 秒音频 361ms，paraformer 是 62ms），
+   * 而且音频越长差得越多 —— 这是选它时要知道的代价。
+   *
+   * [language] **留空 = 让它自己判语种**（sherpa 的原话：多语言模型不给语种就从音频里推断）。
+   * 别写死 `zh`：真机上拿英文样例音频试过，写死之后它把整段英文硬解成中文
+   * （输出「前來的大,在前來的大,…」这种），而且**不报错**。
    */
   data class Whisper(
     val encoderFile: String,
@@ -101,17 +106,24 @@ sealed interface AsrEngineSpec {
  * 多语言覆盖面更广。想换成 Dolphin 的话改这一处即可（`asr-models` 归档里同名资产）。
  */
 object AsrModelCatalog {
+  /**
+   * 模型归档的来源。**只此一处**：与应用内更新、朗读模型同一个下载域（GitHub），
+   * 不引入第二个 —— 多一个域就多一份「墙内连不上」的风险。
+   */
+  private const val RELEASE_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+
   val PARAFORMER_ZH_SMALL =
     AsrModel(
       id = "paraformer_zh_small",
       label = "Paraformer 中文（小）",
       summary = "82MB，中文听写，手机上最快的一档；中英混说也认",
-      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
+      url = RELEASE_BASE + "sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2",
       sizeBytes = 77_920_048L,
       archiveRoot = "sherpa-onnx-paraformer-zh-small-2024-03-09",
       license = "FunASR 模型开源许可 1.1",
-      licenseNote = "上游是 ModelScope 的 crazyant/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8358-onnx。" +
-        "条款：可自由使用 / 修改 / 分发，**必须署名并保留模型名**；不是 OSI 标准许可。",
+      licenseNote =
+        "上游是 ModelScope 的 crazyant/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8358-onnx。" +
+          "条款：可自由使用 / 修改 / 分发，必须署名并保留模型名；不是 OSI 标准许可。",
       engine =
         AsrEngineSpec.Paraformer(
           modelFile = "model.int8.onnx",
@@ -124,12 +136,13 @@ object AsrModelCatalog {
       id = "sense_voice_int8",
       label = "SenseVoice（中英日韩粤）",
       summary = "239MB，中文准确率最好的一档，自带标点与数字正则化",
-      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+      url = RELEASE_BASE + "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
       sizeBytes = 163_002_883L,
       archiveRoot = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
       license = "FunASR 模型开源许可 1.1",
-      licenseNote = "上游是 FunAudioLLM/SenseVoice（iic/SenseVoiceSmall）。" +
-        "条款：可自由使用 / 修改 / 分发，**必须署名并保留模型名**；不是 OSI 标准许可。",
+      licenseNote =
+        "上游是 FunAudioLLM/SenseVoice（iic/SenseVoiceSmall）。" +
+          "条款：可自由使用 / 修改 / 分发，必须署名并保留模型名；不是 OSI 标准许可。",
       engine =
         AsrEngineSpec.SenseVoice(
           modelFile = "model.int8.onnx",
@@ -146,8 +159,8 @@ object AsrModelCatalog {
     AsrModel(
       id = "whisper_tiny",
       label = "Whisper tiny（多语言）",
-      summary = "103MB，99 种语言都认；但自回归解码，手机上明显更慢",
-      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
+      summary = "103MB，99 种语言都认；但自回归解码，实测比另外两个慢好几倍",
+      url = RELEASE_BASE + "sherpa-onnx-whisper-tiny.tar.bz2",
       sizeBytes = 116_204_861L,
       archiveRoot = "sherpa-onnx-whisper-tiny",
       license = "MIT",
@@ -157,9 +170,9 @@ object AsrModelCatalog {
           encoderFile = "tiny-encoder.int8.onnx",
           decoderFile = "tiny-decoder.int8.onnx",
           tokensFile = "tiny-tokens.txt",
-          // tiny 的中文是三个里最弱的，但语种必须显式给：不给的话它会按英文解码，
-          // 中文语音出来是一串英文音译（这个坑在多语言模型上很常见）。
-          language = "zh",
+          // 留空 = 自动判语种。写死语种在这条路上是**会静默做错**的：见 AsrEngineSpec.Whisper
+          // 的注释（真机实测把英文解成了中文）。
+          language = "",
         ),
     )
 

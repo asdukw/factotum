@@ -29,12 +29,19 @@ object VoiceModelKinds {
 interface VoiceModel {
   val id: String
   val label: String
+
+  /** 一行说明，直接显示在设置页的模型列表里（体积 / 语言 / 速度这些取舍）。 */
+  val summary: String
+
   /** 下载地址（GitHub release 资产，与本仓库的应用内更新同一个来源）。 */
   val url: String
+
   /** 归档大小，界面显示用。 */
   val sizeBytes: Long
+
   /** tar 里的顶层目录名；解包时剥掉。 */
   val archiveRoot: String
+
   /** 装好了的判据：这些文件（相对模型目录）都在。 */
   val requiredFiles: List<String>
   val license: String

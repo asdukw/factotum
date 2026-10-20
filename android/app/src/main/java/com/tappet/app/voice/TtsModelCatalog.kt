@@ -11,7 +11,7 @@ package com.tappet.app.voice
 data class TtsModel(
   override val id: String,
   override val label: String,
-  val summary: String,
+  override val summary: String,
   /** 下载地址（GitHub release 资产，与本仓库的更新检查同一个来源）。 */
   override val url: String,
   /** 归档大小，界面显示用。 */

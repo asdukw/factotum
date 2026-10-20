@@ -29,6 +29,9 @@ internal object RecognizedText {
       "blank",
       "empty",
       "unknown",
+      // 中文写法：whisper 对中文语音里的纯音乐段会回「(音乐)」这种。
+      "音乐",
+      "静音",
     )
 
   /**
@@ -42,6 +45,22 @@ internal object RecognizedText {
     return collapseCjkSpaces(trimmed)
   }
 
+  /**
+   * 把一段听写结果接到输入框已有内容的后面。
+   *
+   * **追加而不是覆盖**：用户可能已经打了半句，也可能连着说了两段 —— 覆盖式回填会让
+   * 第一段凭空消失，而且没有任何提示。中间补一个空格，只在已有内容不以空白结尾时补
+   * （用户自己敲了空格就别再补一个）。
+   */
+  fun appendToInput(
+    existing: String,
+    dictated: String,
+  ): String {
+    if (dictated.isBlank()) return existing
+    if (existing.isBlank()) return dictated
+    return if (existing.last().isWhitespace()) existing + dictated else "$existing $dictated"
+  }
+
   private fun isNonSpeechMarker(text: String): Boolean {
     val key = text.lowercase().filter { it.isLetterOrDigit() || it == '_' }
     return key in NON_SPEECH_MARKERS
@@ -53,7 +72,7 @@ internal object RecognizedText {
     var index = 0
     while (index < text.length) {
       val char = text[index]
-      if ((char == ' ' || char == '　') && out.isNotEmpty() && index + 1 < text.length) {
+      if (isSpace(char) && out.isNotEmpty() && index + 1 < text.length) {
         val before = out.last()
         val after = text[index + 1]
         if (isCjk(before) && isCjk(after)) {
@@ -66,6 +85,9 @@ internal object RecognizedText {
     }
     return out.toString()
   }
+
+  /** 半角或全角空格。 */
+  private fun isSpace(char: Char): Boolean = char == ' ' || char == '　'
 
   /**
    * 是不是中日韩字符。判的是**字符本身**，不是「这段文本是不是中文」——

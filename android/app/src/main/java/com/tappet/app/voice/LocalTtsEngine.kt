@@ -75,22 +75,22 @@ class LocalTtsEngine(
 
   private val model: TtsModel? = TtsModelCatalog.byId(modelId)
 
-  override fun isAvailable(): Boolean = model != null && TtsModelStore.isInstalled(appContext, model)
+  override fun isAvailable(): Boolean = model != null && VoiceModelStore.isInstalled(appContext, VoiceModelKinds.TTS, model)
 
   override fun unavailableReason(): String? =
     when {
       model == null && modelId == null -> "还没下载语音模型"
       model == null -> "模型 $modelId 不在可选目录里"
-      !TtsModelStore.isInstalled(appContext, model) -> "模型「${model.label}」还没下载完"
+      !VoiceModelStore.isInstalled(appContext, VoiceModelKinds.TTS, model) -> "模型「${model.label}」还没下载完"
       else -> null
     }
 
   override suspend fun initialize(): String? {
     if (tts != null) return null
     val selected = model ?: return unavailableReason()
-    if (!TtsModelStore.isInstalled(appContext, selected)) return unavailableReason()
+    if (!VoiceModelStore.isInstalled(appContext, VoiceModelKinds.TTS, selected)) return unavailableReason()
     return withContext(Dispatchers.IO) {
-      val dir = TtsModelStore.modelDir(appContext, selected.id)
+      val dir = VoiceModelStore.modelDir(appContext, VoiceModelKinds.TTS, selected.id)
       val config =
         OfflineTtsConfig(
           model =

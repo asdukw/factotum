@@ -472,22 +472,31 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   「执行层 → Linux 环境」、插件 `run_command`（先在插件仓库提交再更新 submodule 指针）。
   **debug 广播 `op TERMUX`** 可在无 UI 的情况下验证启动器 —— 但授权那一下仍要用户点。
 
-### 朗读（TTS）= 引擎接口 + 可朗读文本 + 单一状态源（2026-10-19 起）
+### 语音 = 朗读（TTS）+ 语音输入（STT）（2026-10-19 起；输入侧 2026-10-20）
 
-把助手回复读出来。**只做出声这一侧**，语音输入（STT）不在这一版里。深度说明见
-`docs/voice.md`；这里只列动手时必须知道的。
+两个方向共用同一套**模型管线**（目录 / 下载 / 解 tar.bz2 / 安装）与同一个 native 库
+（sherpa-onnx），但**引擎与状态机各一套**：朗读可以系统 TTS 打底，语音输入只有本机一条路。
+深度说明见 `docs/voice.md`；这里只列动手时必须知道的。
 
 | 位置 | 管什么 |
 |---|---|
 | `voice/SpeakableText.kt` | 纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测钉住） |
-| `voice/TtsEngine.kt` | 引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
+| `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
 | `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
 | `voice/LocalTtsEngine.kt` | 本地引擎：sherpa-onnx 合成 + AudioTrack 流式播放 |
-| `voice/VoiceModel*.kt` + `SherpaArchive.kt` | 模型目录 / 下载（复用更新那套续传）/ 解 tar.bz2；**合成与识别共用** |
-| `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 JNI 绑定；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
-| `voice/VoiceReader.kt` | 单例：唯一状态源、一次只读一条、音频焦点 |
-| `voice/VoiceSettings.kt` | 偏好：引擎 / 自动朗读 / 语速 / 音色（**非密**） |
-| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」 |
+| `voice/VoiceModel.kt` | **合成与识别共用的模型抽象**：怎么下、怎么解、装到哪 |
+| `voice/VoiceModelStore\|Downloader\|Installer.kt` | 模型落盘 / 下载（复用更新那套续传）/ 单例安装状态 |
+| `voice/SherpaArchive.kt` | 解 sherpa 的 `.tar.bz2`（剥顶层目录 + 挡路径穿越） |
+| `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**） |
+| `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门 |
+| `voice/AudioCapture.kt` | 麦克风采集：16kHz 单声道 → `FloatArray` + RMS |
+| `voice/EndpointDetector.kt` | 纯 Kotlin：能量法端点判定（**快降慢升**的自适应阈值，单测钉住） |
+| `voice/RecognizedText.kt` | 纯 Kotlin：识别结果清理 + 回填输入框（单测钉住） |
+| `voice/VoiceInput.kt` | 单例：语音输入的唯一状态源、按模型 id 缓存识别器 |
+| `voice/VoiceSettings.kt` | 偏好：朗读引擎 / 自动朗读 / 语速 / 音色 + 识别模型（**非密**） |
+| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `FeatureConfig` / `WaveReader`）；与 `tools/fetch-sherpa.ps1` 同 tag，别手改 |
+| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」（朗读 + 语音输入两节） |
+| `debug/.../VoiceDebugReceiver.kt` | **仅 debug**：把 WAV 喂给识别引擎 / 无 UI 装模型（`op ASR` / `INSTALL` / `MODELS`） |
 
 - **两种引擎是取舍，不是新旧关系**：系统 TTS 装完就能用、离线、不要流量，但音色随 ROM；
   本地引擎音色好，代价是下一个几十 MB 的模型。所以做成**用户的一个设置**，默认系统 TTS。
@@ -517,6 +526,28 @@ stdout / stderr / 退出码」暴露在 127.0.0.1 上，插件的 `run_command` 
   取方法，而 lambda 字面量编成 invokedynamic 后没有这个重载 → `GetMethodID` 拿到 null →
   `JNI DETECTED ERROR` + **整个 App 闪退，堆栈指不到自己的代码**。`TtsCallbackSignatureTest` 钉住。
 - 正文**不进日志**：`TappetVoice` 只记引擎名、段数、失败原因。
+
+**语音输入（STT）的硬规则**：
+
+- **只有本机识别，没有「系统引擎」那一档**：Android 的 `SpeechRecognizer` 在多数 ROM 上
+  把音频发给厂商的云，而这条路上出去的是**用户的声音**（比屏幕正文更私密）。朗读那边
+  「系统 TTS 打底」成立是因为文本是我们自己写的、且系统 TTS 不联网 —— 两者不是一回事。
+- **音频不落盘、不进日志**：只在本进程内存里活到识别完。`LocalRecognizer` 只记样本长度、
+  字符数与耗时；debug 广播要打印识别文本得显式 `--ez logPayload true`。
+- **端点判定是能量法**（`EndpointDetector`）：阈值自适应，规矩是**快降慢升** ——
+  升快了会把用户自己的声音当成环境噪声（「说了半天它说没听到」），这条有单测钉住。
+  噪声底**跨段保留**（`VoiceInput` 传给下一段）。代价写在 `docs/voice.md`：
+  嘈杂环境第一次可能不准；**silero VAD 是下一步**，不是这一版。
+- **识别器按模型 id 缓存**（`VoiceInput.engineKey`）：建一次要把几十上百 MB 的模型读进内存，
+  每次说话都重建就是每次等好几秒。
+- **与合成同一道闸门**：`OfflineRecognizer` 不是线程安全的，而协程取消打断不了阻塞的
+  native 调用 —— 并发进去就是 `FORTIFY ... destroyed mutex` + 整个 App 闪退。
+- **`modelType` 只有 paraformer / whisper 能填**：sherpa 认的值就那几个，sense-voice 填了
+  会走到「猜类型」那条路上（多 load 一遍模型 + 一行 `Invalid model_type` 日志），留空即可
+  （类型在 ONNX 元数据里）。
+- **识别模型是三条**（`AsrModelCatalog`）：paraformer-zh-small（82MB，默认）/ sense-voice-int8
+  （239MB，中文最好）/ whisper-tiny（103MB，多语言但自回归、最慢）。FunASR 那两条的授权是
+  自定义许可（可自由使用/修改/分发 + 必须署名），**界面必须原样显示**。
 
 ### 几条不许碰的约束
 
@@ -821,6 +852,10 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 | 点「停止」要等好几秒才停 | 切段太长（一段读完才检查取消）→ 调小 `TtsEngine.maxChunk` |
 | 本地引擎一朗读就闪退，堆栈里只有 sherpa 与协程的帧 | 采样回调写成了 lambda 字面量 → JNI 找不到 `invoke([F)Ljava/lang/Integer;`（见 `docs/voice.md` §4.1）→ 改回匿名对象 |
 | 本地引擎读完第一段就停，日志报「朗读中断」 | `destroyIfIdle()` 少了 `if (!released) return` → 每次合成结束都把引擎释放了 |
+| 点麦克风提示「还没下载识别模型」 | 语音输入要先下模型（设置 → 语音 → 语音输入，82–239MB）；识别**没有**系统引擎那一档，理由见 `docs/voice.md` §6 |
+| whisper 把中文音频识别成另一种语言（且不报错） | 语种写死了 → `AsrEngineSpec.Whisper.language` 必须留空（留空 = 从音频推断，实测把英文解成了中文） |
+| 说了半天提示「没听到说话」 | 环境噪声高于阈值下限（0.008）而噪声底还没学会 → 同一环境第二段起正常；说太久（20 秒以上）也会被慢升的阈值追上，说完按一下停最稳 |
+| `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 
 ## 深度文档
 
@@ -828,11 +863,11 @@ docs/                           深度文档 + releases/<tag>.md（每个版本�
 |---|---|
 | `docs/dsh-android.md` | 动 agent runtime、内嵌 Node、dsh 装配之前（含各阶段实测结论） |
 | `docs/android-accessibility.md` | 动执行层、换设备 / ROM 之前（系统探测与四问实测记录） |
+| `docs/voice.md` | 动语音（朗读 / 语音输入）之前：引擎取舍、模型授权、端点判定的代价、真机怎么验 |
 | `docs/email-connector.md` | 动连接器（邮箱等云端数据源）之前：边界、隐私闸门、OAuth 注册步骤 |
 | `docs/web-search.md` | 动联网搜索之前：为什么不用搜索 API、两道门（协议门 / 真搜门）的实测、隐私闸门 |
 | `docs/memory.md` | 动记忆 / 上下文注入之前：dsh 的三件机制（指令文件 / `@file` / `@session`）、**移动端移植缺口清单**（preset 组合 diff 实测） |
 | `docs/scheduled-tasks.md` | 动定时任务之前：Android 没有 cron、精确/不精确两档、错过不补跑、隐私边界 |
-| `docs/voice.md` | 动朗读 / TTS 之前：两个引擎的取舍、Markdown 摊平、包可见性那个坑 |
 | `docs/user-questions.md` | 动 `ask_user_question` / 任何「模型等用户回答」的功能之前：waterfall 的注册顺序坑、答案的三条语义、为什么不能只开工具不做 UI |
 | `docs/on-device-inference.md` | 动端侧模型 / 推理引擎之前：设备实测（SM8850 / Hexagon v81 / 内存底线）、llama.cpp Snapdragon 构建的 `ADSP_LIBRARY_PATH` 坑、视觉编码耗时随图像尺寸的变化、grounding 实测结果 |
 | `docs/roadmap.md` | 想推进方向时（**未验证的假设**，不是承诺） |

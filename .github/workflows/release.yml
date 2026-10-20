@@ -47,8 +47,9 @@ jobs:
           ref: ${{ env.TAG }}
           fetch-depth: 0 # release notes / tag 信息要完整历史
           submodules: recursive # 设备工具插件在独立仓库
+          persist-credentials: false
 
-      - uses: ./.github/actions/setup-build
+      - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
       # tag 与包内版本号是**两处独立的信息**：versionName 来自 build.gradle.kts，tag 来自你推的那个名字。
       # 忘了改 build.gradle 就会发出「叫 v0.9.0、装上去显示 0.8.0」的包 —— 用户与应用内更新
       # 都会看错版本（更新检查比的就是 versionName）。组包前先拦一次，比发完再发现便宜得多。
@@ -62,6 +63,9 @@ jobs:
             echo "::error::tag 是 $TAG，而 build.gradle.kts 里 versionName 是 $GOT —— 先改版本号再打 tag"
             exit 1
           fi
+
+      - name: 离线自检（审计 / profile / 插件边界）
+        run: bash tools/offline-checks.sh
 
       # ① 先过门禁再出包：触发条件是「推了 tag」，不检查那个 commit 的 CI 绿不绿 ——
       # CI 正红照样能把包装出去。这里跑一遍同样的检查，比查 API 判断「这个 commit 绿了吗」可靠，
@@ -122,6 +126,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write # 只在这一步创建 release
+      id-token: write # build provenance
+      attestations: write # 存 provenance attestation
     steps:
       - name: 校验 tag 形状
         run: |
@@ -131,11 +137,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.TAG }}
+          persist-credentials: false
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-artifacts
           path: release-artifacts
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: release-artifacts/*.apk
+
+      - name: 写 job summary
+        run: |
+          set -euo pipefail
+          ASSET="tappet-$TAG-arm64-v8a.apk"
+          {
+            echo "### Release $TAG"
+            echo ""
+            echo "- APK: $(stat -c%s "release-artifacts/$ASSET") bytes"
+            echo "- SHA-256: \`$(cut -d' ' -f1 "release-artifacts/$ASSET.sha256")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 发 release
         env:

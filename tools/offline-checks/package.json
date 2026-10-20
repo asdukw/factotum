@@ -1,0 +1,8 @@
+{
+  "name": "tappet-offline-checks",
+  "private": true,
+  "description": "CI-only dependency for the dsh profile YAML parser; not shipped.",
+  "dependencies": {
+    "js-yaml": "4.3.2"
+  }
+}

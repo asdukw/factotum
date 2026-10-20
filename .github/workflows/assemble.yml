@@ -41,11 +41,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
-      - uses: ./.github/actions/setup-build
+          persist-credentials: false
+      - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
 
-      - name: 出包
+      - name: 出包（debug + release）
         working-directory: android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --console=plain
 
 # 出包之后**验产物本身**，而不是只看构建退出码 —— tar 冒充 zip 那次，构建是成功的。
       - name: 验产物结构
@@ -54,12 +55,15 @@ jobs:
           # 按 glob 找 APK，而不是写死 app-debug.apk：签名配置一旦被设成 null，AGP 会产出
           # `app-debug-unsigned.apk`，写死路径只会得到一句 "No such file or directory"，
           # 看不出原因（真发生过一次）。
-          APK=$(ls android/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
-          if [ -z "$APK" ]; then
-            echo "::error::出包步骤没产出任何 APK"
+          APK_DEBUG=$(ls android/app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
+          APK_RELEASE=$(ls android/app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          if [ -z "$APK_DEBUG" ] || [ -z "$APK_RELEASE" ]; then
+            echo "::error::出包步骤没有同时产出 debug 与 release APK"
             exit 1
           fi
-          bash tools/verify-apk.sh "$APK"
+          bash tools/verify-apk.sh "$APK_DEBUG"
+          # release 变体在 CI 上没有签名材料，AGP 会产出 unsigned 包；结构仍要验。
+          bash tools/verify-apk.sh "$APK_RELEASE" --allow-unsigned
 
       - name: 上传 APK（排障用）
         if: always()
@@ -67,4 +71,4 @@ jobs:
         with:
           name: assemble-debug-apk
           retention-days: 1
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/*/*.apk

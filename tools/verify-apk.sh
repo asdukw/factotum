@@ -5,8 +5,17 @@
 # assemble 只验 debug 包、release 那条路没人验。
 set -euo pipefail
 
-APK="${1:?usage: verify-apk.sh <apk> [--scan-secrets]}"
-SCAN="${2:-}"
+APK="${1:?usage: verify-apk.sh <apk> [--allow-unsigned] [--scan-secrets]}"
+shift
+ALLOW_UNSIGNED=false
+SCAN_SECRETS=false
+for arg in "$@"; do
+  case "$arg" in
+    --allow-unsigned) ALLOW_UNSIGNED=true ;;
+    --scan-secrets) SCAN_SECRETS=true ;;
+    *) echo "::error::未知参数：$arg"; exit 2 ;;
+  esac
+done
 
 [ -f "$APK" ] || { echo "::error::APK 不存在：$APK"; exit 1; }
 SIGNER="${ANDROID_HOME:?ANDROID_HOME 未设置}/build-tools/36.0.0/apksigner"
@@ -19,9 +28,13 @@ unzip -l "$APK" | awk '{print $4}' | grep '^lib/' || echo "(一个都没有)"
 echo "--- 构建前的 jniLibs ---"
 ls -l android/app/src/main/jniLibs/*/ || echo "(jniLibs 是空的)"
 
-"$SIGNER" verify --print-certs "$APK"
-# 未签名的包装不上，而构建输出里可能仍是「成功」。
-"$SIGNER" verify "$APK" > /dev/null
+if [ "$ALLOW_UNSIGNED" = false ]; then
+  "$SIGNER" verify --print-certs "$APK"
+  # 未签名的包装不上，而构建输出里可能仍是「成功」。
+  "$SIGNER" verify "$APK" > /dev/null
+else
+  echo "允许未签名（assemble 的 release 变体）"
+fi
 
 # 这三个都是「缺了不会让构建失败、但装到设备上功能静默坏掉」的东西，所以逐个查。
 for entry in lib/arm64-v8a/libnode.so lib/arm64-v8a/libc++_shared.so lib/arm64-v8a/librg.so lib/arm64-v8a/libsherpa-onnx-jni.so; do
@@ -34,7 +47,7 @@ if [ "$(unzip -p "$APK" assets/dsh-runtime.zip | head -c 2)" != "PK" ]; then
   exit 1
 fi
 
-if [ "$SCAN" = "--scan-secrets" ]; then
+if [ "$SCAN_SECRETS" = true ]; then
   TMP=$(mktemp -d)
   trap 'rm -rf "$TMP"' EXIT
   unzip -p "$APK" 'classes*.dex' > "$TMP/dex.bin"

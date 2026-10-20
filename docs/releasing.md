@@ -51,6 +51,11 @@
 3. 打 `v*` tag → 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
    build job 会停在 `release` environment 等人工批准；批准后才读签名密钥、出包。
 
+- 发布物附带 build provenance（`actions/attest-build-provenance`），验证：
+  `gh attestation verify <apk> --repo asdukw/tappet`。建议在仓库设置里开启 **Immutable
+  releases**；开启后资产不可覆盖，重发要先删 release（当前的 `--clobber` 会被拒）。
+- publish job 的 summary 里会写 APK 大小与 SHA-256；`.sha256` 同时作为 release 资产发布。
+
 ## 3. 签名材料
 
 | 签名材料 | 位置 |

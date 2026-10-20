@@ -9,6 +9,8 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: build
+    cooldown:
+      default-days: 7
     groups:
       androidx:
         patterns: ["androidx.*"]
@@ -23,6 +25,12 @@ updates:
       interval: monthly
     commit-message:
       prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+    # 上游被投毒后的窗口：新版本先放 7 天再自动提。
+    cooldown:
+      default-days: 7
 
   # 设备工具插件（tools/dsh-phone/plugins/android-tools 是 git submodule，
   # 独立仓库 + 自己的 v* tag 发版流程）。这里**故意不交给 Dependabot**：

@@ -232,10 +232,8 @@ node tools/audit/collect.mjs --label <名字>     # 只采集最新会话
   commit；不要攒大改动等用户开口。
 - **一律在新分支上开发，不在 master 上直接改、直接提交**：先
   `git switch -c <feat|fix|docs>/<主题>`（开 worktree 本身就满足这一条）。master 上的每个提交
-  都应当是**从分支合并进来的、已完成的一步**，不是半成品。
-- **有 hook 兜底**：`tools/hooks/pre-commit` 在 HEAD 是 `master` 时拒绝提交（合并 / cherry-pick /
-  revert 产生的提交除外；`core.hooksPath` 指向 `tools/hooks`，对所有 worktree 一起生效）。
-  确实要在 master 上提交时用 `git commit --no-verify`，并说明理由。
+  都应当是**从分支合并进来的、已完成的一步**，不是半成品。（2026-10-21 起不再装 pre-commit
+  hook —— 用户要求加快提交；这条靠自觉。）
 - **开发完成之后合回 master**：本地 `git merge --no-ff <分支>` 再推，或开 PR（需要别人看时）。
   **管理员可以直推 master**，直推的是合并后的结果；非 admin 的贡献者仍受分支保护。
 - **合并 PR 与 push 必须由用户逐次明确授权**：「改完就提交」是默认动作，

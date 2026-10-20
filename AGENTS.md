@@ -75,6 +75,11 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 - Spotless resolves `.editorconfig` from the **Gradle project directory**, not the repo root.
 - ktlint `ktlint_*` properties do not pass through Spotless; repeat them in `editorConfigOverride`.
 
+CI (`.github/workflows/`): `ci.yml` runs the gates above plus `:app:testDebugUnitTest` on every push
+and PR; `assemble.yml` re-runs the whole assembly path (libnode → dsh → JNI → APK) when `tools/**`,
+`app/src/main/cpp/**`, or Gradle files change; `release.yml` builds the signed APK on a `v*` tag.
+No workflow has a device — §8.1 still applies.
+
 ## 5. Repository map
 
 ```
@@ -178,7 +183,8 @@ app's data; `adb uninstall com.memex.app` is enough. Scrub real-world data befor
 
 ### 7.1 Change Kotlin
 
-1. Change code; add a `src/test` (or `src/androidTest`) test — behavior changes need tests.
+1. Change code; add a `src/test` (or `src/androidTest`) test — behavior changes need tests. Test
+   paths mirror the package; class names end in `Test` (JVM) or `AndroidTest` (device).
 2. Run `:app:testDebugUnitTest`, then §4 gates.
 3. For UI, database, or permission changes, verify on a device (§8).
 

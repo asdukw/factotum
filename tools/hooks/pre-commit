@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# 禁止在 master 上开发：提交前先看当前分支。
+#
+# **为什么是 hook 而不是文档**：AGENTS.md 里那条规则写过两版都没拦住 —— 规则能劝，
+# hook 才能挡。2026-10-21 真实发生过：另一个会话在签出 master 的主 checkout 里连提交了
+# 四个，而它读到的规则里写着「管理员可以直推 master」。
+#
+# **拦什么**：`git commit` 时 HEAD 是 master。**不拦什么**：
+#   - 合并提交（`MERGE_HEAD` / `CHERRY_PICK_HEAD` / `REVERT_HEAD` 存在）——
+#     「分支开发、合并回 master」正是这条规则要求的路径，分支合并进 master 时要能提交；
+#   - 分离头指针（不是任何分支，常见于 CI checkout）—— 没有「在 master 上开发」这件事；
+#   - 已经在别的分支 / worktree 里（worktree 天然有自己的分支）。
+#
+# 出口是 git 自带的 `--no-verify`。**别拿它当默认**：CI 与 release 都不看它，
+# 它只是把「违规」提前变成「你自己知道」。
+#
+# 安装（一次）：`git config core.hooksPath tools/hooks`
+# `core.hooksPath` 在**共享的** `.git/config` 里，对所有 worktree 一起生效。
+
+set -u
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+[ "$branch" = "master" ] || exit 0
+
+# 合并 / cherry-pick / revert：提交是「把分支接进 master」这个动作本身，放行。
+for state in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+  [ -f "$(git rev-parse --git-path "$state")" ] && exit 0
+done
+
+cat >&2 <<'EOF'
+
+✗ 不能直接在 master 上提交（AGENTS.md「提交纪律」）。
+
+  先开分支，再提交：
+    git switch -c feat/<主题>        # 或 fix/… 、docs/…
+
+  开发完把分支合回 master —— 那时的合并提交不受这条限制：
+    git switch master && git merge --no-ff feat/<主题>
+
+  确实需要在这上面提交（比如回滚一次合并）：git commit --no-verify
+
+EOF
+exit 1

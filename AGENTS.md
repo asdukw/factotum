@@ -724,6 +724,10 @@ adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
   master 上的每个提交都应当是**从分支合并进来的、已完成的一步**，不是开发中的半成品。
   （原先这条写成「改动走 PR」，却被同一 bullet 里的「管理员可直推」架空，
   实际被读成「可以在 master 上开发」—— 2026-10-21 澄清。）
+- **这条有 hook 兜底**：`tools/hooks/pre-commit` 在 HEAD 是 `master` 时**拒绝提交**
+  （合并 / cherry-pick / revert 产生的提交除外 —— 那正是「合回 master」这个动作）。
+  `core.hooksPath` 指向 `tools/hooks`，对所有 worktree 一起生效。确实要在 master 上
+  提交时用 `git commit --no-verify`；那条出口只说明你知道自己在做什么，CI 不会因此放过。
 - **开发完成之后合回 master**：本地 `git merge --no-ff <分支>` 再推，或者开 PR 让远端合并，
   两条都行（需要别人看的时候走 PR）。**管理员可以直推 master**（GitHub Ruleset 的
   bypass actor，`bypass_mode: always`），直推的是**合并后的结果**；分支保护（禁删除 /

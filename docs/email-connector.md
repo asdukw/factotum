@@ -208,9 +208,21 @@ Tappet 现在没有服务端，没有地方藏。要变成「点一下就连接�
 「密钥永不入库、不进构建产物」的红线 —— 那条红线说的是**密钥**，而这里没有密钥可泄漏
 （我们根本不申请客户端密码，`check-sensitive.ps1` 也不认客户端 ID）。
 
+**客户端 id 与密码走构建期注入、不入库**：`ConnectorDefaults.kt` 读 `BuildConfig` ——
+本地读 `android/local.properties` 的 `tappet.connector.gmailClientId` / `...gmailClientSecret`，
+发布由 `release.yml` 从 GitHub Actions secret 注入（`TAPPET_GMAIL_CLIENT_ID` /
+`TAPPET_GMAIL_CLIENT_SECRET`）。目标是「装完点一下就授权」，用户不必自己去 Google Cloud
+注册应用；留空则退回「要求用户自己填」。
+
+**为什么不入库**：GitHub 的 push protection 把 Google OAuth 的 client id 与 client secret
+都判成密钥，对管理员一样拦（实测 `GH013 ... Push cannot contain secrets`，连 `master` 直推
+也拦）。私有仓库解决不了 —— 值要参与换码就必须进二进制。注意这是**平台规则**，不是
+「它们是机密」：客户端 id/密码对桌面应用是公开标识，真正的保护是 PKCE。
+`tools/check-sensitive.ps1` 认不出这两个形状（它的 Google 模式是 API key 的 `AIza…`），
+**别把它的「未发现密钥」当成可以推** —— 远端还有一道。
+
 **已按这条做了**：`connector/ConnectorDefaults.kt` 的 `DEFAULT_GMAIL_CLIENT_ID` 就是预置值。
 维护者注册**一次**填进去，之后：
-
 - 新装用户打开设置页，**注册指引与输入框都不出现** —— 页面上只有「未连接」和「连接」。
   点「连接」→ 浏览器 → 点同意，结束。
 - 页面底部留一行小字「使用我自己的 OAuth 客户端 ID」作为**逃生门**：预置的那个 client id
@@ -237,6 +249,19 @@ Tappet 现在没有服务端，没有地方藏。要变成「点一下就连接�
 scope 只是又一次重授权），但没有免费的重来。
 
 ## 5. 与既有架构的关系
+
+### 5.0 四处同一件事（改连接器先看这张表）
+
+| 位置 | 管什么 |
+|---|---|
+| `connector/GoogleOAuth.kt` | 纯协议：PKCE / 授权 URL / 回环请求行 / 令牌解析。scope 常量 `GMAIL_SCOPE` 在这里 |
+| `connector/GmailAuth.kt` + `ConnectorStore.kt` | 网络与存储：回环监听器 + 浏览器、refresh token 进 SecretVault、access token 只在内存 |
+| `bridge/ConnectorBridgeServer.kt` | 只发短命 access token 的本地桥，**独立于设备桥**（理由见类注释） |
+| `tools/dsh-phone/plugins/gmail/` | 模型可见的三个只读工具；Gmail 的 REST 语义全在这里 |
+
+**插件名三处逐字相同**：`plugins/gmail/package.json` 的 `name`、profile 的 insert `name`、
+`bundle-dsh.ps1` 的 `Package`。对不上时运行时少一组工具，报错只有一句「找不到模块」——
+`NodeRuntimeProfileTest` 钉住了这三处。
 
 ### 5.1 令牌怎么进到插件里
 

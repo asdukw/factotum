@@ -33,6 +33,7 @@ Android SDK（compileSdk 36）、`ndk;29.0.14206865`、`cmake;3.31.6`（后三�
 ```powershell
 # 首次准备：libnode（含 NDK 里的 libc++_shared.so）与 vendored dsh
 git submodule update --init --recursive   # 设备工具插件在独立仓库
+git config core.hooksPath tools/hooks     # 推之前先在本地跑一遍 CI 那几件事
 .\tools\fetch-libnode.ps1
 .\tools\fetch-sherpa.ps1      # 本地朗读引擎的 native 库（24MB）+ silero VAD 模型（629KB，进 assets）
 .\tools\bundle-dsh.ps1
@@ -721,6 +722,12 @@ adb shell am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver `
   仓库默认分支叫 **master**（不是 main）。
 - **合并 PR 与 push 一样，必须由用户逐次明确授权**：「改完就提交」是默认动作，
   「开 PR / 合并 / 推上去」不是。
+- **本地有个 pre-push hook**（`tools/hooks/pre-push`，装一次：`git config core.hooksPath tools/hooks`）：
+  推之前跑一遍 CI 会跑的那几件事。三条设计：**只跑这次推送碰到的路径**（改文档不跑 Gradle）、
+  一条不过就停下并告诉你 CI 里的对应命令、顺带检查**插件 submodule 的提交推没推**（踩过的坑：
+  指针先推了、插件仓库没推，CI 在 checkout 就失败）。它是省 CI 的，**不是门禁** ——
+  真门禁在云端；跳过用 `git push --no-verify`，别当默认。`core.hooksPath` 存在**共享的**
+  `.git/config` 里，所以对所有 worktree 一起生效。
 - 提交信息沿用仓库风格：中文 conventional commit（`feat(android): ...`、`docs: ...`、
   `fix(repo): ...`），正文写清改了什么与**验证方式**；不含密钥与个人数据。
 - 未验证的半成品不提交；提交后保持工作区干净、可解释。
@@ -748,6 +755,7 @@ tools/
   fetch-sherpa.ps1              拉 sherpa-onnx 的预编译 Android 库（static-link 变体，单个 .so）
   bundle-dsh.ps1                装配 vendored dsh → assets/dsh-runtime.zip（含 profile 校验与模型模态索引）
   check-sensitive.ps1           发布前自检（工作树 + 全历史 + 可选 APK）
+  hooks/pre-push                推之前跑 CI 那几件事（只跑这次碰到的路径；core.hooksPath 指向它）
   audit/                        任务审计回路（取证层；判断交给 tappet-auditor agent）
   termux/setup.sh               一键装配手机上的 Linux（Termux 侧依赖 + Debian rootfs + 桥）
   termux/bridge.py              桥本体：127.0.0.1 + token，把「跑一条命令」暴露成 HTTP

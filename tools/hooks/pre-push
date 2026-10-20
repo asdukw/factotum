@@ -1,0 +1,143 @@
+#!/bin/sh
+#
+# 推之前先跑一遍 CI 会跑的那几件事（对应 AGENTS.md「代码风格与门禁」）。
+#
+# **为什么要它**：CI 那三项检查跑在云上，一次失败就是几分钟排队 + 构建，而绝大多数失败
+# 本地几十秒就能发现（格式、detekt、Lint、编译不过）。这个 hook 就是被这种事逼出来的：
+# master 上有个提交因为 `Unresolved reference` 挂了 CI，而那只是本地少编译了一次。
+#
+# **三条设计**：
+#   1. **只跑这次推送真的碰到的**。改文档不该等两分钟 —— 先算改动路径，没碰 `android/`
+#      就不跑 Gradle，没碰 `tools/` 就不跑 node 那几项。
+#   2. **一条不过就停**，并告诉你 CI 里跑的是同一条命令（照着跑就能复现）。
+#   3. 跳过用 `git push --no-verify`（git 自带）。**别拿它当默认** —— 云端那三项是门禁，
+#      跳过只是把失败推后。
+#
+# **安装（一次）**：`git config core.hooksPath tools/hooks`
+# `core.hooksPath` 存在**共享的** `.git/config` 里，所以对所有 worktree 一起生效 ——
+# 这个仓库常年有好几个 worktree，这一点是刻意的。
+#
+# 顺序按**代价从小到大**排：submodule 指针 → node 那几项（秒级）→ Gradle（分钟级）。
+
+set -u
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$root" || exit 0
+
+# ---------- 这次推送碰到了哪些路径 ----------
+# pre-push 从 stdin 收「<local ref> <local sha> <remote ref> <remote sha>」若干行。
+paths=""
+run_all=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  # 全零 = 删分支：没有东西要验。
+  case "$local_sha" in 0000000000000000000000000000000000000000) continue ;; esac
+  # 推 tag：release.yml 上第一件事就是跑同一套门禁，所以按「全跑」处理。
+  case "$local_ref" in refs/tags/*) run_all=1; continue ;; esac
+
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    # 新分支：与默认分支的合并基点比。算不出来就别装懂，全跑。
+    base=$(git merge-base "$local_sha" origin/master 2>/dev/null) || base=""
+    if [ -z "$base" ]; then
+      run_all=1
+      continue
+    fi
+  else
+    base=$remote_sha
+  fi
+  paths="$paths
+$(git diff --name-only "$base" "$local_sha" 2>/dev/null)"
+done
+
+has() { printf '%s\n' "$paths" | grep -qE "$1"; }
+
+need_kotlin=0
+need_node=0
+if [ "$run_all" = 1 ] || has '^android/'; then need_kotlin=1; fi
+if [ "$run_all" = 1 ] || has '^tools/(dsh-phone|audit|uitars)/'; then need_node=1; fi
+
+if [ "$need_kotlin" = 0 ] && [ "$need_node" = 0 ] && [ "$run_all" = 0 ]; then
+  echo "pre-push: 这次推送没碰到需要本地验的路径（CI 仍会跑）"
+  exit 0
+fi
+
+fail() {
+  printf '\n✗ %s 没过。\n' "$1" >&2
+  printf '  CI 里跑的是同一条命令（见 .github/workflows/ci.yml）。\n' >&2
+  printf '  确认只是本机环境问题时：git push --no-verify（CI 仍会拦）。\n' >&2
+  exit 1
+}
+
+run() {
+  label=$1
+  shift
+  printf '\n▶ %s\n' "$label"
+  "$@" || fail "$label"
+}
+
+# ---------- 插件 submodule 的指针推上去了吗 ----------
+# 这是**踩过的**坑：插件仓库里的提交还没推，tappet 这边的指针先推了 —— CI 在 checkout
+# 就失败，而报错看不出是「少推了一个仓库」。
+if [ "$run_all" = 1 ] || has '^tools/dsh-phone/plugins/android-tools$'; then
+  plugin=tools/dsh-phone/plugins/android-tools
+  if [ -d "$plugin" ] && ! git -C "$plugin" branch -r --contains HEAD 2>/dev/null | grep -q .; then
+    fail "插件 submodule 的提交还没推到插件仓库（先在 $plugin 里 git push）"
+  fi
+fi
+
+# ---------- node 那几项（与 ci.yml 的 offline-checks job 逐条对应）----------
+if [ "$need_node" = 1 ]; then
+  run "审计回路自检（zstd 逐帧解码）" node tools/audit/selftest.mjs
+  run "zen 会话头补丁" node tools/dsh-phone/test/zen-session-fetch.test.mjs
+  run "UI-TARS 适配层" node tools/uitars/test/adapt.test.mjs
+  run "连接器插件（只读边界 / 令牌不外泄）" sh -c 'cd tools/dsh-phone/plugins/gmail && npm test'
+  run "提问 answerer（不编答案）" sh -c 'cd tools/dsh-phone/plugins/user-questions && npm test'
+
+  # profile 的真解析器校验要 js-yaml。本机通常已经有（bundle-dsh.ps1 拉的运行时里带一份），
+  # 没有就现装 —— 装到 **git 公共目录**里，绝不往工作树里放 node_modules。
+  modules=android/.dsh-cache/runtime/node_modules
+  if [ ! -d "$modules/js-yaml" ]; then
+    deps="$(git rev-parse --git-common-dir)/tappet-hook-deps"
+    mkdir -p "$deps"
+    if (cd "$deps" && npm install --no-save --no-audit --no-fund 'js-yaml@^4' >/dev/null 2>&1) &&
+      [ -d "$deps/node_modules/js-yaml" ]; then
+      modules=$deps/node_modules
+    else
+      modules=""
+    fi
+  fi
+  if [ -n "$modules" ]; then
+    run "phone profile 真解析器校验" \
+      node tools/dsh-phone/check-profile.mjs tools/dsh-phone/profile/cordis.patch.yml "$modules"
+  else
+    printf '\n⚠ 跳过 profile 校验：本机没有 js-yaml（跑一次 tools/bundle-dsh.ps1 就有了）\n'
+  fi
+fi
+
+# ---------- Gradle（与 ci.yml 的 quality / test 两个 job 逐条对应）----------
+if [ "$need_kotlin" = 1 ]; then
+  # JDK 21 是硬要求（AGENTS.md）。没设就试本机那个已知路径；都拿不到就直接停 ——
+  # 让 Gradle 抛一句「找不到 JDK」的错比这里说清楚难懂得多。
+  if [ -z "${JAVA_HOME:-}" ]; then
+    if [ -d "/c/Program Files/Microsoft/jdk-21.0.2.13-hotspot" ]; then
+      JAVA_HOME='C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot'
+      export JAVA_HOME
+    else
+      fail "JAVA_HOME 没设（构建要 JDK 21）"
+    fi
+  fi
+
+  case "$(uname -s 2>/dev/null)" in
+    MINGW* | MSYS* | CYGWIN*) gradlew=./gradlew.bat ;;
+    *) gradlew=./gradlew ;;
+  esac
+
+  # 代理要放 GRADLE_OPTS 环境变量（行内 -D 会被 gradlew.bat 拆坏，见 AGENTS.md）。
+  # 这里不动它：hook 继承你 shell 的环境，缓存热的时候也不需要代理。
+  run "静态检查（ktlint / detekt / Android Lint）" \
+    sh -c "cd android && $gradlew spotlessCheck detekt :app:lintDebug --console=plain"
+  run "单测 + androidTest 编译" \
+    sh -c "cd android && $gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --console=plain"
+fi
+
+printf '\n✓ pre-push 全过（CI 仍会再跑一遍）\n'

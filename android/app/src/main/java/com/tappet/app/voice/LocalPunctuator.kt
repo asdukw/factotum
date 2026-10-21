@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * 给识别结果补标点：sherpa-onnx 的 `OfflinePunctuation`（CT-Transformer）+ [PunctModelCatalog]
  * 里那个模型。
  *
- * 只有 paraformer 那条路线需要它（见 `AsrEngineSpec.needsPunctuation`），而且**它是改善，
+ * 只有 paraformer 那条路线需要它（见 `AsrModel.companions`），而且**它是改善，
  * 不是前置条件**：没装标点模型时 [VoiceInput] 直接用识别原文，不会因此说「语音输入不可用」。
  * 这一点决定了这里的失败处理与 [LocalRecognizer] 不同 —— 那边失败等于这次输入没成，
  * 这边失败只是少几个逗号。

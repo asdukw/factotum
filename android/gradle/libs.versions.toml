@@ -15,6 +15,8 @@ kotlinxSerialization = "1.11.0"
 nav3Core = "1.0.1"
 lifecycleViewmodelNav3 = "2.10.0"
 okhttp = "4.12.0"
+# Markdown 渲染（Compose）：GFM + 表格 + 代码高亮，解析异步在库内完成
+markdownRenderer = "0.41.0"
 sqlcipher = "4.19.1"
 # 只为了 tar.bz2：Android 的 java.util.zip 不认 bzip2，而 sherpa-onnx 的模型
 # 只有 .tar.bz2 一种分发格式（纯 Java，Apache-2.0，连带 commons-io/codec/lang3）。
@@ -48,6 +50,8 @@ junit = { module = "junit:junit", version.ref = "junit" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+multiplatform-markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
+multiplatform-markdown-renderer-code = { module = "com.mikepenz:multiplatform-markdown-renderer-code", version.ref = "markdownRenderer" }
 sqlcipher-android = { module = "net.zetetic:sqlcipher-android", version.ref = "sqlcipher" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
 androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidxSqlite" }

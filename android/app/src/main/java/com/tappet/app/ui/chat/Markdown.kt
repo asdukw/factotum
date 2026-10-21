@@ -1,10 +1,12 @@
 package com.tappet.app.ui.chat
 
 /**
- * 极简 Markdown 块模型。
+ * 极简 Markdown 块模型，现在只服务于朗读（[com.tappet.app.voice.SpeakableText]）：
+ * 把正文摊平成「该念出来的句子」。**渲染不走这里** —— 界面用
+ * multiplatform-markdown-renderer，见 [MarkdownText]。
  *
  * 只覆盖模型实际会写的那一档：标题 / 段落 / 列表 / 引用 / 代码块 / 分隔线。
- * 表格、脚注、HTML 之类需要的时候再往这里加。
+ * 解析有意宽容：流式输出会把没写完的语法一并送进来，这时按「直到文本结尾」处理。
  */
 sealed interface MarkdownBlock {
   data class Paragraph(val text: String) : MarkdownBlock

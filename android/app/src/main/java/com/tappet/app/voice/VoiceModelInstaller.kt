@@ -56,10 +56,7 @@ object VoiceModelInstaller {
         try {
           // 先装本体、再装伴生模型（[VoiceModel.companions]，目前就是标点那种）：
           // 中途取消时留下的是「识别能用、标点还差一点」，反过来则是一份没人用得上的标点。
-          // **已经装好的跳过** —— 老用户升级后点一次「补下」只拉缺的那一份。
-          //
-          // 进度条会**从头走两遍**（两条归档是两次下载），这是如实反映而不是 bug：
-          // 界面上那一行的按钮写的就是两样加起来的大小。
+          // **已经装好的跳过** —— 老用户升级后只拉缺的那一份。
           for (target in installOrder(model) { VoiceModelStore.isInstalled(app, it.kind, it) }) {
             VoiceModelDownloader.install(app, target.kind, target) { progress ->
               _state.value = State(kind, model.id, progress = progress)
@@ -90,12 +87,41 @@ object VoiceModelInstaller {
     job = null
     _state.value = null
   }
+
+  /**
+   * 「没装就装」：本体与伴生件都齐了、或者正在装同一个模型时是空操作。
+   *
+   * 识别模型走这一条（[com.tappet.app.TappetApplication] 启动时、点麦克风时），
+   * 因为用户没有「下载识别模型」这个入口 —— 也不该有。**判据必须包含伴生件**：
+   * 只查本体会漏掉「本体早就在、标点模型还没下」的老安装，而那一档没有别的地方能补。
+   * **失败不自动重试**：下一次启动或下一次点麦克风会再走一遍。
+   */
+  fun ensureInstalled(
+    context: Context,
+    kind: String,
+    model: VoiceModel,
+  ) {
+    val app = context.applicationContext
+    val missing = installOrder(model) { VoiceModelStore.isInstalled(app, it.kind, it) }
+    if (missing.isEmpty()) return
+    if (isRunning(kind, model.id)) return
+    install(app, kind, model)
+  }
+
+  private fun isRunning(
+    kind: String,
+    modelId: String,
+  ): Boolean {
+    val current = _state.value ?: return false
+    if (current.error != null) return false
+    return current.kind == kind && current.modelId == modelId
+  }
 }
 
 /**
  * 这次安装真正要下的那几份：本体 + 伴生模型（[VoiceModel.companions]），**已经装好的跳过**。
  *
- * 抽成纯函数是为了能离开设备验证 —— 它决定了「老用户点一次『补下』只拉缺的那 62MB」。
+ * 抽成纯函数是为了能离开设备验证 —— 它决定了「老用户升级后只补拉缺的那 62MB」。
  * 写反了（无条件把本体也下一遍）在界面上**看不出来**：进度条照样走，只是流量莫名多花了
  * 82MB，而且要等第二次下载失败才会有人怀疑。
  *

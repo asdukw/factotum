@@ -38,15 +38,6 @@ class VoiceModelInstallOrderTest {
   }
 
   @Test
-  fun `自带标点的档不会被拉上标点模型`() {
-    // sense-voice 与 whisper 自己产标点（`AsrEngineSpec.needsPunctuation == false`），
-    // 跟着它们下 62MB 是纯浪费。
-    listOf(AsrModelCatalog.SENSE_VOICE_INT8, AsrModelCatalog.WHISPER_TINY).forEach { model ->
-      assertEquals(model.id, listOf(model.id), installOrder(model) { false }.map { it.id })
-    }
-  }
-
-  @Test
   fun `伴生模型按它自己的种类查，不是本体的`() {
     // 标点装在 punct-models/ 下、识别装在 asr-models/ 下。拿本体那一类去查「装没装」
     // 永远查到没装 —— 于是每次点「补下」都重下一遍 62MB，而界面上一切正常。

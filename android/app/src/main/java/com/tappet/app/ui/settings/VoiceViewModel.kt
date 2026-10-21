@@ -3,8 +3,6 @@ package com.tappet.app.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.tappet.app.voice.AsrModelCatalog
-import com.tappet.app.voice.PunctModelCatalog
 import com.tappet.app.voice.TtsModelCatalog
 import com.tappet.app.voice.TtsVoice
 import com.tappet.app.voice.VoiceEngines
@@ -21,35 +19,25 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * 语音设置页状态：朗读（引擎 / 自动朗读 / 语速 / 音色）与语音输入（识别模型），
- * 以及本地模型的下载与管理。
+ * 语音设置页状态：朗读（引擎 / 自动朗读 / 语速 / 音色）与朗读模型的下载管理。
  *
- * 朗读与识别**各有一套模型列表与选中项**（`models` / `asrModels`）：它们是两件独立的事，
- * 一个用户完全可能想用本地识别 + 系统朗读。共用一套槽位等于逼他二选一。
+ * **语音输入不在这页**：识别模型只有 paraformer 一条，没有可选项，随安装自动下载
+ * （见 `TappetApplication`）—— 一个只有一种取法的设置项只是噪音。
  *
  * 引擎有「可用 / 不可用」两态，不可用时把原因原样显示给用户（本地引擎没下模型就是最常见的
  * 那条）—— 一个选了却没反应的选项比一个写着「还没下载模型」的选项糟糕得多。
  */
 class VoiceViewModel(private val appContext: Context) : ViewModel() {
-  /** 目录里的一个模型在这台设备上的状态。合成与识别共用这个形状。 */
+  /** 目录里的一个模型在这台设备上的状态。 */
   data class ModelUi(
     val model: VoiceModel,
     val installed: Boolean,
     val installedBytes: Long,
-    /** 上次没下完的归档还剩多少（> 0 说明会续传）。含伴生模型那份。 */
+    /** 上次没下完的归档还剩多少（> 0 说明会续传）。 */
     val partialBytes: Long,
-    /**
-     * 还没装的**伴生模型**（[VoiceModel.companions]，目前就是标点那种）。
-     *
-     * 这个字段存在的唯一理由是**老用户升级**：他的 Paraformer 早就装好了，而标点是随
-     * 这次升级才出现的 —— 不显示出来的话，那份模型永远不会被下下来，而用户既不知道
-     * 少了什么、也没有入口去补。
-     */
-    val missingCompanions: List<VoiceModel> = emptyList(),
   ) {
-    /** 点「下载」时还会拉多少字节（本体 + 还没装的伴生模型）。 */
-    val missingBytes: Long
-      get() = (if (installed) 0L else model.sizeBytes) + missingCompanions.sumOf { it.sizeBytes }
+    /** 点「下载」时还会拉多少字节。 */
+    val missingBytes: Long get() = if (installed) 0L else model.sizeBytes
   }
 
   data class UiState(
@@ -63,12 +51,8 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     val loadingVoices: Boolean = false,
     /** 朗读模型。 */
     val models: List<ModelUi> = emptyList(),
-    /** 识别模型。 */
-    val asrModels: List<ModelUi> = emptyList(),
     /** 朗读选中的本地模型 id；null = 还没选。 */
     val selectedModelId: String? = null,
-    /** 识别选中的模型 id；null = 还没选。 */
-    val selectedAsrModelId: String? = null,
     /** 正在下载 / 解包的模型；null = 没有在装。 */
     val installing: VoiceModelInstaller.State? = null,
   ) {
@@ -80,10 +64,6 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     /** 本地引擎是否已经可用（选了模型且装好了）。 */
     val localReady: Boolean
       get() = models.any { it.model.id == selectedModelId && it.installed }
-
-    /** 语音输入能不能用（选了识别模型且装好了）。**只看识别模型本身** —— 标点缺了也能用。 */
-    val dictationReady: Boolean
-      get() = asrModels.any { it.model.id == selectedAsrModelId && it.installed }
   }
 
   private val _state =
@@ -94,7 +74,6 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
         rate = VoiceSettings.rate(appContext),
         selectedVoice = VoiceSettings.systemVoice(appContext),
         selectedModelId = VoiceSettings.localModel(appContext),
-        selectedAsrModelId = AsrModelCatalog.selectedId(appContext),
       ),
     )
   val state: StateFlow<UiState> = _state.asStateFlow()
@@ -141,66 +120,28 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
     VoiceReader.currentEngine(appContext).selectVoice(voiceId)
   }
 
-  /**
-   * 选中一个模型。朗读那边顺手切到本地引擎（用户点了模型就是想说这个声音）；
-   * 识别那边不用切引擎 —— 语音输入只有本地这一条路。
-   */
-  fun selectModel(
-    kind: String,
-    model: VoiceModel,
-  ) {
-    if (kind == VoiceModelKinds.TTS) {
-      VoiceSettings.setLocalModel(appContext, model.id)
-      VoiceReader.stop()
-      _state.update { it.copy(selectedModelId = model.id) }
-      selectEngine(VoiceEngines.LOCAL)
-    } else {
-      VoiceSettings.setAsrModel(appContext, model.id)
-      _state.update { it.copy(selectedAsrModelId = model.id) }
-    }
+  /** 选中一个朗读模型，顺手切到本地引擎（用户点了模型就是想说这个声音）。 */
+  fun selectModel(model: VoiceModel) {
+    VoiceSettings.setLocalModel(appContext, model.id)
+    VoiceReader.stop()
+    _state.update { it.copy(selectedModelId = model.id) }
+    selectEngine(VoiceEngines.LOCAL)
   }
 
-  fun installModel(
-    kind: String,
-    model: VoiceModel,
-  ) {
-    VoiceModelInstaller.install(appContext, kind, model)
+  fun installModel(model: VoiceModel) {
+    VoiceModelInstaller.install(appContext, model.kind, model)
   }
 
   fun cancelInstall() {
     VoiceModelInstaller.cancel()
   }
 
-  /** 删除一个已下载的模型。删的正是当前选中的那个时，引擎要重新判定可用性。 */
-  fun deleteModel(
-    kind: String,
-    model: VoiceModel,
-  ) {
-    if (kind == VoiceModelKinds.TTS) VoiceReader.stop()
-    VoiceModelStore.delete(appContext, kind, model.id)
-    deleteOrphanedCompanions(model)
+  /** 删除一个已下载的朗读模型。删的正是当前选中的那个时，引擎要重新判定可用性。 */
+  fun deleteModel(model: VoiceModel) {
+    VoiceReader.stop()
+    VoiceModelStore.delete(appContext, model.kind, model.id)
     refreshModels()
     refreshEngine()
-  }
-
-  /**
-   * 顺带清掉**没人再需要**的伴生模型（标点那种）。
-   *
-   * 不做这一步的话，删掉 Paraformer 会在设备上留下 62MB 谁也用不上的标点模型：用户看不到它
-   * （界面上已经没有那一条了），也不知道该怎么清。判据是「还有没有**别的装着的**模型需要
-   * 它」—— 将来两个识别模型共用一份标点时，删其中一个不会把另一个的标点一起带走。
-   */
-  private fun deleteOrphanedCompanions(deleted: VoiceModel) {
-    val catalogs = TtsModelCatalog.ALL + AsrModelCatalog.ALL + PunctModelCatalog.ALL
-    deleted.companions.forEach { companion ->
-      val stillNeeded =
-        catalogs.any { other ->
-          other.id != deleted.id &&
-            VoiceModelStore.isInstalled(appContext, other.kind, other) &&
-            other.companions.any { it.id == companion.id }
-        }
-      if (!stillNeeded) VoiceModelStore.delete(appContext, companion.kind, companion.id)
-    }
   }
 
   /** 试听：读一句固定的中文，让用户听到当前引擎 + 语速 + 音色的实际效果。 */
@@ -224,10 +165,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
 
   private fun refreshModels() {
     _state.update { current ->
-      current.copy(
-        models = TtsModelCatalog.ALL.map { modelUi(VoiceModelKinds.TTS, it) },
-        asrModels = AsrModelCatalog.ALL.map { modelUi(VoiceModelKinds.ASR, it) },
-      )
+      current.copy(models = TtsModelCatalog.ALL.map { modelUi(VoiceModelKinds.TTS, it) })
     }
     // 装完 / 删掉之后，本地引擎的「可用性」跟着变。
     val localReason = VoiceReader.reasonFor(appContext, VoiceEngines.LOCAL)
@@ -242,8 +180,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
       model = model,
       installed = VoiceModelStore.isInstalled(appContext, kind, model),
       installedBytes = VoiceModelStore.installedBytes(appContext, kind, model.id),
-      partialBytes = (listOf(model) + model.companions).sumOf { archiveBytes(it) },
-      missingCompanions = model.companions.filterNot { VoiceModelStore.isInstalled(appContext, it.kind, it) },
+      partialBytes = archiveBytes(model),
     )
 
   /** 已经下好但没解开的归档有多大（界面上的「会接着下」用它）。 */

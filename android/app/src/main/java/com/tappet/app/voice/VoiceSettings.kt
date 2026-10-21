@@ -28,7 +28,6 @@ object VoiceSettings {
   private const val KEY_RATE = "rate"
   private const val KEY_SYSTEM_VOICE = "system_voice"
   private const val KEY_LOCAL_MODEL = "local_model"
-  private const val KEY_ASR_MODEL = "asr_model"
 
   const val MIN_RATE = 0.5f
   const val MAX_RATE = 2.0f
@@ -72,20 +71,6 @@ object VoiceSettings {
   fun setLocalModel(context: Context, modelId: String?) {
     prefs(context).edit {
       if (modelId == null) remove(KEY_LOCAL_MODEL) else putString(KEY_LOCAL_MODEL, modelId)
-    }
-  }
-
-  /**
-   * 语音输入选中的识别模型 id；null = 还没下过模型。
-   *
-   * 与朗读的 [localModel] **各存各的**：一个用户完全可能想用本地识别但用系统朗读
-   * （或者反过来），合成与识别是两件独立的事，共用一个槽位等于逼他二选一。
-   */
-  fun asrModel(context: Context): String? = prefs(context).getString(KEY_ASR_MODEL, null)
-
-  fun setAsrModel(context: Context, modelId: String?) {
-    prefs(context).edit {
-      if (modelId == null) remove(KEY_ASR_MODEL) else putString(KEY_ASR_MODEL, modelId)
     }
   }
 

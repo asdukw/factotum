@@ -29,9 +29,9 @@ import kotlinx.coroutines.launch
  * 验的是「这条路通不通、出多少字、多久」，要看文本时显式加 `--ez logPayload true` ——
  * 那时打印的是**你推上去的那段测试音频**，不是用户说的话。
  *
- * 五个 op：`ASR`（一段 WAV → 识别）、`VAD`（WAV → VAD 分段 → **逐段**识别 → 拼起来）、
+ * 五个 op：`ASR`（一段 WAV → 识别）、`VAD`（WAV → VAD 分段 → **逐段**识别 → 拼起来 → 补标点）、
  * `PUNCT`（一段文本 → 补标点，不经过识别）、`INSTALL`（识别模型或标点模型）、
- * `MODELS`（目录里每个模型在这台设备上的状态）。
+ * `MODELS`（模型在这台设备上的状态）。
  */
 class VoiceDebugReceiver : BroadcastReceiver() {
   override fun onReceive(
@@ -44,10 +44,9 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       "ASR" -> {
         val wav = intent.getStringExtra(EXTRA_WAV) ?: return
         val logPayload = intent.getBooleanExtra(EXTRA_LOG_PAYLOAD, false)
-        val modelId = intent.getStringExtra(EXTRA_MODEL) ?: AsrModelCatalog.selectedId(app)
         // 广播立即返回，识别在进程内异步跑（Broadcast Timeout 是 60 秒，
         // 而首次识别要把上百 MB 的模型读进内存）。
-        CoroutineScope(Dispatchers.IO).launch { transcribe(app, wav, modelId, logPayload) }
+        CoroutineScope(Dispatchers.IO).launch { transcribe(app, wav, logPayload) }
       }
 
       "INSTALL" -> {
@@ -74,10 +73,7 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       "VAD" -> {
         val wav = intent.getStringExtra(EXTRA_WAV) ?: return
         val logPayload = intent.getBooleanExtra(EXTRA_LOG_PAYLOAD, false)
-        // 与 op ASR 一样可以指定模型：这条探针的用处之一就是**同一段音频过三个模型**
-        // （docs/voice.md §8 那张表就是这么来的），不给 model 就用当前选中的那个。
-        val modelId = intent.getStringExtra(EXTRA_MODEL) ?: AsrModelCatalog.selectedId(app)
-        CoroutineScope(Dispatchers.IO).launch { vad(app, wav, modelId, logPayload) }
+        CoroutineScope(Dispatchers.IO).launch { vad(app, wav, logPayload) }
       }
 
       "MODELS" -> logModels(app)
@@ -166,7 +162,6 @@ class VoiceDebugReceiver : BroadcastReceiver() {
   private suspend fun vad(
     app: Context,
     wav: String,
-    modelId: String?,
     logPayload: Boolean,
   ) {
     val wave =
@@ -215,7 +210,7 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       Log.w(TAG, "VAD 一段都没认出来 —— 样例音频是人声，这不该发生")
       return
     }
-    val engine = LocalRecognizer(app, modelId)
+    val engine = LocalRecognizer(app)
     val initError = engine.initialize()
     if (initError != null) {
       Log.e(TAG, "引擎不可用：$initError")
@@ -238,7 +233,7 @@ class VoiceDebugReceiver : BroadcastReceiver() {
     engine.release()
 
     val joined = RecognizedText.joinSegments(texts)
-    val punctuated = punctuateIfNeeded(app, modelId, joined)
+    val punctuated = punctuateIfNeeded(app, joined)
     Log.i(
       TAG,
       "vad asr done segments=${segments.size} chars=${joined.length} " +
@@ -248,17 +243,15 @@ class VoiceDebugReceiver : BroadcastReceiver() {
   }
 
   /**
-   * 走**和 [VoiceInput] 完全相同**的补标点判定：模型不产标点才补、标点模型没装就不补。
+   * 走**和 [VoiceInput] 完全相同**的补标点判定：标点模型没装就不补。
    * 复制一份判定而不是直接调 [VoiceInput] 的私有函数 —— 探针要能在**不录音**的前提下
    * 验这条分支，而 [VoiceInput] 的入口都绑着麦克风。
    */
   private suspend fun punctuateIfNeeded(
     app: Context,
-    modelId: String?,
     text: String,
   ): String {
-    val model = AsrModelCatalog.byId(modelId) ?: return text
-    if (!model.engine.needsPunctuation || text.isBlank()) return text
+    if (text.isBlank()) return text
     val engine = LocalPunctuator(app)
     val initError = engine.initialize()
     if (initError != null) {
@@ -273,7 +266,6 @@ class VoiceDebugReceiver : BroadcastReceiver() {
   private suspend fun transcribe(
     app: Context,
     wav: String,
-    modelId: String?,
     logPayload: Boolean,
   ) {
     // 先看一眼文件本身：读不到时，「文件没权限」与「native 读不了」是两回事，
@@ -289,9 +281,9 @@ class VoiceDebugReceiver : BroadcastReceiver() {
         Log.e(TAG, "读 WAV 失败：$wav", error)
         return
       }
-    Log.i(TAG, "wav ready samples=${wave.samples.size} rate=${wave.sampleRate} model=${modelId ?: "none"}")
+    Log.i(TAG, "wav ready samples=${wave.samples.size} rate=${wave.sampleRate}")
 
-    val engine = LocalRecognizer(app, modelId)
+    val engine = LocalRecognizer(app)
     val initError = engine.initialize()
     if (initError != null) {
       Log.e(TAG, "引擎不可用：$initError")
@@ -299,8 +291,8 @@ class VoiceDebugReceiver : BroadcastReceiver() {
     }
     val startedAt = System.currentTimeMillis()
     val recognition = engine.transcribe(wave.samples)
-    // lang / event 是模型自己给的判定（只有 SenseVoice 会填），**不是正文** —— 它们是
-    // 「输出看着不对」时唯一的结构性线索（比如 whisper 把英文解成了中文）。
+    // lang / event 是模型自己给的判定，**不是正文** —— 它们是「输出看着不对」时唯一的
+    // 结构性线索（paraformer 不填这两个，换模型时它们就派上用场了）。
     Log.i(
       TAG,
       "asr done chars=${recognition.text.length} ms=${System.currentTimeMillis() - startedAt} " +
@@ -312,7 +304,7 @@ class VoiceDebugReceiver : BroadcastReceiver() {
 
   /**
    * 打印目录里每个模型在这台设备上的状态。**没有正文**，只有 id / 装没装 / 占多大 ——
-   * 排「模型下到一半」这类问题时，这比翻设置页快。
+   * 排「模型下到一半」这类问题时，这比翻设置页快（设置页里已经没有识别模型了）。
    */
   private fun logModels(app: Context) {
     AsrModelCatalog.ALL.forEach { model ->
@@ -321,16 +313,18 @@ class VoiceDebugReceiver : BroadcastReceiver() {
       val partial = VoiceModelDownloader.partialBytes(app, VoiceModelKinds.ASR, model.id)
       Log.i(TAG, "asr model id=${model.id} installed=$installed bytes=$bytes partial=$partial")
     }
-    // 两个都打：stored 是用户在设置页点过的那条，effective 是实际会用的那条
-    // （没点过就回落到第一个装好的）。两者不一致时，「点了没反应」这类问题一眼可辨。
-    Log.i(TAG, "asr stored=${VoiceSettings.asrModel(app) ?: "none"} effective=${AsrModelCatalog.selectedId(app) ?: "none"}")
-    // 标点模型：装没装决定了 paraformer 那条路线的输出有没有标点。
+    // 标点模型：装没装决定了识别结果的输出有没有标点。
     PunctModelCatalog.ALL.forEach { model ->
       val installed = VoiceModelStore.isInstalled(app, VoiceModelKinds.PUNCT, model)
       val bytes = VoiceModelStore.installedBytes(app, VoiceModelKinds.PUNCT, model.id)
       val partial = VoiceModelDownloader.partialBytes(app, VoiceModelKinds.PUNCT, model.id)
       Log.i(TAG, "punct model id=${model.id} installed=$installed bytes=$bytes partial=$partial")
     }
+    val installing = VoiceModelInstaller.state.value
+    Log.i(
+      TAG,
+      "voice installing=${installing?.modelId ?: "none"} error=${installing?.error ?: "none"}",
+    )
   }
 
   private companion object {

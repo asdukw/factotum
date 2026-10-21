@@ -71,6 +71,26 @@ object VoiceModelStore {
     }
   }
 
+  /**
+   * 删掉这个种类下**不在 [keepIds] 里的模型**，连同它们的续传归档。
+   *
+   * 目录表删掉一条模型之后，设备上那份没人会用、界面上也看不到 —— 留着只是占空间
+   * （一个识别模型就是几十上百 MB）。只动 `filesDir/<kind>-models/` 下的一级目录，
+   * 别的地方一概不碰。
+   */
+  fun pruneUnused(
+    context: Context,
+    kind: String,
+    keepIds: Set<String>,
+  ) {
+    root(context, kind).listFiles()?.forEach { file ->
+      if (!file.isDirectory || file.name.startsWith(STAGING_PREFIX) || file.name in keepIds) return@forEach
+      file.deleteRecursively()
+      archivePart(context, kind, file.name).delete()
+      archiveEtag(context, kind, file.name).delete()
+    }
+  }
+
   /** 已下载归档的暂存位置（断点续传靠它跨进程存活）。 */
   fun archivePart(
     context: Context,

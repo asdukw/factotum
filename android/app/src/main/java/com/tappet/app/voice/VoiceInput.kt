@@ -45,9 +45,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * ## 为什么识别引擎要缓存
  *
- * 建一次识别器要**把几十上百 MB 的模型读进内存**（sense-voice 是 239MB），
- * 每次说话都重建就是每次等好几秒。所以按模型 id 缓存（[engineKey]），
- * 换模型 / 删模型时才换实例 —— 与 [VoiceReader] 的 `engineKey` 同一个形状。
+ * 建一次识别器要**把上百 MB 的模型读进内存**，每次说话都重建就是每次等好几秒。
+ * 所以进程内只建一个（[engineFor]），直到 [LocalRecognizer.release]。
  *
  * **音频不落日志、不落盘**：它只在本进程的内存里存在到识别完，之后就被丢掉。
  * 日志只有样本长度、字符数与失败原因（见 AGENTS.md 的隐私红线）。
@@ -101,13 +100,7 @@ object VoiceInput {
 
   private var engine: LocalRecognizer? = null
 
-  /** 建引擎时用的模型 id。用户换了模型，下次识别重建。 */
-  private var engineKey: String? = null
-
   private var punctuator: LocalPunctuator? = null
-
-  /** 建标点引擎时用的模型 id。同上。 */
-  private var punctuatorKey: String? = null
 
   private var resultId = 0L
 
@@ -148,8 +141,23 @@ object VoiceInput {
     ) {
       return "还没有麦克风权限"
     }
-    return engineFor(app).unavailableReason()
+    if (VoiceModelStore.isInstalled(app, VoiceModelKinds.ASR, AsrModelCatalog.PARAFORMER_ZH_SMALL)) {
+      return engineFor(app).unavailableReason()
+    }
+    // 识别模型没有设置页入口，随安装自动下载（见 TappetApplication）；没下完时
+    // 如实说是「正在下」而不是「不可用」—— 前者等一会儿就好，后者听起来像坏了。
+    val error = VoiceModelInstaller.state.value?.error
+    if (error != null) {
+      return "语音识别模型下载失败（$error），再点一次麦克风会重试"
+    }
+    val model = AsrModelCatalog.PARAFORMER_ZH_SMALL
+    // 标点模型是它的伴生件，下载量要算进去。
+    val bytes = (listOf(model) + model.companions).sumOf { it.sizeBytes }
+    return "语音识别模型正在下载（约 ${formatMegabytes(bytes)}），下完后再点一次麦克风"
   }
+
+  /** 文案里的体积只求好读，不要小数点后一位。 */
+  private fun formatMegabytes(bytes: Long): String = "${bytes / 1024 / 1024}MB"
 
   fun isListening(): Boolean = _state.value is State.Listening
 
@@ -161,6 +169,9 @@ object VoiceInput {
   fun start(context: Context) {
     val app = context.applicationContext
     cancel()
+    // 模型没装（首次安装后还没下完 / 上次下载失败）：再踢一次。
+    // 已经装好、或者正在下，都是空操作。
+    VoiceModelInstaller.ensureInstalled(app, VoiceModelKinds.ASR, AsrModelCatalog.PARAFORMER_ZH_SMALL)
     val reason = unavailableReason(app)
     if (reason != null) {
       _state.value = State.Failed(reason)
@@ -377,15 +388,13 @@ object VoiceInput {
   }
 
   /**
-   * 按需补标点。**三层都能单独放行**：模型本身产标点（sense-voice / whisper）、标点模型没装、
-   * 标点引擎起不来 —— 任何一种都只是原样返回，语音输入照常可用。
+   * 按需补标点。**三层都能单独放行**：标点模型没装、标点引擎起不来、补出来是空的 ——
+   * 任何一种都只是原样返回，语音输入照常可用。
    */
   private suspend fun punctuate(
     app: Context,
     text: String,
   ): String {
-    val model = AsrModelCatalog.byId(AsrModelCatalog.selectedId(app)) ?: return text
-    if (!model.engine.needsPunctuation) return text
     val engine = punctuatorFor(app) ?: return text
     val initError = engine.initialize()
     if (initError != null) {
@@ -396,27 +405,18 @@ object VoiceInput {
   }
 
   /**
-   * 按当前偏好取识别引擎。配置没变就复用 —— 建一次识别器要把模型读进内存，
+   * 取识别引擎。进程内只建一个 —— 建一次要把上百 MB 的模型读进内存，
    * 每次说话都重来会让第一次识别慢好几秒。
    */
-  private fun engineFor(context: Context): LocalRecognizer {
-    val modelId = AsrModelCatalog.selectedId(context)
-    engine?.let { if (modelId == engineKey) return it }
-    engine?.release()
-    val created = LocalRecognizer(context, modelId)
-    engine = created
-    engineKey = modelId
-    return created
-  }
+  private fun engineFor(context: Context): LocalRecognizer =
+    engine ?: LocalRecognizer(context).also { engine = it }
 
   /** 取标点引擎；模型没装就回 null（不是失败，是「这次不补标点」）。 */
   private fun punctuatorFor(context: Context): LocalPunctuator? {
-    val modelId = PunctModelCatalog.installedId(context)
-    punctuator?.let { if (modelId == punctuatorKey) return it }
-    punctuator?.release()
-    punctuatorKey = modelId
-    punctuator = modelId?.let { LocalPunctuator(context) }
-    return punctuator
+    punctuator?.let { return it }
+    val created = PunctModelCatalog.installedId(context)?.let { LocalPunctuator(context) } ?: return null
+    punctuator = created
+    return created
   }
 
   /** 电平：把 RMS 映射到 0..1 给界面画条。0.15 已经是很响的说话声。 */

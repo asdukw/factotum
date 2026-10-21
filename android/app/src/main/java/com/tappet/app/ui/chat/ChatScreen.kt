@@ -92,6 +92,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.AgentModelSwitcher
+import com.tappet.app.agent.ApprovalHub
 import com.tappet.app.agent.ChatMessage
 import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
@@ -1442,17 +1443,26 @@ private fun ModelChoiceCard(
 }
 
 /**
- * 浮在聊天之上的两层：模型提问的面板，与「发现新版本」的提醒。
+ * 浮在聊天之上的几层：审批确认、模型提问的面板，与「发现新版本」的提醒。
  *
  * 单独一个函数只是因为 [ChatScreen] 本身已经顶到 detekt 的函数长度上限了 ——
- * 这两块都**不属于聊天的布局**，抽出来反而更清楚：它们都是「有就弹、没有就不存在」的覆盖层。
+ * 这几块都**不属于聊天的布局**，抽出来反而更清楚：它们都是「有就弹、没有就不存在」的覆盖层。
+ *
+ * 审批优先于提问：审批是「任务被卡住」的那一个，先把决定给出去；提问面板可以等。
+ * 两层同时存在时只渲染审批，避免两个 ModalBottomSheet 叠在一起。
  *
  * 更新提醒每个**进程启动**查一次；查不到就什么也不弹（更新是锦上添花，不该因为没网就打扰用户）。
  * 设置页那个入口是手动的，不受这里的跳过列表影响。
  */
 @Composable
 private fun ChatOverlays() {
+  val pendingApproval by ApprovalHub.pending.collectAsStateWithLifecycle()
   val pendingQuestion by UserQuestionHub.pending.collectAsStateWithLifecycle()
-  pendingQuestion?.let { UserQuestionSheet(it) }
+  val approval = pendingApproval
+  if (approval != null) {
+    ApprovalSheet(approval)
+  } else {
+    pendingQuestion?.let { UserQuestionSheet(it) }
+  }
   UpdateReminder()
 }

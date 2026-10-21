@@ -304,6 +304,24 @@
     - id: dsh-gmail
       name: 'dsh-plugin-gmail'
 
+# --- 审批：dsh 官方的 user-approval seam ---
+# dsh-base 已经挂了 `@deepseek-ai/dsh-user-approval`，但它的默认策略是
+# `DSH_PERMISSION_MODE === 'danger-full-access' ? 'never' : 'ask'`。宿主为了沙箱语义设了
+# danger-full-access，于是审批被读成 `never` —— 所有 `ask` 都会被确定性拒绝。手机没有沙箱，
+# 这里把策略单独覆盖回 `ask`。
+#
+# answerer 由 `dsh-plugin-approval` 提供：它把 `approval/request` 转给 App 的确认面板
+# （第四个本地桥，见 ApprovalBridgeServer），并且和提问一样用 `prepend: true` 排在
+# `dsh-api-remotes` 前面 —— 那一层等的是浏览器回答，手机上没人消费。
+# 语义、fail-closed 与已知限制见 docs/approvals.md。
+- id: approval
+  config:
+    policy: ask
+
+- insert:
+    - id: dsh-approval
+      name: 'dsh-plugin-approval'
+
 # --- 用户提问：`ask_user_question` 的 answerer ---
 # dsh 原生的答案是注册在 Cordis waterfall `user-questions/request` 上的 answerer 给的
 # （官方 Web UI 经 `dsh-api-remotes` 转发过去）。我们的 Kotlin 宿主不连那条 Web 通道，

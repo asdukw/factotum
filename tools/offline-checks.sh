@@ -22,3 +22,5 @@ node tools/dsh-phone/test/zen-session-fetch.test.mjs
 node tools/uitars/test/adapt.test.mjs
 # 提问 answerer 的边界：接不了必须让路，不能编答案。
 (cd tools/dsh-phone/plugins/user-questions && npm test)
+# 审批 answerer：只回封闭结果，桥不可用时 fail closed（不能让路挂住整轮）。
+(cd tools/dsh-phone/plugins/approval && npm test)

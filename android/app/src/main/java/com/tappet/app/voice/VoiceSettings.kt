@@ -1,6 +1,7 @@
 package com.tappet.app.voice
 
 import android.content.Context
+import androidx.core.content.edit
 
 /** 朗读引擎的 id。写进偏好，**改字面量 = 用户的选择静默丢失**（与 AGENTS.md 的存储身份同一条）。 */
 object VoiceEngines {
@@ -38,14 +39,14 @@ object VoiceSettings {
     prefs(context).getString(KEY_ENGINE, null)?.takeIf { it in VoiceEngines.ALL } ?: VoiceEngines.SYSTEM
 
   fun setEngineId(context: Context, id: String) {
-    prefs(context).edit().putString(KEY_ENGINE, id).apply()
+    prefs(context).edit { putString(KEY_ENGINE, id) }
   }
 
   /** 默认**关**：没点过朗读的用户不该在模型每次答完时被声音吓一跳。 */
   fun autoRead(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO_READ, false)
 
   fun setAutoRead(context: Context, enabled: Boolean) {
-    prefs(context).edit().putBoolean(KEY_AUTO_READ, enabled).apply()
+    prefs(context).edit { putBoolean(KEY_AUTO_READ, enabled) }
   }
 
   /** 语速倍率。系统引擎与本地引擎都认它。 */
@@ -53,25 +54,25 @@ object VoiceSettings {
     prefs(context).getFloat(KEY_RATE, DEFAULT_RATE).coerceIn(MIN_RATE, MAX_RATE)
 
   fun setRate(context: Context, rate: Float) {
-    prefs(context).edit().putFloat(KEY_RATE, rate.coerceIn(MIN_RATE, MAX_RATE)).apply()
+    prefs(context).edit { putFloat(KEY_RATE, rate.coerceIn(MIN_RATE, MAX_RATE)) }
   }
 
   /** 系统引擎的音色。本地引擎不用它 —— 音色由模型决定。 */
   fun systemVoice(context: Context): String? = prefs(context).getString(KEY_SYSTEM_VOICE, null)
 
   fun setSystemVoice(context: Context, voiceId: String?) {
-    prefs(context).edit().apply {
+    prefs(context).edit {
       if (voiceId == null) remove(KEY_SYSTEM_VOICE) else putString(KEY_SYSTEM_VOICE, voiceId)
-    }.apply()
+    }
   }
 
   /** 本地引擎选中的模型 id；null = 还没下过模型。 */
   fun localModel(context: Context): String? = prefs(context).getString(KEY_LOCAL_MODEL, null)
 
   fun setLocalModel(context: Context, modelId: String?) {
-    prefs(context).edit().apply {
+    prefs(context).edit {
       if (modelId == null) remove(KEY_LOCAL_MODEL) else putString(KEY_LOCAL_MODEL, modelId)
-    }.apply()
+    }
   }
 
   /**
@@ -83,9 +84,9 @@ object VoiceSettings {
   fun asrModel(context: Context): String? = prefs(context).getString(KEY_ASR_MODEL, null)
 
   fun setAsrModel(context: Context, modelId: String?) {
-    prefs(context).edit().apply {
+    prefs(context).edit {
       if (modelId == null) remove(KEY_ASR_MODEL) else putString(KEY_ASR_MODEL, modelId)
-    }.apply()
+    }
   }
 
   private fun prefs(context: Context) =

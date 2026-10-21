@@ -10,6 +10,7 @@ import com.tappet.app.agent.ModelModalities
 import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
+import com.tappet.app.bridge.ApprovalBridgeServer
 import com.tappet.app.bridge.ConnectorBridgeServer
 import com.tappet.app.bridge.DeviceBridgeServer
 import com.tappet.app.bridge.UserQuestionBridgeServer
@@ -557,6 +558,9 @@ object NodeRuntime : NodeLineListener {
     // **不要改用 jniLibs / nativeLibraryDir**：现代 AGP 默认 extractNativeLibs=false，
     // 原生库直接从 APK mmap，那个目录下没有文件可 exec（实测 `lib/arm64/` 是空的）。
     Os.setenv("TAPPET_RG_PATH", File(app.applicationInfo.nativeLibraryDir, "librg.so").absolutePath, true)
+    // 这个变量同时是 dsh 的沙箱模式。手机 profile 没有挂沙箱，所以它在这里的实际作用是
+    // 让 dsh-base 的默认表达式把审批策略读成 `never` —— 手机上的 `ask` 由 profile 里
+    // `- id: approval` + `config.policy: ask` 单独覆盖（见 docs/approvals.md）。
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(app), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)
@@ -578,6 +582,12 @@ object NodeRuntime : NodeLineListener {
     // 问题交给下一个 answerer —— 而不是编一个答案。
     Os.setenv("TAPPET_QUESTION_BRIDGE_URL", UserQuestionBridgeServer.start(), true)
     Os.setenv("TAPPET_QUESTION_BRIDGE_TOKEN", UserQuestionBridgeServer.authToken(), true)
+    // 第四个桥：审批（dsh 的 `approval/request`）进 UI、决定回插件（见 ApprovalBridgeServer
+    // 的类注释）。与提问桥同构：只监听 127.0.0.1 + 每进程随机 token。
+    // **桥不可用时插件回 `unavailable`，不 `next()`**：api-remotes 也在同一个 waterfall 上，
+    // 它等的是浏览器回答；让路会把整轮任务挂住。fail closed 比挂起诚实（docs/approvals.md）。
+    Os.setenv("TAPPET_APPROVAL_BRIDGE_URL", ApprovalBridgeServer.start(), true)
+    Os.setenv("TAPPET_APPROVAL_BRIDGE_TOKEN", ApprovalBridgeServer.authToken(), true)
     // 第一次 mount 用的非密配置；重载时会重写这个文件。
     writeRuntimeConfig(app, config)
   }

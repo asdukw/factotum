@@ -64,7 +64,8 @@
 
 #### 以后加写操作：用 dsh 官方的审批 seam，别自己造闸门
 
-dsh 已经有一整套权限机制，写工具应当接它，而不是在插件里写一个自定义确认框：
+dsh 已经有一整套权限机制，写工具应当接它，而不是在插件里写一个自定义确认框
+（完整说明、隐私分工与验证步骤见 `docs/approvals.md`）：
 
 - `tools/pre-execute` 瀑布可以把一次调用判成 `ask`（`PreToolDecision`），
   由 `@deepseek-ai/dsh-user-approval` 把问题交给已组合的 **answerer**；只有 `allowed-once`

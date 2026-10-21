@@ -136,6 +136,11 @@ push, not later.
   and `OemProfile`. Third-party apps are test targets, not integrations.
 - **The bridge listens on `127.0.0.1` with a per-process random token**, exposes only
   `POST /action`, and installs nothing on the device.
+- **Write operations require the official dsh approval seam.** `tools/pre-execute` returns
+  `ask` for a declared write tool → `@deepseek-ai/dsh-user-approval` → phone answerer →
+  confirmation sheet; only `allowed-once` executes, and a missing answerer fails closed.
+  `reason` is persisted in the session audit log (keep user content out of it);
+  `displayReason` is UI-only and not persisted. See `docs/approvals.md`.
 - **Do not enable touch exploration during tasks**: it swallows injected `dispatchGesture` events
   and cannot rescue a running app. Keep the `touchExplorationActive`
   fallback branches — with TalkBack, those `performAction` branches are the only usable path.
@@ -331,6 +336,7 @@ Full table: `docs/pitfalls.md`.
 | Memory / context injection | `docs/memory.md` | — |
 | Scheduled tasks | `docs/scheduled-tasks.md` | — |
 | `ask_user_question` | `docs/user-questions.md` | — |
+| Approvals, confirmation UI, write-operation gates | `docs/approvals.md` | profile change → `bundle-dsh.ps1` + reinstall |
 | On-device inference | `docs/on-device-inference.md` | — |
 | Releasing, signing material | `docs/releasing.md` | §7.6 |
 | Planning direction (unverified hypotheses) | `docs/roadmap.md` | — |

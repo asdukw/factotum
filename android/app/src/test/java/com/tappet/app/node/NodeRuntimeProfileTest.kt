@@ -61,6 +61,33 @@ class NodeRuntimeProfileTest {
   }
 
   @Test
+  fun `the approval seam is wired in all three places and the policy is ask`() {
+    assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
+    val text = profile.readText()
+
+    // dsh-base 按 DSH_PERMISSION_MODE 把策略读成 never（danger-full-access），所以手机必须在
+    // profile 里显式覆盖回 ask —— 否则所有写操作的 `ask` 都会被确定性拒绝，确认面板永远不出现。
+    assertTrue(
+      "profile 没有把 approval.policy 覆盖成 ask",
+      text.contains("- id: approval\n  config:\n    policy: ask"),
+    )
+
+    val name = "dsh-plugin-approval"
+    assertTrue("profile 里没有插入 $name", text.contains("name: '$name'"))
+
+    val bundler = File("../../tools/bundle-dsh.ps1")
+    assumeTrue("仓库里没有装配脚本（不是完整检出），跳过", bundler.isFile)
+    assertTrue("bundle-dsh.ps1 的插件清单里没有 $name", bundler.readText().contains(name))
+
+    val manifest = File("../../tools/dsh-phone/plugins/approval/package.json")
+    assertTrue("插件源码缺失：$manifest", manifest.isFile)
+    assertTrue(
+      "插件的 package.json 里 name 不是 $name",
+      manifest.readText().contains("\"name\": \"$name\""),
+    )
+  }
+
+  @Test
   fun `the built-in web search provider is wired and reads the injected endpoint`() {
     assumeTrue("仓库里没有 profile 文件（不是完整检出），跳过", profile.isFile)
     val text = profile.readText()

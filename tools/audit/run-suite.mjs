@@ -90,7 +90,10 @@ async function main() {
     await sleep(800)
     // 清空 logcat，让采集到的审计标记只属于这次任务（否则会混进上一次的）
     clearLogcat()
-    broadcast(pkg, `--es op TASK --es task ${shq(task.task)}`)
+    // 每个任务强制一个新会话：不传 session 时 debug 接收器会复用常驻会话，
+    // 所有任务写进同一个文件，既分不清归属，这里的「新会话」判据也永远不成立。
+    const sessionId = `audit-${suite.suite}-${task.id}-${Date.now()}`
+    broadcast(pkg, `--es op TASK --es task ${shq(task.task)} --es session ${shq(sessionId)}`)
 
     // 等这轮跑完：新会话出现 + 文件大小不再增长
     const started = Date.now()
@@ -102,7 +105,10 @@ async function main() {
       if (!container) container = findSessionsContainerOrNull(pkg)
       if (!container) continue
       const now = listSessions(pkg, container)
-      const fresh = now.find((s) => !before.has(s))
+      // dsh 会在会话 id 后追加一段后缀，所以按前缀认，不做等值比较。
+      const fresh =
+        now.find((s) => s === sessionId || s.startsWith(`${sessionId}-`)) ??
+        now.find((s) => !before.has(s))
       if (!fresh) continue
       session = fresh
       const size = sessionSize(pkg, container, session)

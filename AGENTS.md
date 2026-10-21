@@ -229,10 +229,11 @@ key must match the profile key exactly. Full rules: `docs/providers.md`.
 Everything else is routed by §11: change → document → follow-up steps.
 
 STT invariants that break quietly: recognition runs **per VAD segment** (`RecognizedText.joinSegments`
-joins the texts — never concatenate the session into one decode), and the punctuation model is a
-**companion** of Paraformer (`AsrModel.companions`) that installs with it and has no settings entry.
-`decodingMethod` / `blankPenalty` are dead knobs for these three models (only `greedy_search` is
-accepted; anything else exits the process) — details in `docs/voice.md` §8.1–8.2.
+joins the texts — never concatenate the session into one decode). The recognizer is **paraformer
+only** and has no settings entry: it downloads after install and on mic tap, and the punctuation
+model is its **companion** (`AsrModel.companions`) that installs with it. `decodingMethod` /
+`blankPenalty` are dead knobs (only `greedy_search` is accepted; anything else exits the process) —
+details in `docs/voice.md` §8–§8.2.
 
 Downloads fail closed and stop: no auto-retry, actionable reason via `UpdateHttp.failReason`, and a
 short body is an error (`TRANSFER_TRUNCATED`), not a finished file. See `docs/pitfalls.md`.

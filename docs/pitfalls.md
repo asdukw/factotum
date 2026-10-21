@@ -97,17 +97,15 @@
 | 点「停止」要等好几秒才停 | 切段太长（一段读完才检查取消）→ 调小 `TtsEngine.maxChunk` |
 | 本地引擎一朗读就闪退，堆栈里只有 sherpa 与协程的帧 | 采样回调写成了 lambda 字面量 → JNI 找不到 `invoke([F)Ljava/lang/Integer;`（见 `docs/voice.md` §4.1）→ 改回匿名对象 |
 | 本地引擎读完第一段就停，日志报「朗读中断」 | `destroyIfIdle()` 少了 `if (!released) return` → 每次合成结束都把引擎释放了 |
-| 点麦克风提示「还没下载识别模型」 | 语音输入要先下模型（设置 → 语音 → 语音输入，82–239MB）；识别**没有**系统引擎那一档，理由见 `docs/voice.md` §6 |
-| whisper 把中文音频识别成另一种语言（且不报错） | 语种写死了 → `AsrEngineSpec.Whisper.language` 必须留空（留空 = 从音频推断，实测把英文解成了中文） |
-| 点麦克风提示「还没下载识别模型」，但模型明明下好了 | 没有「选中」的那条（`VoiceSettings.asrModel` 是 null）→ 现在由 `AsrModelCatalog.selectedId` 回落到第一个装好的；旧版本装的模型不必重下 |
+| 点麦克风提示「语音识别模型正在下载」 | 识别模型（paraformer + 标点，约 144MB）随安装自动下载；没下完就是这样。识别**没有**系统引擎那一档，理由见 `docs/voice.md` §6 |
+| 识别结果是一整句没有标点的中文 | 正常：paraformer 本身不产标点（`AsrModel.companions` 里跟着装标点模型）；设置页里没有单独入口，`op MODELS` 看标点装没装。见 `docs/voice.md` §8.1 |
+| 标点模型装了但输出没变 | `op PUNCT --es text '...'` 单独验引擎；补出来为空时原样返回 —— 标点是改善，不是前置条件 |
 | 点麦克风什么都没说，输入框却多出一句话 | 手写的能量法端点判定把环境噪声送进了模型（静音 5 秒 → 7~11 个字）→ 已换成 silero VAD，噪声根本不成段；**别再回到阈值判定** |
 | 说完立刻按停，话没了 | `Vad.flush()` 漏了：段要等 0.8 秒静音才闭合 → 收尾顺序必须是 `stop()` → `finish()` → `release()` |
 | 语音输入报「端点检测没起来」 | `assets/silero_vad.onnx` 不在包里 → 跑 `tools/fetch-sherpa.ps1`（629KB，从 `asr-models` release 拉） |
 | `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 | `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数（**没有正文**），不用真人开口就能验 |
-| 识别结果是一整句没有标点的中文 | 正常：paraformer 那档本身不产标点（sense-voice / whisper 产）→ 标点模型是**跟着 Paraformer 一起下**的（`AsrModel.companions`），设置页里没有单独入口。**老用户升级后**那一条会显示「补下 61.7 MB」，点一次即可 |
-| 标点模型装了但输出没变 | 当前识别模型不 `needsPunctuation`（只有 paraformer 要）→ `op MODELS` 看 `punct model ... installed`；`op PUNCT --es text '...'` 单独验引擎 |
-| 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：三个模型只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
+| 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：paraformer 只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
 | 下载模型报「连不上 github.com」 | 手机没开 VPN。**不做自动重试**（会让人以为已经在下了）→ 点那一条上的**重试**，从半截文件接着下。建连超时 15 秒、读超时 15 秒；失败原因由 `UpdateHttp.failReason` 翻译，别再退回「异常原文直接显示」 |
 | 模型解包报「归档坏了」/ 半截文件被当成下完了 | 先看是不是下载中途断线：`read` 对「读完」与「服务器关了连接」给的都是 -1 → `pump` 里按 `Content-Length` 比对，不够就抛 `TRANSFER_TRUNCATED`（半截文件留着续传） |
 

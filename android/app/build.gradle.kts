@@ -66,8 +66,8 @@ android {
     applicationId = "com.tappet.app"
     minSdk = 28
     targetSdk = 36
-    versionCode = 14
-    versionName = "0.13.0"
+    versionCode = 16
+    versionName = "0.15.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -225,6 +225,11 @@ dependencies {
 
   // Chat / Agent HTTP + streaming
   implementation(libs.okhttp)
+
+  // Markdown 渲染（助手正文 / 思考过程）：GFM 表格、任务列表、代码高亮。
+  // 解析在库内用 LaunchedEffect + conflate 异步完成，流式返回时不阻塞组合。
+  implementation(libs.multiplatform.markdown.renderer.m3)
+  implementation(libs.multiplatform.markdown.renderer.code)
   implementation(libs.kotlinx.serialization.json)
 
   // 加密存储（SQLCipher）

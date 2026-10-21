@@ -40,10 +40,12 @@ import com.tappet.app.voice.VoiceEngines
 import com.tappet.app.voice.VoiceModel
 import com.tappet.app.voice.VoiceModelDownloader
 import com.tappet.app.voice.VoiceModelInstaller
-import com.tappet.app.voice.VoiceModelKinds
 
 /**
- * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色，以及本地模型的下载管理。
+ * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色，以及朗读模型的下载管理。
+ *
+ * **语音输入不在这页**：识别模型只有 paraformer 一条、随安装自动下载，没有可选项 ——
+ * 一个只有一种取法的设置项只是噪音。
  *
  * 两个引擎是**两种取舍**，不是新旧关系：系统 TTS 装完就能用、离线、不要流量，但音色随 ROM；
  * 本地引擎音色可选可换，代价是下一个十几 MB 的模型。所以这一页不做「推荐哪个」，
@@ -87,10 +89,10 @@ internal fun VoiceScreen(
   onRateChange: (Float) -> Unit,
   onSelectVoice: (String?) -> Unit,
   onPreview: () -> Unit,
-  onSelectModel: (String, VoiceModel) -> Unit,
-  onInstallModel: (String, VoiceModel) -> Unit,
+  onSelectModel: (VoiceModel) -> Unit,
+  onInstallModel: (VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
-  onDeleteModel: (String, VoiceModel) -> Unit,
+  onDeleteModel: (VoiceModel) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   var voiceSheetOpen by remember { mutableStateOf(false) }
@@ -114,7 +116,6 @@ internal fun VoiceScreen(
       if (state.engineId == VoiceEngines.LOCAL) {
         ModelSection(
           title = "朗读模型",
-          kind = VoiceModelKinds.TTS,
           models = state.models,
           selectedId = state.selectedModelId,
           installing = state.installing,
@@ -153,13 +154,6 @@ internal fun VoiceScreen(
         InfoBanner("当前引擎不可用：$reason")
       }
 
-      DictationSection(
-        state = state,
-        onSelectModel = onSelectModel,
-        onInstallModel = onInstallModel,
-        onCancelInstall = onCancelInstall,
-        onDeleteModel = onDeleteModel,
-      )
       Spacer(Modifier.height(24.dp))
     }
   }
@@ -212,14 +206,13 @@ private fun EngineSection(
 @Composable
 private fun ModelSection(
   title: String,
-  kind: String,
   models: List<VoiceViewModel.ModelUi>,
   selectedId: String?,
   installing: VoiceModelInstaller.State?,
-  onSelectModel: (String, VoiceModel) -> Unit,
-  onInstallModel: (String, VoiceModel) -> Unit,
+  onSelectModel: (VoiceModel) -> Unit,
+  onInstallModel: (VoiceModel) -> Unit,
   onCancelInstall: () -> Unit,
-  onDeleteModel: (String, VoiceModel) -> Unit,
+  onDeleteModel: (VoiceModel) -> Unit,
 ) {
   SectionLabel(title)
   SettingsGroup {
@@ -228,55 +221,15 @@ private fun ModelSection(
       ModelRow(
         model = model,
         selected = model.model.id == selectedId,
-        // 同一时刻只装一个（VoiceModelInstaller），所以进度条只会出现在一条上；
-        // 但要按**种类**匹配，否则装朗读模型时识别那一组也会跟着画进度条。
-        installing = installing?.takeIf { it.kind == kind && it.modelId == model.model.id },
-        onSelect = { onSelectModel(kind, model.model) },
-        onInstall = { onInstallModel(kind, model.model) },
+        // 同一时刻只装一个（VoiceModelInstaller），进度条只会出现在那一条上。
+        installing = installing?.takeIf { it.modelId == model.model.id },
+        onSelect = { onSelectModel(model.model) },
+        onInstall = { onInstallModel(model.model) },
         onCancel = onCancelInstall,
-        onDelete = { onDeleteModel(kind, model.model) },
+        onDelete = { onDeleteModel(model.model) },
       )
     }
   }
-}
-
-/**
- * 语音输入：识别模型的选择与管理。
- *
- * **没有「引擎」可选**，与朗读那边不对称，这是刻意的：识别只有本机一条路。
- * Android 的系统识别（`SpeechRecognizer`）在多数 ROM 上会把音频发给厂商的云 ——
- * 用户的**声音**比屏幕正文更私密，这条出网路径需要一个比「省事」更硬的理由。
- * 理由与实测见 `docs/voice.md`。
- */
-@Composable
-private fun DictationSection(
-  state: VoiceViewModel.UiState,
-  onSelectModel: (String, VoiceModel) -> Unit,
-  onInstallModel: (String, VoiceModel) -> Unit,
-  onCancelInstall: () -> Unit,
-  onDeleteModel: (String, VoiceModel) -> Unit,
-) {
-  Spacer(Modifier.height(20.dp))
-  ModelSection(
-    title = "语音输入（识别模型）",
-    kind = VoiceModelKinds.ASR,
-    models = state.asrModels,
-    selectedId = state.selectedAsrModelId,
-    installing = state.installing,
-    onSelectModel = onSelectModel,
-    onInstallModel = onInstallModel,
-    onCancelInstall = onCancelInstall,
-    onDeleteModel = onDeleteModel,
-  )
-  Spacer(Modifier.height(12.dp))
-  InfoBanner(
-    if (state.dictationReady) {
-      "语音输入在本机识别，音频不出设备、不落盘。说话停顿约 1 秒自动结束，也可以点麦克风结束。"
-    } else {
-      "还没有可用的识别模型：下载上面任意一个，聊天页的麦克风就能用了 —— " +
-        "装好会自动选中它，装了多个也可以点某一条手动换。"
-    },
-  )
 }
 
 @Composable
@@ -305,12 +258,7 @@ private fun ModelRow(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-          // 伴生模型（标点那种）也是用户要下的东西，它的授权同样得显示在下载按钮旁边 ——
-          // 它现在没有自己的一行，所以并到本体这一行里。只写许可名：完整条款在
-          // `PunctModelCatalog` 的 `licenseNote` 里，那一条只对开发者有意义。
-          text =
-            "授权：${model.model.license} —— ${model.model.licenseNote}" +
-              model.model.companions.joinToString("") { "；另含 ${it.label}（${it.license}）" },
+          text = "授权：${model.model.license} —— ${model.model.licenseNote}",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -356,14 +304,9 @@ private fun ModelAction(
 
     installing != null -> TextButton(onClick = onCancel) { Text("取消") }
 
-    // 本体没装：一次把伴生的也下了，按钮上的数字是两样加起来 —— 用户不必知道里面有两份。
+    // 本体没装：下载。
     !model.installed ->
       Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.missingBytes)}") }
-
-    // 本体装好了、只差伴生的那几样（老用户升级后的情形）：按钮写「补下」而不是「下载」，
-    // 免得看着像是要把已经装好的那份重来一遍。装的时候已经装好的会被跳过。
-    model.missingCompanions.isNotEmpty() ->
-      Button(onClick = onInstall) { Text("补下 ${formatMegabytes(model.missingBytes)}") }
 
     selected -> TextButton(onClick = onDelete) { Text("删除") }
 
@@ -395,13 +338,8 @@ private fun ModelProgress(installing: VoiceModelInstaller.State) {
 private fun modelSubtitle(model: VoiceViewModel.ModelUi): String {
   val size =
     when {
-      model.installed && model.missingCompanions.isNotEmpty() ->
-        "还差 ${model.missingCompanions.joinToString("、") { it.label }} ${formatMegabytes(model.missingBytes)}"
-
       model.installed -> "已下载 ${formatMegabytes(model.installedBytes)}"
-
       model.partialBytes > 0 -> "已下载 ${formatMegabytes(model.partialBytes)}，会接着下"
-
       else -> "需要下载 ${formatMegabytes(model.missingBytes)}"
     }
   return "${model.model.summary} · $size"

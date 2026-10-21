@@ -128,8 +128,10 @@ private fun samePresentation(a: ScreenNode, b: ScreenNode): Boolean =
  * 增量结果的文本形态。
  *
  * 行首方括号里带标记：`[+12]` 新增、`[~12]` 变化、`[-9]` 已消失。
- * 未变化的行不重复发送，但**所有可操作节点仍单独列在 targets 段** —— 即使模型的上下文
- * 已经被截断，它也不必为了拿到可点目标而重新全量读屏。
+ * 未变化的行不重复发送，ref 沿用上一次 —— 同一屏内连续操作不需要每步重读。
+ * 不附带「全部可操作节点」清单：计算器这类整屏都是按钮的界面，重列一遍会让增量
+ * 和全量几乎一样大（实测 1723 vs 1652 字符）。上下文被截断时用 `full=true`，
+ * 那是明确的、由模型主动选择的兜底，而不是每次都给所有场景付这份成本。
  */
 fun renderDiff(
   snapshot: ScreenSnapshot,
@@ -156,8 +158,6 @@ fun renderDiff(
     maxTextChars,
     maxLines - lines,
   )
-
-  appendTargets(out, diff.nodes, marks, maxTextChars, maxLines - lines)
   return out.toString().trimEnd()
 }
 
@@ -165,7 +165,7 @@ fun renderDiff(
  * 按标记逐行追加，返回写入的行数。
  *
  * `markOf` 返回 null 表示这行不归本段（例如未变化、或已被上层过滤）。
- * 行数用尽时只写一次截断标记 —— 全量、增量、targets 三处共用同一条截断规则。
+ * 行数用尽时只写一次截断标记 —— 全量与增量共用同一条截断规则。
  */
 private fun appendMarked(
   out: StringBuilder,
@@ -191,47 +191,8 @@ private fun appendMarked(
 }
 
 /** 屏幕完全没变时的最短回复。 */
-fun renderUnchanged(
-  snapshot: ScreenSnapshot,
-  maxTextChars: Int = DEFAULT_MAX_TEXT_CHARS,
-  maxLines: Int = DEFAULT_MAX_RENDER_LINES,
-): String {
-  val out = StringBuilder()
-  out.append("pkg=").append(snapshot.packageName ?: "?").append(" nodes=").append(snapshot.nodes.size)
-  out.append(" unchanged since last read, refs still valid\n")
-  appendTargets(out, snapshot.nodes, emptyMap(), maxTextChars, maxLines)
-  return out.toString().trimEnd()
-}
-
-/**
- * 可操作节点清单。`skip` 里的行已经在上面的 diff 段出现过，这里就不再重复。
- */
-private fun appendTargets(
-  out: StringBuilder,
-  nodes: List<ScreenNode>,
-  skip: Map<Int, Char>,
-  maxTextChars: Int,
-  maxLines: Int,
-) {
-  val targets = nodes.filter { it.actionable }
-  if (targets.isEmpty()) return
-  if (maxLines <= 0) return
-  val pending = targets.filter { it.ref !in skip }
-  if (pending.isEmpty()) {
-    out.append("targets: all ").append(targets.size).append(" actionable nodes listed above\n")
-    return
-  }
-  out.append("targets: ").append(targets.size).append(" actionable\n")
-  var lines = 0
-  for (node in pending) {
-    if (lines >= maxLines) {
-      out.append("…（截断）\n")
-      break
-    }
-    out.append(renderNodeLine(node, maxTextChars)).append('\n')
-    lines++
-  }
-}
+fun renderUnchanged(snapshot: ScreenSnapshot): String =
+  "pkg=${snapshot.packageName ?: "?"} nodes=${snapshot.nodes.size} unchanged since last read, refs still valid"
 
 // ---------------------------------------------------------------------------
 // 界面指纹（roadmap §1.3）

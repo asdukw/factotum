@@ -120,7 +120,7 @@ class ScreenDiffTest {
   }
 
   @Test
-  fun `renderDiff marks added changed and removed lines and lists targets`() {
+  fun `renderDiff marks changed lines and does not repeat unchanged nodes`() {
     val before = snapshot(node(0, text = "加载中"), node(1, text = "发送", clickable = true, top = 900, bottom = 940))
     val after = snapshot(node(0, text = "已完成"), node(1, text = "发送", clickable = true, top = 900, bottom = 940))
 
@@ -128,19 +128,21 @@ class ScreenDiffTest {
 
     assertTrue(rendered.startsWith("pkg=com.example.app nodes=2 delta: +0 -0 ~1, 1 unchanged"))
     assertTrue(rendered.contains("~[0] TextView \"已完成\""))
-    assertTrue(rendered.contains("targets: 1 actionable"))
-    assertTrue(rendered.contains("[1] TextView \"发送\" clickable @(50,920)"))
+    assertFalse("未变化的节点不再重发", rendered.contains("[1] TextView \"发送\""))
+    assertFalse("不再附加全量可操作节点清单", rendered.contains("targets"))
   }
 
   @Test
-  fun `renderUnchanged says so and still lists actionable nodes`() {
+  fun `renderUnchanged is a single line`() {
     val screen = snapshot(node(0, text = "发送", clickable = true))
 
     val rendered = renderUnchanged(screen)
 
-    assertTrue(rendered.startsWith("pkg=com.example.app nodes=1 unchanged since last read"))
-    assertTrue(rendered.contains("targets: 1 actionable"))
-    assertTrue(rendered.contains("[0] TextView \"发送\" clickable"))
+    assertEquals(
+      "pkg=com.example.app nodes=1 unchanged since last read, refs still valid",
+      rendered,
+    )
+    assertFalse(rendered.contains("targets"))
   }
 
   @Test

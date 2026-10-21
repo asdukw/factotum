@@ -211,10 +211,12 @@ configured add `run_command`; with a mail connector add three read-only mail too
   (`flagInputMethodEditor`, API 33+, no IME switch). `text_no_channel` = tap the field first;
   `text_flag_missing` = re-enable accessibility after the upgrade.
 - **Incremental reads:** consecutive `read_ui_tree` calls return only the diff (`[+ref]` added,
-  `[~ref]` changed, `[-ref]` gone); unchanged nodes keep their refs and are not resent. Whole-page
-  churn (>50%) or an app switch falls back to full. `read_ui_tree(full=true)` forces full when the
-  model can no longer see the previous output. Page memory (`PageMemoryStore`) stores structure
-  and last-action coordinates only — **never text**.
+  `[~ref]` changed, `[-ref]` gone); unchanged nodes keep their refs and are not resent. Refs stay
+  valid until the screen changes, so consecutive taps on one screen need **no re-read** — read
+  again only on navigation or to confirm the final result. Whole-page churn (>50%) or an app
+  switch falls back to full. `read_ui_tree(full=true)` forces full when the model can no longer
+  see the previous output. Page memory (`PageMemoryStore`) stores structure and last-action
+  coordinates only — **never text**.
 
 Details: `docs/android-accessibility.md` §9–§11.
 

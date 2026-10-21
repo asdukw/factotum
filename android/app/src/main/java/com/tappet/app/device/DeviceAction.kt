@@ -179,10 +179,6 @@ data class ScreenNode(
 
   val interesting: Boolean
     get() = (hasLabel || clickable || editable || scrollable || focused) && visible
-
-  /** 模型可以操作它的节点：点击 / 长按 / 输入 / 滚动 / 已聚焦。增量读屏的 targets 段按这个筛。 */
-  val actionable: Boolean
-    get() = (clickable || longClickable || editable || scrollable || focused) && visible
 }
 
 data class ScreenSnapshot(

@@ -83,7 +83,7 @@ ask_user_question(questions[])           # 一批，至少一题
 | 件 | 干什么 |
 |---|---|
 | `tools/dsh-phone/plugins/user-questions/` | answerer：透传形状、等答案；**接不了就 `next()` 让路** |
-| `bridge/UserQuestionBridgeServer.kt` | 第三个本地桥（同设备桥 / 连接器桥的模式）：问题进 UI、答案回插件。**这条请求是阻塞的** |
+| `bridge/UserQuestionBridgeServer.kt` | 本地桥之一（设备桥 / 连接器桥 / 提问桥 / 审批桥，同一模式）：问题进 UI、答案回插件。**这条请求是阻塞的** |
 | `ui/chat/UserQuestionSheet.kt` | 底部 sheet：一屏一题、选项 / 自由文本 / 跳过 |
 
 状态放在 `agent/UserQuestionHub.kt` 这个**单例**里，不放 ViewModel：桥那边挂起的协程属于进程，

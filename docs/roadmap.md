@@ -226,8 +226,30 @@ Can We Trust Large Multimodal Model Powered GUI Agents?*），而且这类攻击
 截图里可能出现验证码、余额、聊天内容。进模型前是否要打码是产品决策，但技术上要先把
 钩子留出来——尤其在兑现 §1.3 的页面缓存之前，**缓存绝不能落正文**。
 
-## 6. 建议的优先级
+### 5.4 自造部件 vs 官方 / 高星社区插件（待盘点）
 
+我们有相当多自造件，其中一部分可能已经有官方 dsh 包或高星社区实现。**这是一次盘点，不是承诺替换**：
+替换的前提是「Android 上真能跑 + 不破坏既有隐私 / 审批边界」，两条都不满足就保留自造。
+
+| 自造件 | 可能的替代 | 已知障碍 |
+|---|---|---|
+| 审批 answerer + 确认面板（`plugins/approval`） | 官方 `dsh-client-ui-approval` | 官方是浏览器 UI，经 typert / api-remotes；手机没有浏览器通道 |
+| 提问 answerer（`plugins/user-questions`） | 官方 `dsh-client-ui-user-questions` | 同上 |
+| 纯 JS 附件存储（`android-attachments`） | 官方 `dsh-attachment-local` | 依赖 sharp，没有 Android 产物 |
+| ripgrep 桩（`ripgrep-stub`） | 官方 `@vscode/ripgrep` | 包里没有 Android 二进制 |
+| Termux 桥 + `run_command` | 官方 `dsh-subprocess` / `dsh-bash-local` | 需要能在 App 进程里起 shell；Android 上没有可用的 bash，必须经 Termux |
+| 设备执行层（`DeviceAction` + 无障碍） | 社区 Android MCP / adb 方案 | 多依赖 PC 侧 adb 或 root，与「手机上自治」冲突 |
+| Gmail 连接器 | 社区 Gmail MCP server | 都是 MCP / stdio 进程模型 + 本地 OAuth；我们的令牌在 Kotlin 侧、不落盘 |
+| 语音（sherpa / VAD / ASR） | 官方 speech-to-text 包 | 运行时 / 模型不一定有 Android 产物 |
+| 调度 / 记忆 / 通知 | 官方 `dsh-schedule`、`dsh-agent-instructions`、hook 包 | 记忆已用官方指令文件；其余逐项核对 |
+
+盘点方法：按 `node_modules/@deepseek-ai` 的包清单与社区目录各过一遍，结论写回本表
+（替换 / 保留 + 理由）。**不要为了「少写代码」替换掉承载安全边界的那部分** ——
+审批、令牌、设备执行是边界本身，不是重复实现。
+
+优先级：低。等写操作与 §3.2 落地后再做，避免边改边动。
+
+## 6. 建议的优先级
 | 顺序 | 事项 | 理由 |
 |---|---|---|
 | ~~1~~ | ~~§1.1 空树 → 视觉定位~~ **已落地（2026-10-17）** | 直接解掉触摸探索死结；不需要新子系统。剩下的缺口见 §1.1「还没解决」 |

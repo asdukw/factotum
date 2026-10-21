@@ -66,6 +66,7 @@ $plugins = @(
   @{ Package = "dsh-plugin-android-tools"; Src = "plugins/android-tools" }
   @{ Package = "dsh-android-attachments"; Src = "android-attachments" }
   @{ Package = "dsh-plugin-gmail"; Src = "plugins/gmail" }
+  @{ Package = "dsh-plugin-approval"; Src = "plugins/approval" }
   @{ Package = "dsh-plugin-user-questions"; Src = "plugins/user-questions" }
 )
 

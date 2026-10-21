@@ -49,6 +49,9 @@ import com.tappet.app.voice.VoiceModelKinds
  * 本地引擎音色可选可换，代价是下一个十几 MB 的模型。所以这一页不做「推荐哪个」，
  * 只把两者的状态与代价写清楚。
  *
+ * 本地朗读当前没有可下载模型（`TtsModelCatalog.ALL` 为空），所以页面上只剩系统 TTS；
+ * 模型目录恢复后，本地引擎那一行与模型列表会自动回来。
+ *
  * 模型的**授权写在下载按钮旁边**：这些权重训练自不同来源的数据集，授权各不相同
  * （有的数据集只授权非商用）。用户点之前就该知道自己在下什么，而不是等装完了去翻仓库。
  */
@@ -102,7 +105,11 @@ internal fun VoiceScreen(
           .verticalScroll(rememberScrollState())
           .padding(horizontal = 16.dp),
     ) {
-      EngineSection(state = state, onSelectEngine = onSelectEngine)
+      EngineSection(
+        state = state,
+        showLocal = state.models.isNotEmpty(),
+        onSelectEngine = onSelectEngine,
+      )
       // 模型列表只在选了本地引擎时出现：没选它的时候，这一组只是噪音。
       if (state.engineId == VoiceEngines.LOCAL) {
         ModelSection(
@@ -167,9 +174,18 @@ internal fun VoiceScreen(
   }
 }
 
-/** 引擎选项。两者是取舍关系，不标「推荐」；不可用的那个把原因写在副标题里。 */
+/**
+ * 引擎选项。两者是取舍关系，不标「推荐」；不可用的那个把原因写在副标题里。
+ *
+ * 本地模型目录为空时（当前状态）不显示本地那一行：给一个点进去没有任何模型的入口，
+ * 比不显示更让人困惑。目录恢复后这一行会自动回来。
+ */
 @Composable
-private fun EngineSection(state: VoiceViewModel.UiState, onSelectEngine: (String) -> Unit) {
+private fun EngineSection(
+  state: VoiceViewModel.UiState,
+  showLocal: Boolean,
+  onSelectEngine: (String) -> Unit,
+) {
   SectionLabel("朗读引擎")
   SettingsGroup {
     EngineRow(
@@ -179,14 +195,16 @@ private fun EngineSection(state: VoiceViewModel.UiState, onSelectEngine: (String
       unavailableReason = state.engineReasons[VoiceEngines.SYSTEM],
       onClick = { onSelectEngine(VoiceEngines.SYSTEM) },
     )
-    SettingsDivider()
-    EngineRow(
-      title = "本地引擎",
-      subtitle = "模型在手机上推理：音色可选可换，要先下一个十几 MB 的模型",
-      selected = state.engineId == VoiceEngines.LOCAL,
-      unavailableReason = state.engineReasons[VoiceEngines.LOCAL],
-      onClick = { onSelectEngine(VoiceEngines.LOCAL) },
-    )
+    if (showLocal) {
+      SettingsDivider()
+      EngineRow(
+        title = "本地引擎",
+        subtitle = "模型在手机上推理：音色可选可换，要先下一个十几 MB 的模型",
+        selected = state.engineId == VoiceEngines.LOCAL,
+        unavailableReason = state.engineReasons[VoiceEngines.LOCAL],
+        onClick = { onSelectEngine(VoiceEngines.LOCAL) },
+      )
+    }
   }
 }
 

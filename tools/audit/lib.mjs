@@ -21,7 +21,13 @@ export function adbText(args) {
   return adb(args).toString('utf8')
 }
 
-/** 设备必须在线。离线时给人话，而不是把 adb 的堆栈甩出来。返回序列号。 */
+/**
+ * 设备必须在线。离线时给人话，而不是把 adb 的堆栈甩出来。返回序列号。
+ *
+ * 多设备时不能靠 adb 自己挑：裸 `adb` 会直接报「more than one device」。
+ * 这里选定一台并写进 `ANDROID_SERIAL`，后续所有裸 adb 调用自动跟随。
+ * 优先真实设备（模拟器上跑出来的审计数据不能代表真机），可用 `ANDROID_SERIAL` 覆盖。
+ */
 export function requireDevice() {
   let out = ''
   try {
@@ -39,7 +45,14 @@ export function requireDevice() {
       '没有在线的 adb 设备。审计要读真机上的会话文件：先连上设备、`adb devices` 确认，再重跑。',
     )
   }
-  return ready[0].split(/\s+/)[0]
+  const serials = ready.map((l) => l.split(/\s+/)[0])
+  const serial =
+    process.env.ANDROID_SERIAL && serials.includes(process.env.ANDROID_SERIAL)
+      ? process.env.ANDROID_SERIAL
+      : (serials.find((s) => !s.startsWith('emulator-')) ?? serials[0])
+  // 子进程（execFileSync('adb', …)）继承这个变量，后面不用每条都加 -s。
+  process.env.ANDROID_SERIAL = serial
+  return serial
 }
 
 /** 设备上本 App 的包名。TAPPET_PACKAGE 可覆盖（例如临时装了个改名的调试包）。 */
@@ -94,20 +107,27 @@ export function decodeSessionFrames(raw) {
   return { text: parts.join(''), frames }
 }
 
-/** sessions/ 下的容器目录名内嵌包名，不硬编码，直接列出来找。 */
-export function findSessionsContainer(pkg) {
+/** 同 [findSessionsContainer]，但目录还不存在时返回 null —— 全新安装后第一次跑任务前就是这种状态。 */
+export function findSessionsContainerOrNull(pkg) {
   const base = `files/dsh-home/sessions`
   const out = adbText(['shell', `run-as ${pkg} ls ${base} 2>/dev/null || true`])
   const names = out
     .split(/\r?\n/)
     .map((s) => s.trim())
     .filter((s) => s && !s.startsWith('total'))
-  if (!names.length) throw new Error(`${base} 为空：App 还没跑过任务？`)
+  if (!names.length) return null
   // 正常情况下只有一个容器目录；多个就取最新的
   if (names.length === 1) return `${base}/${names[0]}`
   const listed = adbText(['shell', `run-as ${pkg} ls -t ${base}`])
   const newest = listed.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0]
   return `${base}/${newest}`
+}
+
+/** sessions/ 下的容器目录名内嵌包名，不硬编码，直接列出来找。 */
+export function findSessionsContainer(pkg) {
+  const container = findSessionsContainerOrNull(pkg)
+  if (!container) throw new Error(`files/dsh-home/sessions 为空：App 还没跑过任务？`)
+  return container
 }
 
 /** 列出容器下的会话目录，最新的在前。 */

@@ -5,6 +5,7 @@
 //
 // 用法：
 //   node tools/audit/run-suite.mjs                # 跑全部
+//   node tools/audit/run-suite.mjs --suite daily   # 跑 suite-daily.json（日常场景）
 //   node tools/audit/run-suite.mjs --only calc    # 只跑 id 匹配的
 //   node tools/audit/run-suite.mjs --timeout 240  # 单个任务等待上限（秒）
 import { execFileSync } from 'node:child_process'
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import {
   adbText,
   clearLogcat,
-  findSessionsContainer,
+  findSessionsContainerOrNull,
   listSessions,
   requireDevice,
   resolvePackage,
@@ -32,6 +33,13 @@ const TIMEOUT_MS = Number(arg('timeout', '240')) * 1000
 const POLL_MS = 3000
 const SETTLE_HITS = 2
 const ONLY = arg('only')
+// 任务集文件：默认 suite.json；--suite daily 读 suite-daily.json，--suite 路径 也认。
+const SUITE = arg('suite', null)
+const suitePath = !SUITE
+  ? join(HERE, 'suite.json')
+  : SUITE.endsWith('.json')
+    ? SUITE
+    : join(HERE, `suite-${SUITE}.json`)
 
 const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
@@ -59,7 +67,7 @@ async function sleep(ms) {
 async function main() {
   requireDevice()
   const pkg = resolvePackage()
-  const suite = JSON.parse(readFileSync(join(HERE, 'suite.json'), 'utf8'))
+  const suite = JSON.parse(readFileSync(suitePath, 'utf8'))
   const tasks = suite.tasks.filter((t) => !ONLY || t.id.includes(ONLY))
   if (!tasks.length) throw new Error('没有匹配的任务')
 
@@ -71,8 +79,9 @@ async function main() {
   console.log('  ' + broadcast(pkg, '--es op START'))
   await sleep(3000)
 
-  const container = findSessionsContainer(pkg)
-  const before = new Set(listSessions(pkg, container))
+  // 全新安装后 sessions/ 还不存在：此时 container 为 null，等第一个任务建出会话后再发现。
+  let container = findSessionsContainerOrNull(pkg)
+  const before = new Set(container ? listSessions(pkg, container) : [])
   const collected = []
 
   for (const task of tasks) {
@@ -90,6 +99,8 @@ async function main() {
     let stable = 0
     while (Date.now() - started < TIMEOUT_MS) {
       await sleep(POLL_MS)
+      if (!container) container = findSessionsContainerOrNull(pkg)
+      if (!container) continue
       const now = listSessions(pkg, container)
       const fresh = now.find((s) => !before.has(s))
       if (!fresh) continue

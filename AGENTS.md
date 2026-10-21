@@ -210,8 +210,13 @@ configured add `run_command`; with a mail connector add three read-only mail too
 - **Text input:** UI tree first; if unreadable, use the accessibility text-injection channel
   (`flagInputMethodEditor`, API 33+, no IME switch). `text_no_channel` = tap the field first;
   `text_flag_missing` = re-enable accessibility after the upgrade.
+- **Incremental reads:** consecutive `read_ui_tree` calls return only the diff (`[+ref]` added,
+  `[~ref]` changed, `[-ref]` gone); unchanged nodes keep their refs and are not resent. Whole-page
+  churn (>50%) or an app switch falls back to full. `read_ui_tree(full=true)` forces full when the
+  model can no longer see the previous output. Page memory (`PageMemoryStore`) stores structure
+  and last-action coordinates only — **never text**.
 
-Details: `docs/android-accessibility.md` §9–§10.
+Details: `docs/android-accessibility.md` §9–§11.
 
 ### 7.4 Add or change a provider / model
 
@@ -245,6 +250,13 @@ Full process and signing material: `docs/releasing.md`.
 
 Never use Gradle's automatic install: ColorOS blocks a first install, then reports
 `Starting 0 tests` + `Failed to install split APK(s)` after ~5 minutes.
+
+**The daily-driver device runs debug builds only.** `run-as`, the debug broadcasts, and the audit
+loop all require a debuggable APK; a release install has a different signature, so switching back
+to debug means uninstalling and losing the SQLCipher database + keys. Keep release verification in
+CI (or a separate device/emulator, where wiping is fine) — never install release over debug on the
+same device. For the same reason the in-app updater is disabled in debug builds; update with
+`adb install -r`.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug

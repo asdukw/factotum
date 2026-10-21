@@ -147,7 +147,8 @@ object DeviceBridgeServer {
 
   private fun toDeviceAction(action: String, root: JsonObject): DeviceAction? =
     when (action) {
-      "read_ui_tree" -> DeviceAction.ReadScreen
+      // full=true 强制全量：模型看不到上一次读屏输出时（上下文被截断）用它。
+      "read_ui_tree" -> DeviceAction.ReadScreen(full = root.boolean("full") == true)
 
       "tap_node" -> root.int("ref")?.let(DeviceAction::TapNode)
 

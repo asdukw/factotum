@@ -1,6 +1,7 @@
 package com.tappet.app.bridge
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -21,6 +22,9 @@ internal fun JsonObject.long(key: String): Long? = runCatching { this[key]?.json
 
 internal fun JsonObject.int(key: String): Int? =
   this[key]?.let { runCatching { it.jsonPrimitive.intOrNull }.getOrNull() }
+
+internal fun JsonObject.boolean(key: String): Boolean? =
+  this[key]?.let { runCatching { it.jsonPrimitive.booleanOrNull }.getOrNull() }
 
 /** 视觉路径的公共入参：帧 id + 图像像素 bbox。缺一个就整条动作不成立。 */
 internal class ScreenshotBox(val screenshotId: String, val x1: Int, val y1: Int, val x2: Int, val y2: Int)

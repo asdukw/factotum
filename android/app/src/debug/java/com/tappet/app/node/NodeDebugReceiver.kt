@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.tappet.app.accessibility.TappetAccessibilityService
 import com.tappet.app.agent.TermuxBridgeLauncher
 import com.tappet.app.agent.TermuxBridgeStore
 import kotlinx.coroutines.CoroutineScope
@@ -81,6 +82,9 @@ class NodeDebugReceiver : BroadcastReceiver() {
           try {
             Log.i(TAG, "debug task start (${task.length} chars) session=$sessionId")
             bestEffortForegroundService(app)
+            // 新任务的第一次读屏必须是全量：跨任务沿用上一个任务的快照会回一句
+            // 「unchanged」，而新会话里模型看不到上一屏的内容。
+            TappetAccessibilityService.get()?.resetScreenState()
             NodeRuntime.initialize(app)
             val outcome = NodeRuntime.runTask(sessionId, task)
             Log.i(

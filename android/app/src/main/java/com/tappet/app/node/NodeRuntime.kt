@@ -371,7 +371,9 @@ object NodeRuntime : NodeLineListener {
       return
     }
     if (method != null) {
-      if (method != "session.event") Log.i(TAG, "rpc <- $method")
+      // token 流是**数据**不是协议事件：逐帧打 I 日志会在一个 30 秒任务里产生几千行，
+      // 把 logcat 环形缓冲区冲掉（审计标记 TappetAudit 就是这么丢的）。
+      if (method != "session.event" && method != "session.stream") Log.i(TAG, "rpc <- $method")
       _notifications.tryEmit(frame)
     }
   }

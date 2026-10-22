@@ -4,7 +4,7 @@
 // 上一轮改名时有一批手工脚本因为硬编码 `com.memex.app` 一起失效，其中就包括拉 session 的
 // 那几个 —— 而且是静默失效的。这里不重复那个错：需要包名就现读，读不到就报错，不做默认值。
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import zlib from 'node:zlib'
@@ -55,13 +55,26 @@ export function requireDevice() {
   return serial
 }
 
-/** 设备上本 App 的包名。TAPPET_PACKAGE 可覆盖（例如临时装了个改名的调试包）。 */
+/**
+ * 设备上本 App 的包名。TAPPET_PACKAGE 可覆盖（例如临时装了个改名的调试包）。
+ *
+ * debug 包可能带 `applicationIdSuffix`（`android/local.properties` 的 `tappet.debugSuffix`，
+ * 用于并行 worktree 共存）。后缀是构建时拼上去的，这里必须一起读，否则审计会去找一个
+ * 根本没装的身份，表现为「会话目录为空」——又是一次静默失效。
+ */
 export function resolvePackage() {
   if (process.env.TAPPET_PACKAGE) return process.env.TAPPET_PACKAGE
   const gradle = readFileSync(join(ROOT, 'android/app/build.gradle.kts'), 'utf8')
   const m = gradle.match(/applicationId\s*=\s*"([^"]+)"/)
   if (!m) throw new Error('在 android/app/build.gradle.kts 里找不到 applicationId')
-  return m[1]
+  return m[1] + debugSuffix()
+}
+
+function debugSuffix() {
+  const file = join(ROOT, 'android/local.properties')
+  if (!existsSync(file)) return ''
+  const m = readFileSync(file, 'utf8').match(/^\s*tappet\.debugSuffix\s*=\s*(\S+)\s*$/m)
+  return m ? m[1] : ''
 }
 
 /** 返回 buf 中第 i 个字节处那个 zstd 帧的总长度（RFC 8878）。 */

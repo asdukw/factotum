@@ -156,6 +156,18 @@ class ScreenDiffTest {
   }
 
   @Test
+  fun `content hash ignores refs but follows text and position`() {
+    val a = snapshot(node(0, text = "A", top = 0), node(1, text = "B", top = 100))
+    val sameContentDifferentRefs = snapshot(node(5, text = "A", top = 0), node(9, text = "B", top = 100))
+    val moved = snapshot(node(0, text = "A", top = 0), node(1, text = "B", top = 200))
+    val textChanged = snapshot(node(0, text = "A", top = 0), node(1, text = "C", top = 100))
+
+    assertEquals(contentHash(a.nodes), contentHash(sameContentDifferentRefs.nodes))
+    assertNotEquals(contentHash(a.nodes), contentHash(moved.nodes))
+    assertNotEquals(contentHash(a.nodes), contentHash(textChanged.nodes))
+  }
+
+  @Test
   fun `page hint distinguishes new and known pages`() {
     assertEquals("page=abcd new", renderPageHint("abcd", null))
     assertEquals("page=abcd new", renderPageHint("abcd", PageVisit(0, null, 1L)))

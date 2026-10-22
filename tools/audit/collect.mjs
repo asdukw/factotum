@@ -75,12 +75,22 @@ function main() {
   // ---- 设备审计标记：并进事件流 ----
   // 触摸探索的实际状态不在 dsh 会话里，只在 logcat。没有它，审计看到手势类动作失败时
   // 分不清是「预期行为」（用户自开 TalkBack、手势本来就该被吞）还是真故障。
-  const logcatText = LOGCAT_FILE
-    ? existsSync(LOGCAT_FILE)
-      ? readFileSync(LOGCAT_FILE, 'utf8')
-      : ''
-    : dumpAuditLog()
-  if (LOGCAT_FILE && !logcatText) console.error(`  ⚠ --logcat 指定的文件不存在或为空：${LOGCAT_FILE}`)
+  //
+  // 给了 --logcat（run-suite 的流式采集）时，空文件是**正常结果**：这次任务确实没有产生
+  // 任何标记（没有探索状态变化、没有截图尺寸偏差）。不能报成「缓冲区被冲掉」——
+  // 那会让人去查一个不存在的故障。只有文件不存在才说明采集没起来。
+  let logcatText = ''
+  let streamFailed = false
+  if (LOGCAT_FILE) {
+    if (existsSync(LOGCAT_FILE)) {
+      logcatText = readFileSync(LOGCAT_FILE, 'utf8')
+    } else {
+      streamFailed = true
+      console.error(`  ⚠ 流式 logcat 文件不存在（采集没起来）：${LOGCAT_FILE}`)
+    }
+  } else {
+    logcatText = dumpAuditLog()
+  }
 
   const markers = parseAuditLog(logcatText)
   const { events, merged, dropped } = mergeMarkers(rawEvents, markers)
@@ -89,7 +99,11 @@ function main() {
     if (e.type === 'device_marker') markersByEvent[e.event] = (markersByEvent[e.event] ?? 0) + 1
   }
   if (!markers.length) {
-    console.error('  ⚠ 一条审计标记都没抓到：logcat 被冲掉了，或 App 侧 AUDIT_TAG 改了没同步')
+    if (LOGCAT_FILE) {
+      if (!streamFailed) console.log('  本次任务没有产生审计标记（流式采集正常）')
+    } else {
+      console.error('  ⚠ 一条审计标记都没抓到：logcat 被冲掉了，或 App 侧 AUDIT_TAG 改了没同步')
+    }
   }
 
   const metrics = {

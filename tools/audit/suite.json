@@ -20,7 +20,8 @@
     {
       "id": "calc",
       "task": "打开计算器，计算 37 乘以 48，把结果读出来。",
-      "why": "多步任务 + 需要回读确认结果；看「做完有没有确认」这一环"
+      "why": "多步任务 + 需要回读确认结果；看「做完有没有确认」这一环",
+      "resetPackages": ["com.coloros.calculator"]
     },
     {
       "id": "empty-tree",

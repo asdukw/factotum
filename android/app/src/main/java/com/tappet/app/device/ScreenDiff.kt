@@ -235,5 +235,27 @@ fun renderPageHint(fingerprint: String, visit: PageVisit?): String {
   return sb.toString()
 }
 
+/**
+ * 屏幕内容的轻量哈希：回答「这个动作有没有改变界面」，用于 `swipe` / `tap` 的反馈。
+ *
+ * 与 [screenFingerprint] 刻意不同：这里**包含文字与外框**。滑动改变的是内容与位置，
+ * 页面结构（类名 / 深度）往往不变；只看结构会把「滚了」判成「没变」。
+ *
+ * 纯函数，便于单测。碰撞与「小面积变化看不见」都是可接受的：它只用于给模型一句
+ * 「界面似乎没变」，不影响动作的 `ok`。
+ */
+fun contentHash(nodes: List<ScreenNode>): Long {
+  var h = 1125899906842597L
+  for (node in nodes) {
+    h = 31 * h + node.className.hashCode()
+    h = 31 * h + (node.text?.hashCode() ?: 0)
+    h = 31 * h + (node.contentDescription?.hashCode() ?: 0)
+    h = 31 * h + node.bounds.hashCode()
+    h = 31 * h + node.depth
+    h = 31 * h + (if (node.visible) 1 else 0)
+  }
+  return h
+}
+
 private const val DEFAULT_MAX_TEXT_CHARS = 80
 private const val DEFAULT_MAX_RENDER_LINES = 240

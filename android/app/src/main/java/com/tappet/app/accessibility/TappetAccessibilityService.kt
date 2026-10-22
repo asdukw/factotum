@@ -34,6 +34,7 @@ import com.tappet.app.device.ScreenNode
 import com.tappet.app.device.ScreenSnapshot
 import com.tappet.app.device.SwipeDirection
 import com.tappet.app.device.VisionCode
+import com.tappet.app.device.contentHash
 import com.tappet.app.device.diffSnapshots
 import com.tappet.app.device.hasNoReadableNode
 import com.tappet.app.device.isChurnHeavy
@@ -133,12 +134,27 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   @Volatile private var currentPage: String? = null
   private val pageMemory by lazy { PageMemoryStore(this) }
 
+  /**
+   * 清掉跨任务的读屏状态：下一个任务的第一次读屏必须是全量。
+   *
+   * `lastSnapshot` 只对「同一个任务里的连续操作」有意义。跨任务沿用会让新任务的第一次
+   * 读屏回一句 `unchanged` —— 而模型在新会话里根本看不到上一次的输出（实测 scroll 任务
+   * 就是这样卡住的）。debug 广播在 TASK 前调用；`press home` 成功后也清一次。
+   */
+  fun resetScreenState() {
+    lastSnapshot = null
+    lastNodeHandles = emptyMap()
+    currentPage = null
+  }
+
   override suspend fun execute(action: DeviceAction): DeviceActionResult {
     // 执行前先记「触摸探索实际是否生效」——「点了没反应」是不是预期行为全靠它区分
     observeExploration()
     val result = dispatch(action)
     // 页面记忆只记「哪个页面、做了什么类型、落在哪」，不记任何正文（见 PageMemoryStore）。
     if (result.ok && action !is DeviceAction.ReadScreen) rememberAction(action)
+    // 回桌面意味着一个任务告一段落：别让下一个任务继承上一屏的快照。
+    if (result.ok && action is DeviceAction.Press && action.key == PressKey.HOME) resetScreenState()
     return result
   }
 
@@ -819,7 +835,29 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         moveTo(x1.toFloat(), y1.toFloat())
         lineTo(x2.toFloat(), y2.toFloat())
       }
-    return dispatchPath(path, SWIPE_DURATION_MS, "滑动 ${direction.name}")
+    // 滑动前记一份内容哈希：模型因此知道「这一滑到底有没有生效」，不必每次滑动后都读屏。
+    // 用控件树而不是截图 —— 截图有频率限制，滑动又天然是连续动作。
+    val before = treeContentHash()
+    val gesture = dispatchPath(path, SWIPE_DURATION_MS, "滑动 ${direction.name}")
+    if (!gesture.ok) return gesture
+    val changed = verifySwipeChanged(before)
+    val verdict =
+      when (changed) {
+        true -> "界面已变化"
+        false -> "界面似乎没有变化（可能已经到头，或手势被系统吞掉）"
+        null -> "无法验证界面是否变化"
+      }
+    return gesture.copy(summary = "${gesture.summary}；$verdict", changed = changed)
+  }
+
+  /** 当前屏的内容哈希；读不到根节点（安全窗口 / 无窗口）时返回 null，按「验不了」处理。 */
+  private fun treeContentHash(): Long? = applicationRoot()?.let { contentHash(collectScreen(it).nodes) }
+
+  private suspend fun verifySwipeChanged(baseline: Long?): Boolean? {
+    if (baseline == null) return null
+    // 滑动带惯性，350ms 可能还在动画中；等久一点再比，避免把「还在滚」判成「没变」。
+    delay(SWIPE_SETTLE_DELAY_MS)
+    return treeContentHash()?.let { it != baseline }
   }
 
   private suspend fun dispatchPath(path: Path, durationMs: Long, label: String): DeviceActionResult =
@@ -1065,6 +1103,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
     /** 语义动作后等界面反应一拍（与 FOCUS_CHECK 同量级）。 */
     private const val ACTION_SETTLE_DELAY_MS = 350L
+    private const val SWIPE_SETTLE_DELAY_MS = 500L
 
     /** 往上找可点祖先的最大层数，避免爬到整棵树的根。 */
     private const val MAX_ANCESTOR_CLIMB = 6

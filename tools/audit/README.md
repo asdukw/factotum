@@ -59,6 +59,17 @@ node tools/audit/collect.mjs --session <目录名> --label baseline
 多步表单与跨 App 发送。后三条会留下可见痕迹（闹钟 / 备忘 / 给自己发消息），
 **重复跑之前先清理上一轮**，否则「列表里最后一条」这类判据会失效。
 
+每个任务开始前 `run-suite` 会：回桌面 → 把 Tappet 拉到前台 → 执行任务的可选
+`resetPackages`（`pm clear`，例如计算器会把上次的算式留在界面上；ColorOS 会拒绝这条，
+失败只记一行）→ 用唯一 session 广播任务。
+结束判据是设备侧真的打出 `task done` **且**会话文件不再增长；超时会明确警告「下一条可能重叠」，
+不再把「文件暂时没长」当成跑完。
+
+**审计标记用流式 logcat 采集**：任务开始前起一个 `adb logcat -v epoch -s TappetAudit:I`
+写文件，任务结束再停，`collect.mjs --logcat <file>` 直接用。以前是任务结束后 `logcat -d`，
+而 token 流逐帧打日志会把环形缓冲区冲掉 —— 五条任务全部报「一条标记都没抓到」。
+套件启动时还会尝试 `logcat -G 16M` 调大缓冲区作为兜底（ColorOS 可能拒绝，忽略即可）。
+
 设备必须在线；离线时脚本会直说，不会假装有数据。
 
 然后把 `tools/audit/runs/` 交给 **`tappet-auditor`** 子 agent 出报告。
@@ -66,9 +77,10 @@ node tools/audit/collect.mjs --session <目录名> --label baseline
 ## 三个刻意的设计
 
 **1. 包名不硬编码。** 唯一的来源是 `android/app/build.gradle.kts` 的 `applicationId`，
-每次现读。上一轮改名时有一批手工脚本因为硬编码旧包名一起失效 —— 而且是**静默**失效：
-路径不存在，报出来像"没有 session 目录"，看着像设备问题。这类脚本一律现读。
-需要覆盖时用环境变量 `TAPPET_PACKAGE`。
+每次现读；debug 包若在 `android/local.properties` 里配了 `tappet.debugSuffix`（并行 worktree
+共存用），后缀一起拼上 —— 否则审计会去找一个没装的身份。上一轮改名时有一批手工脚本因为
+硬编码旧包名一起失效 —— 而且是**静默**失效：路径不存在，报出来像"没有 session 目录"，
+看着像设备问题。这类脚本一律现读。需要覆盖时用环境变量 `TAPPET_PACKAGE`。
 
 **2. 会话容器目录也不硬编码。** dsh 的 `sessions/--data-user-0-<包名>-files-dsh-home--`
 是派生的，改名就变。这里直接列目录找。

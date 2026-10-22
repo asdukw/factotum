@@ -59,6 +59,17 @@ node tools/audit/collect.mjs --session <目录名> --label baseline
 多步表单与跨 App 发送。后三条会留下可见痕迹（闹钟 / 备忘 / 给自己发消息），
 **重复跑之前先清理上一轮**，否则「列表里最后一条」这类判据会失效。
 
+每个任务开始前 `run-suite` 会：回桌面 → 把 Tappet 拉到前台 → 执行任务的可选
+`resetPackages`（`pm clear`，例如计算器会把上次的算式留在界面上；ColorOS 会拒绝这条，
+失败只记一行）→ 用唯一 session 广播任务。
+结束判据是设备侧真的打出 `task done` **且**会话文件不再增长；超时会明确警告「下一条可能重叠」，
+不再把「文件暂时没长」当成跑完。
+
+**审计标记用流式 logcat 采集**：任务开始前起一个 `adb logcat -v epoch -s TappetAudit:I`
+写文件，任务结束再停，`collect.mjs --logcat <file>` 直接用。以前是任务结束后 `logcat -d`，
+而 token 流逐帧打日志会把环形缓冲区冲掉 —— 五条任务全部报「一条标记都没抓到」。
+套件启动时还会尝试 `logcat -G 16M` 调大缓冲区作为兜底（ColorOS 可能拒绝，忽略即可）。
+
 设备必须在线；离线时脚本会直说，不会假装有数据。
 
 然后把 `tools/audit/runs/` 交给 **`tappet-auditor`** 子 agent 出报告。

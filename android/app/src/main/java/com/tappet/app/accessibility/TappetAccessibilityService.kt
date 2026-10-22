@@ -133,12 +133,27 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
   @Volatile private var currentPage: String? = null
   private val pageMemory by lazy { PageMemoryStore(this) }
 
+  /**
+   * 清掉跨任务的读屏状态：下一个任务的第一次读屏必须是全量。
+   *
+   * `lastSnapshot` 只对「同一个任务里的连续操作」有意义。跨任务沿用会让新任务的第一次
+   * 读屏回一句 `unchanged` —— 而模型在新会话里根本看不到上一次的输出（实测 scroll 任务
+   * 就是这样卡住的）。debug 广播在 TASK 前调用；`press home` 成功后也清一次。
+   */
+  fun resetScreenState() {
+    lastSnapshot = null
+    lastNodeHandles = emptyMap()
+    currentPage = null
+  }
+
   override suspend fun execute(action: DeviceAction): DeviceActionResult {
     // 执行前先记「触摸探索实际是否生效」——「点了没反应」是不是预期行为全靠它区分
     observeExploration()
     val result = dispatch(action)
     // 页面记忆只记「哪个页面、做了什么类型、落在哪」，不记任何正文（见 PageMemoryStore）。
     if (result.ok && action !is DeviceAction.ReadScreen) rememberAction(action)
+    // 回桌面意味着一个任务告一段落：别让下一个任务继承上一屏的快照。
+    if (result.ok && action is DeviceAction.Press && action.key == PressKey.HOME) resetScreenState()
     return result
   }
 

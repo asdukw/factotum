@@ -488,6 +488,10 @@ input method capabilities: get the InputConnection and get text selection change
 `lastNodeHandles` 从 `List` 改成 `Map<ref, AccessibilityNodeInfo>`：ref 不再等于下标，
 语义点击 / 坐标命中 / 语义滚动都按 ref 取句柄（同坐标取最后插入的 = 最深，顺序仍是前序）。
 
+**读屏状态是任务级的**：debug `TASK` 广播在任务开始时、`press(home)` 成功后都会清空
+`lastSnapshot`。跨任务沿用会让新任务的第一次读屏回一句 `unchanged` —— 而模型在新会话里
+根本看不到上一屏的内容（实测 `scroll` 任务因此卡住）。页面记忆（指纹 → 访问次数）不受影响。
+
 ### 页面指纹与页面记忆（roadmap §1.3）
 
 每次读屏按 `(包名, 节点结构)` 算 8 位十六进制指纹：只哈希类名、深度、状态位，

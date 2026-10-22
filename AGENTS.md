@@ -267,6 +267,12 @@ CI (or a separate device/emulator, where wiping is fine) — never install relea
 same device. For the same reason the in-app updater is disabled in debug builds; update with
 `adb install -r`.
 
+**Parallel worktrees share `applicationId`.** Another session's install can replace your build
+(same version code), and ColorOS does not always kill the running process on update. After
+installing, verify the device really runs your code — pull the installed `base.apk` and grep a
+marker, or check a log format you just changed — and `am force-stop` before testing. Otherwise a
+whole trace can silently come from someone else's build.
+
 ```powershell
 .\gradlew.bat :app:assembleDebug
 adb install -r -g app\build\outputs\apk\debug\app-debug.apk

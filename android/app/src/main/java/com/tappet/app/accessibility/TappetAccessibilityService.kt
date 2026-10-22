@@ -34,6 +34,7 @@ import com.tappet.app.device.ScreenNode
 import com.tappet.app.device.ScreenSnapshot
 import com.tappet.app.device.SwipeDirection
 import com.tappet.app.device.VisionCode
+import com.tappet.app.device.contentHash
 import com.tappet.app.device.diffSnapshots
 import com.tappet.app.device.hasNoReadableNode
 import com.tappet.app.device.isChurnHeavy
@@ -834,7 +835,29 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         moveTo(x1.toFloat(), y1.toFloat())
         lineTo(x2.toFloat(), y2.toFloat())
       }
-    return dispatchPath(path, SWIPE_DURATION_MS, "滑动 ${direction.name}")
+    // 滑动前记一份内容哈希：模型因此知道「这一滑到底有没有生效」，不必每次滑动后都读屏。
+    // 用控件树而不是截图 —— 截图有频率限制，滑动又天然是连续动作。
+    val before = treeContentHash()
+    val gesture = dispatchPath(path, SWIPE_DURATION_MS, "滑动 ${direction.name}")
+    if (!gesture.ok) return gesture
+    val changed = verifySwipeChanged(before)
+    val verdict =
+      when (changed) {
+        true -> "界面已变化"
+        false -> "界面似乎没有变化（可能已经到头，或手势被系统吞掉）"
+        null -> "无法验证界面是否变化"
+      }
+    return gesture.copy(summary = "${gesture.summary}；$verdict", changed = changed)
+  }
+
+  /** 当前屏的内容哈希；读不到根节点（安全窗口 / 无窗口）时返回 null，按「验不了」处理。 */
+  private fun treeContentHash(): Long? = applicationRoot()?.let { contentHash(collectScreen(it).nodes) }
+
+  private suspend fun verifySwipeChanged(baseline: Long?): Boolean? {
+    if (baseline == null) return null
+    // 滑动带惯性，350ms 可能还在动画中；等久一点再比，避免把「还在滚」判成「没变」。
+    delay(SWIPE_SETTLE_DELAY_MS)
+    return treeContentHash()?.let { it != baseline }
   }
 
   private suspend fun dispatchPath(path: Path, durationMs: Long, label: String): DeviceActionResult =
@@ -1080,6 +1103,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
     /** 语义动作后等界面反应一拍（与 FOCUS_CHECK 同量级）。 */
     private const val ACTION_SETTLE_DELAY_MS = 350L
+    private const val SWIPE_SETTLE_DELAY_MS = 500L
 
     /** 往上找可点祖先的最大层数，避免爬到整棵树的根。 */
     private const val MAX_ANCESTOR_CLIMB = 6

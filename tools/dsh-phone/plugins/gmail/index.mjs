@@ -1,23 +1,28 @@
-// dsh plugin: read-only Gmail tools over the Gmail API.
+// dsh plugin: Gmail tools over the Gmail API.
 //
-// **边界（docs/email-connector.md §1）：只读。** 这里没有发送 / 删除 / 归档 / 标记已读 ——
-// 不是「还没做」，是这个插件现在不该有：危险动作闸门（roadmap §3.2）落地之前，给模型开一条
-// 「以用户名义对外发信」的通道，会把提示注入的后果从「点错了一个按钮」升级成「替你发信」。
-// 要加写操作，先接 dsh 官方审批 seam（`tools/pre-execute` 的 `ask` +
-// `@deepseek-ai/dsh-user-approval`，见 docs §1.1），再改文档，最后才动代码。
-// 插件单测目前断言本轮所有出网请求都是 GET。
+// **边界（docs/email-connector.md §1）**：五个只读工具 + 三个写工具。写工具
+// （mail_modify / mail_draft / mail_send）**必须**经 dsh 官方审批 seam：
+// `tools/pre-execute` 返回 `ask` → `@deepseek-ai/dsh-user-approval` → App 确认面板，
+// 只有 `allowed-once` 才会真的发出请求（见 docs/approvals.md）。**不要绕过这个 gate。**
+// 附件只给清单，不下载内容（下载边界另议，见 docs §1.3）。
 //
 // 令牌不在这里：Kotlin 宿主经本地连接器桥发一个短命的 access token（ConnectorBridgeServer）。
 // refresh token 从不离开宿主，这个插件也从不打印令牌（连前缀都不打）。
 //
-// 五个工具：mail_list / mail_search / mail_read / mail_thread / mail_labels。
-// 全部只读；附件只给清单，不下载内容（下载要落盘，与 docs §1.3 冲突）。
+// 八个工具：mail_list / mail_search / mail_read / mail_thread / mail_labels
+// + mail_modify / mail_draft / mail_send（后三个是审批门控的写操作）。
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const name = 'dsh-plugin-gmail'
 export const inject = ['tools']
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1'
+
+/** 写工具的集合。每个都必须在 `tools/pre-execute` 里被判成 `ask`（插件单测钉住）。 */
+const WRITE_TOOLS = new Set(['mail_modify', 'mail_draft', 'mail_send'])
+
+/** 发送 / 草稿的正文上限，防止模型把整段上下文塞进一封邮件。 */
+const MAX_COMPOSE_CHARS = 20000
 
 /** 正文截断长度。见 docs/email-connector.md §2.2：工具结果会进历史、被每轮重发。 */
 const MAX_BODY_CHARS = 4000
@@ -90,16 +95,17 @@ async function accessToken() {
 }
 
 /**
- * 唯一的出网入口，**固定 GET**。
+ * 唯一能发请求的入口。
  *
- * 「只读」这条边界在这里是结构性的事实而不是纪律：当前没有第二个能发请求的函数，
- * 插件单测会断言本轮所有出网请求的方法都是 GET（docs/email-connector.md §6）。
- * 加写操作时，这条断言要换成「每个写工具都挂了审批、非 GET 只出现在审批通过之后」。
+ * 只读工具走 [gmailGet]（固定 GET）；写工具走 [gmailPost]，且**只能**在
+ * `tools/pre-execute` 的 `ask` 被用户允许之后到达这里 —— 审批在插件层，不在模型侧。
+ *
+ * 网络错误与 HTTP 错误的处理对所有方法一致：不回显响应体，只给可行动的状态。
  */
-async function gmailGet(path, params = {}) {
+async function gmailRequest(method, path, { params, body } = {}) {
   const token = await accessToken()
   const url = new URL(`${GMAIL_BASE}${path}`)
-  for (const [key, value] of Object.entries(params)) {
+  for (const [key, value] of Object.entries(params ?? {})) {
     if (value === undefined || value === null || value === '') continue
     url.searchParams.set(key, String(value))
   }
@@ -109,8 +115,12 @@ async function gmailGet(path, params = {}) {
   let response
   try {
     response = await fetch(url, {
-      method: 'GET',
-      headers: { authorization: `Bearer ${token}` },
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch {
     throw new Error('连不上 Gmail：检查网络或代理（Gmail 工具需要能访问 Google）。')
@@ -123,6 +133,15 @@ async function gmailGet(path, params = {}) {
     throw error
   }
   return response.json()
+}
+
+function gmailGet(path, params = {}) {
+  return gmailRequest('GET', path, { params })
+}
+
+/** 写操作的唯一出口。调用它之前必须已经过了 `ask`（见 apply 里的 pre-execute 监听器）。 */
+function gmailPost(path, body) {
+  return gmailRequest('POST', path, { body })
 }
 
 function httpFailure(status) {
@@ -359,8 +378,28 @@ async function resolveLabel(raw) {
   if (value === '') return { id: 'INBOX', name: displayLabelName('INBOX') }
   const upper = value.toUpperCase()
   if (WELL_KNOWN_LABELS.includes(upper)) return { id: upper, name: displayLabelName(upper) }
+  return resolveLabelFrom(value, await listLabels())
+}
 
-  const labels = await listLabels()
+/** 一批标签（写工具用）：自定义标签只列一次，避免每个标签都打一次 labels.list。 */
+async function resolveLabels(raw) {
+  const values = labelList(raw)
+  if (values.length === 0) return []
+  const needsLookup = values.some((value) => !WELL_KNOWN_LABELS.includes(value.toUpperCase()))
+  const labels = needsLookup ? await listLabels() : []
+  return values.map((value) => resolveLabelFrom(value, labels))
+}
+
+/** 逗号（中英文）分隔的字符串或数组都接受 —— 模型两种写法都会出现。 */
+function labelList(raw) {
+  const values = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[,，]/) : []
+  return values.map((value) => String(value ?? '').trim()).filter(Boolean)
+}
+
+function resolveLabelFrom(value, labels) {
+  const upper = value.toUpperCase()
+  if (WELL_KNOWN_LABELS.includes(upper)) return { id: upper, name: displayLabelName(upper) }
+
   const found =
     labels.find((label) => String(label.id ?? '') === value) ??
     labels.find((label) => String(label.name ?? '').toLowerCase() === value.toLowerCase())
@@ -416,6 +455,126 @@ async function mailRead(args = {}) {
   ].join('\n')
   const body = extractBody(payload)
   return `${header}\n\n${wrapBody(body.text, body.html)}`
+}
+
+// --- 写操作（审批门控） -----------------------------------------------------
+
+/**
+ * 修改一封邮件的标签：Gmail 的 `messages.modify` 只接受「加 / 减标签 id」。
+ * 已读 / 星标 / 归档都是标签的增删：`UNREAD`、`STARRED`、`INBOX`。
+ */
+async function mailModify(args = {}) {
+  const id = String(args.message_id ?? '').trim()
+  if (id === '') throw new Error('mail_modify 需要 message_id')
+  const add = await resolveLabels(args.add_labels)
+  const remove = await resolveLabels(args.remove_labels)
+  if (add.length === 0 && remove.length === 0) {
+    throw new Error('mail_modify 至少要给 add_labels 或 remove_labels（例如 remove_labels="UNREAD"）')
+  }
+  const result = await gmailPost(`/users/me/messages/${encodeURIComponent(id)}/modify`, {
+    addLabelIds: add.map((label) => label.id),
+    removeLabelIds: remove.map((label) => label.id),
+  })
+  const changes = [
+    add.length > 0 ? `+${add.map((label) => label.name).join('、')}` : '',
+    remove.length > 0 ? `-${remove.map((label) => label.name).join('、')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const total = Array.isArray(result.labelIds) ? result.labelIds.length : 0
+  return `已更新邮件 [${id}]：${changes}（现在 ${total} 个标签）`
+}
+
+/** 发送 / 草稿的公共校验与 MIME 构造；返回值里的 `raw` 已是 base64url。 */
+function composeMessage(args) {
+  const to = safeHeader(args.to, '收件人')
+  if (to === '') throw new Error('需要收件人（to）')
+  const subject = safeHeader(args.subject, '主题')
+  const body = String(args.body ?? '')
+  if (body.length > MAX_COMPOSE_CHARS) {
+    throw new Error(`正文太长（${body.length} 字符，上限 ${MAX_COMPOSE_CHARS}）`)
+  }
+  const cc = safeHeader(args.cc, '抄送')
+  const bcc = safeHeader(args.bcc, '密送')
+  const raw = Buffer.from(buildRawMessage({ to, cc, bcc, subject, body }), 'utf8').toString('base64url')
+  return { to, subject, raw }
+}
+
+/** 头字段一律拒绝换行：否则模型可以往 MIME 头里注入第二组头（Bcc / Content-Type）。 */
+function safeHeader(raw, name) {
+  const value = String(raw ?? '').trim()
+  if (/[\r\n]/.test(value)) throw new Error(`${name}不能包含换行`)
+  return value
+}
+
+function buildRawMessage({ to, cc, bcc, subject, body }) {
+  const lines = ['MIME-Version: 1.0', `To: ${to}`]
+  if (cc !== '') lines.push(`Cc: ${cc}`)
+  if (bcc !== '') lines.push(`Bcc: ${bcc}`)
+  lines.push(`Subject: ${encodeSubject(subject)}`)
+  lines.push('Content-Type: text/plain; charset=UTF-8')
+  lines.push('Content-Transfer-Encoding: base64')
+  lines.push('')
+  lines.push(wrapBase64(Buffer.from(body, 'utf8').toString('base64')))
+  return lines.join('\r\n')
+}
+
+/** 非 ASCII 主题按 RFC 2047 编码；纯 ASCII 原样保留。 */
+function encodeSubject(subject) {
+  if (subject === '') return ''
+  return /^[\x20-\x7E]*$/.test(subject)
+    ? subject
+    : `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`
+}
+
+function wrapBase64(value, width = 76) {
+  return value.replace(new RegExp(`(.{${width}})`, 'g'), '$1\r\n')
+}
+
+async function mailDraft(args = {}) {
+  const message = composeMessage(args)
+  const result = await gmailPost('/users/me/drafts', { message: { raw: message.raw } })
+  const id = result.id ?? '（未知）'
+  const thread = result.message?.threadId ?? '（未知）'
+  return `草稿已创建：草稿 id=${id}，会话=${thread}。\n没有发送；要发送请在 Gmail 里打开它，或让 agent 用 mail_send。`
+}
+
+async function mailSend(args = {}) {
+  const message = composeMessage(args)
+  const result = await gmailPost('/users/me/messages/send', { raw: message.raw })
+  return `已发送：message_id=${result.id ?? '（未知）'}，会话=${result.threadId ?? '（未知）'}。`
+}
+
+/**
+ * 审批文案：`reason` 会进会话审计日志（**不要放收件人 / 主题**），
+ * `displayReason` 只给确认面板（可以放）。见 docs/approvals.md。
+ */
+function approvalFor(name, args) {
+  if (name === 'mail_modify') {
+    const id = String(args?.message_id ?? '').trim()
+    const add = labelList(args?.add_labels).join('、')
+    const remove = labelList(args?.remove_labels).join('、')
+    const detail = [add !== '' ? `+${add}` : '', remove !== '' ? `-${remove}` : ''].filter(Boolean).join(' ')
+    return {
+      reason: '修改 1 封邮件的标签',
+      displayReason: { en: 'Modify 1 email', zh: `邮件 ${id}${detail !== '' ? `：${detail}` : ''}` },
+    }
+  }
+  const to = displayValue(args?.to)
+  const subject = displayValue(args?.subject)
+  const preview = `发送给 ${to !== '' ? to : '（未填收件人）'}：${subject !== '' ? subject : '（无主题）'}`
+  return {
+    reason: name === 'mail_send' ? '发送 1 封邮件' : '创建 1 封邮件草稿',
+    displayReason: {
+      en: name === 'mail_send' ? 'Send 1 email' : 'Create 1 draft',
+      zh: name === 'mail_send' ? preview : preview.replace(/^发送给/, '给'),
+    },
+  }
+}
+
+/** 只用于展示，不去校验；换行压成空格，避免把多行塞进面板。 */
+function displayValue(raw) {
+  return String(raw ?? '').replace(/[\r\n]+/g, ' ').trim()
 }
 
 function formatThreadMessage(message, ordinal) {
@@ -543,6 +702,14 @@ function mailTool(options) {
 }
 
 export function apply(ctx) {
+  // **写操作的唯一闸门**：在插件层（不是模型侧）把写工具判成 `ask`。
+  // dsh 的 ApprovalService 会把请求交给手机 answerer → 确认面板；只有 allowed-once 才执行。
+  // 读工具走 next()（allow），不打扰用户。
+  ctx.on('tools/pre-execute', (exec, next) => {
+    if (!WRITE_TOOLS.has(exec?.name)) return next()
+    return { kind: 'ask', ...approvalFor(exec.name, exec.arguments) }
+  })
+
   ctx.tools.register(
     mailTool({
       name: 'mail_list',
@@ -621,6 +788,55 @@ export function apply(ctx) {
         + '标签名属于用户数据，只用于本次任务，不要写进日志或对外发送。',
       parameters: {},
       execute: mailLabels,
+    }),
+  )
+  ctx.tools.register(
+    mailTool({
+      name: 'mail_modify',
+      description:
+        '修改一封邮件的标签 / 状态：已读 = remove_labels "UNREAD"；未读 = add_labels "UNREAD"；'
+        + '加星 = add_labels "STARRED"；归档 = remove_labels "INBOX"；'
+        + '自定义标签用 mail_labels 里的名字或 id。'
+        + '**执行前会请求用户确认**（一次性授权）；用户拒绝时返回未获允许，不要重试。',
+      parameters: {
+        message_id: { type: 'string', required: true, description: '要修改的邮件 id（来自 mail_list / mail_search）' },
+        add_labels: { type: 'string', description: '要加的标签，逗号分隔（例如 "STARRED,工作"）' },
+        remove_labels: { type: 'string', description: '要移除的标签，逗号分隔（例如 "UNREAD,INBOX"）' },
+      },
+      execute: mailModify,
+    }),
+  )
+  ctx.tools.register(
+    mailTool({
+      name: 'mail_draft',
+      description:
+        '创建一封邮件草稿（不发送，保存到用户的 Gmail 草稿箱）。正文为纯文本；'
+        + '**执行前会请求用户确认**（一次性授权）。要直接发出请用 mail_send。',
+      parameters: {
+        to: { type: 'string', required: true, description: '收件人，多个用逗号分隔' },
+        subject: { type: 'string', required: true, description: '主题' },
+        body: { type: 'string', required: true, description: '纯文本正文' },
+        cc: { type: 'string', description: '抄送（可选）' },
+        bcc: { type: 'string', description: '密送（可选）' },
+      },
+      execute: mailDraft,
+    }),
+  )
+  ctx.tools.register(
+    mailTool({
+      name: 'mail_send',
+      description:
+        '发送一封邮件（**不可撤销**）。正文为纯文本；**执行前会请求用户确认**，'
+        + '面板会显示收件人与主题，只有用户点「允许一次」才会发出。'
+        + '用户拒绝时返回未获允许；不要为了绕过拒绝改用别的工具。',
+      parameters: {
+        to: { type: 'string', required: true, description: '收件人，多个用逗号分隔' },
+        subject: { type: 'string', required: true, description: '主题' },
+        body: { type: 'string', required: true, description: '纯文本正文' },
+        cc: { type: 'string', description: '抄送（可选）' },
+        bcc: { type: 'string', description: '密送（可选）' },
+      },
+      execute: mailSend,
     }),
   )
 }

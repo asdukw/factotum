@@ -9,23 +9,57 @@ assert.equal(plugin.name, 'dsh-plugin-gmail')
 assert.deepEqual(plugin.inject, ['tools'])
 
 const registered = []
-plugin.apply({ tools: { register: (tool) => registered.push(tool) } })
+const listeners = []
+plugin.apply({
+  tools: { register: (tool) => registered.push(tool) },
+  on: (event, handler) => listeners.push({ event, handler }),
+})
 
 const names = registered.map((tool) => tool.name).sort()
-assert.deepEqual(names, ['mail_labels', 'mail_list', 'mail_read', 'mail_search', 'mail_thread'])
+assert.deepEqual(names, [
+  'mail_draft',
+  'mail_labels',
+  'mail_list',
+  'mail_modify',
+  'mail_read',
+  'mail_search',
+  'mail_send',
+  'mail_thread',
+])
 
-// 五个工具都回字符串（正文/列表都是文本，没有附件通道）。
+// 八个工具都回字符串。
 for (const tool of registered) {
   assert.equal(typeof tool.execute, 'function', `${tool.name} must have execute`)
   assert.equal(tool.output.schema.type, 'string', `${tool.name} must render a string`)
   assert.equal(typeof tool.output.render, 'function', `${tool.name} must have render`)
 }
 
-// **这是「本轮能力面」的断言，不是永久边界。** 写操作会加，但必须经 dsh 官方审批 seam：
-// 工具在 `tools/pre-execute` 里被判成 `ask`，由 `@deepseek-ai/dsh-user-approval` 交给用户，
-// 只有 `allowed-once` 才执行。加写工具时这条测试要同时换成「每个写工具都挂了审批」。
-for (const tool of registered) {
-  assert.ok(!/send|delete|move|mark|reply|forward|trash|archive/i.test(tool.name), `${tool.name} 超出了本轮只读能力面`)
+// **写操作的闸门**：三个写工具必须在 tools/pre-execute 里被判成 ask；
+// 读工具必须 next() 放行，不能顺手打扰用户。
+assert.equal(listeners.length, 1, '只注册一个 tools/pre-execute 监听器')
+assert.equal(listeners[0].event, 'tools/pre-execute')
+const preExecute = listeners[0].handler
+
+const WRITE_ARGS = {
+  mail_modify: { message_id: 'm-1', remove_labels: 'UNREAD' },
+  mail_draft: { to: 'a@example.com', subject: 'hi', body: 'x' },
+  mail_send: { to: 'a@example.com', subject: 'hi', body: 'x' },
 }
 
-console.log(`ok: ${registered.length} tools registered (${names.join(', ')})`)
+for (const tool of registered) {
+  if (!(tool.name in WRITE_ARGS)) continue
+  const decision = preExecute({ name: tool.name, arguments: WRITE_ARGS[tool.name] }, async () => 'allow')
+  assert.equal(decision.kind, 'ask', `${tool.name} 必须走审批`)
+  assert.ok(decision.reason, `${tool.name} 要有审计用 reason`)
+  assert.ok(decision.displayReason?.zh, `${tool.name} 要有给面板的 displayReason`)
+}
+
+let nextCalls = 0
+const next = async () => {
+  nextCalls += 1
+  return 'allow'
+}
+assert.equal(await preExecute({ name: 'mail_read', arguments: { message_id: 'm-1' } }, next), 'allow')
+assert.equal(nextCalls, 1, '读工具必须放行')
+
+console.log(`ok: ${registered.length} tools registered（3 个写工具全部走审批）`)

@@ -19,6 +19,7 @@ let bridgeReply = { ok: true, accessToken: ACCESS_TOKEN, expiresAt: Date.now() +
 let gmailStatus = 200
 let listReply = { messages: [] }
 let labelsReply = { labels: [] }
+let writeReply = {}
 const messages = new Map()
 const threads = new Map()
 
@@ -32,10 +33,12 @@ function base64url(text) {
 
 globalThis.fetch = async (url, init = {}) => {
   const href = String(url)
-  calls.push({ href, method: init.method ?? 'GET', headers: init.headers ?? {} })
+  calls.push({ href, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body })
   if (href.includes('/action')) return jsonResponse(bridgeReply)
   if (gmailStatus >= 400) return jsonResponse({ error: { message: 'SECRET-ERROR-DETAIL' } }, gmailStatus)
   const path = new URL(href).pathname
+  // 写操作：modify / drafts / send。读路径继续走下面的路由。
+  if ((init.method ?? 'GET') !== 'GET') return jsonResponse(writeReply)
   if (path.endsWith('/users/me/labels')) return jsonResponse(labelsReply)
   const threadId = path.match(/\/users\/me\/threads\/(.+)$/)?.[1]
   if (threadId !== undefined) {
@@ -54,7 +57,13 @@ globalThis.fetch = async (url, init = {}) => {
 
 const plugin = await import('../index.mjs')
 const tools = new Map()
-plugin.apply({ tools: { register: (tool) => tools.set(tool.name, tool) } })
+const listeners = []
+plugin.apply({
+  tools: { register: (tool) => tools.set(tool.name, tool) },
+  on: (event, handler) => listeners.push({ event, handler }),
+})
+const preExecute = listeners.find((entry) => entry.event === 'tools/pre-execute')?.handler
+assert.equal(typeof preExecute, 'function', '写工具必须有 tools/pre-execute 闸门')
 
 const gmailCalls = () => calls.filter((call) => !call.href.includes('/action'))
 
@@ -360,12 +369,106 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
   )
 }
 
-// --- 15. 本轮能力面只读：所有出网请求都是 GET ---------------------------------
-// 这是**当前能力面**的断言，不是永久边界。加写工具时换成「每个写工具都挂了审批 seam，
-// 非 GET 请求只出现在 allowed-once 之后」，不要直接删掉。
+// --- 15. 写工具的审批闸门 -----------------------------------------------------
 {
-  const methods = new Set(gmailCalls().map((call) => call.method))
-  assert.deepEqual([...methods], ['GET'], '插件不得发出任何写请求')
+  let nextCalls = 0
+  const next = async () => {
+    nextCalls += 1
+    return 'allow'
+  }
+  const cases = {
+    mail_modify: { message_id: 'm-aaa', remove_labels: 'UNREAD' },
+    mail_draft: { to: 'a@example.com', subject: '秘密主题', body: 'x' },
+    mail_send: { to: 'a@example.com', subject: '秘密主题', body: 'x' },
+  }
+  for (const [name, args] of Object.entries(cases)) {
+    const decision = preExecute({ name, arguments: args }, next)
+    assert.equal(decision.kind, 'ask', `${name} 必须走审批`)
+    assert.ok(decision.reason, `${name} 要有审计 reason`)
+    assert.match(decision.displayReason?.zh ?? '', /a@example\.com|邮件 m-aaa/, `${name} 的面板要给出具体对象`)
+  }
+  // reason 会进会话审计日志：不能带收件人或主题。
+  const sendDecision = preExecute({ name: 'mail_send', arguments: cases.mail_send }, next)
+  assert.ok(!sendDecision.reason.includes('a@example.com'), 'reason 不得含收件人')
+  assert.ok(!sendDecision.reason.includes('秘密主题'), 'reason 不得含主题')
+
+  assert.equal(await preExecute({ name: 'mail_read', arguments: { message_id: 'm-aaa' } }, next), 'allow')
+  assert.equal(nextCalls, 1, '读工具必须放行，写工具不该调用 next')
 }
 
-console.log(`ok: 只读边界与令牌隔离（${gmailCalls().length} 次 Gmail 调用，全部 GET）`)
+// --- 16. mail_modify：POST 到 modify，标签解析正确 ----------------------------
+{
+  writeReply = { id: 'm-aaa', labelIds: ['INBOX', 'STARRED'] }
+  const result = await tools.get('mail_modify').execute({
+    message_id: 'm-aaa',
+    remove_labels: 'UNREAD',
+    add_labels: 'STARRED',
+  })
+  assert.match(result, /已更新邮件 \[m-aaa\]/)
+  assert.match(result, /\+STARRED/)
+  assert.match(result, /-UNREAD/)
+  const call = gmailCalls().at(-1)
+  assert.equal(call.method, 'POST')
+  assert.equal(new URL(call.href).pathname, '/gmail/v1/users/me/messages/m-aaa/modify')
+  assert.deepEqual(JSON.parse(call.body), { addLabelIds: ['STARRED'], removeLabelIds: ['UNREAD'] })
+}
+
+// --- 17. mail_draft：POST 到 drafts，raw 是合法的 MIME ------------------------
+{
+  writeReply = { id: 'd-1', message: { threadId: 't-1' } }
+  const result = await tools.get('mail_draft').execute({
+    to: 'a@example.com',
+    subject: '报价单',
+    body: '你好，附件随后。',
+  })
+  assert.match(result, /草稿已创建/)
+  assert.match(result, /草稿 id=d-1/)
+  const call = gmailCalls().at(-1)
+  assert.equal(call.method, 'POST')
+  assert.equal(new URL(call.href).pathname, '/gmail/v1/users/me/drafts')
+  const raw = Buffer.from(JSON.parse(call.body).message.raw, 'base64url').toString('utf8')
+  assert.match(raw, /To: a@example\.com/)
+  assert.match(raw, /Subject: =\?UTF-8\?B\?/, '非 ASCII 主题要按 RFC 2047 编码')
+  assert.match(raw, /Content-Transfer-Encoding: base64/)
+  const body = raw.split('\r\n\r\n')[1].replace(/\r\n/g, '')
+  assert.equal(Buffer.from(body, 'base64').toString('utf8'), '你好，附件随后。')
+}
+
+// --- 18. mail_send：POST 到 messages/send ------------------------------------
+{
+  writeReply = { id: 's-1', threadId: 't-1' }
+  const result = await tools.get('mail_send').execute({ to: 'a@example.com', subject: 'hi', body: 'x' })
+  assert.match(result, /已发送：message_id=s-1/)
+  const call = gmailCalls().at(-1)
+  assert.equal(call.method, 'POST')
+  assert.equal(new URL(call.href).pathname, '/gmail/v1/users/me/messages/send')
+}
+
+// --- 19. 头字段不允许换行（防 MIME 头注入） ----------------------------------
+{
+  await assert.rejects(
+    () => tools.get('mail_send').execute({ to: 'a@example.com\nBcc: evil@example.com', subject: 'hi', body: 'x' }),
+    /不能包含换行/,
+  )
+  await assert.rejects(
+    () => tools.get('mail_send').execute({ to: 'a@example.com', subject: 'hi\nBcc: evil@example.com', body: 'x' }),
+    /不能包含换行/,
+  )
+}
+
+// --- 20. 出网方法：读是 GET，写只 POST 到三个白名单端点 ----------------------
+{
+  const WRITE_PATHS = new Set([
+    '/gmail/v1/users/me/messages/m-aaa/modify',
+    '/gmail/v1/users/me/drafts',
+    '/gmail/v1/users/me/messages/send',
+  ])
+  for (const call of gmailCalls()) {
+    if (call.method === 'GET') continue
+    const path = new URL(call.href).pathname
+    assert.equal(call.method, 'POST', `意外的写方法：${call.method}`)
+    assert.ok(WRITE_PATHS.has(path), `写请求打到了白名单之外的端点：${path}`)
+  }
+}
+
+console.log(`ok: 读写边界与令牌隔离（${gmailCalls().length} 次 Gmail 调用；写工具全部经审批）`)

@@ -118,6 +118,11 @@ ctx.on('tools/pre-execute', (exec, next) => {
   「每个写工具都挂了审批、非 GET 只出现在 `allowed-once` 之后」。
 - 拒绝后的工具结果要可行动（「用户未允许这次发送」），不要把 `rejected` 伪装成网络错误。
 
+**已落地**：Gmail 的 `mail_modify` / `mail_draft` / `mail_send` 就是按这个形状接的
+（`tools/dsh-phone/plugins/gmail/index.mjs` 的 `WRITE_TOOLS` 与 `approvalFor`）。
+`reason` 只写动作类别（「发送 1 封邮件」），收件人与主题放在 `displayReason`；
+插件测试同时断言三个写工具都被判成 `ask`、读工具放行。
+
 ## 5. 怎么验
 
 PC 侧（已跑过）：

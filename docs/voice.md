@@ -124,9 +124,26 @@ I AppsFilter: interaction: PackageSetting{com.tappet.app} ->
 （20 个参数，给示例用的）删掉了，配置在 `LocalTtsEngine` 里自己拼。其余部分**不要手改**：
 JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会在 native 层崩。
 
-**模型目录 = 四条游戏角色音色**（2026-10-21）：刻晴 / 优菈（原神）、德丽莎 / 理之律者
-（崩坏 3）。都是社区训练、k2-fsa 转成 ONNX 的 VITS，22.05kHz、中/日混读、每条 120MB。
-原来那两条 13MB 的 Piper int8（`chaowen` CC0 / `xiao_ya` 非商用）已删除。
+**当前没有本地朗读模型（2026-10-21）**：`TtsModelCatalog.ALL` 为空，设置页只剩系统 TTS；
+`LocalTtsEngine` 与 `TtsModel` 的代码保留，往目录里加条目即可恢复。原先的四条游戏角色音
+（刻晴 / 优菈 / 德丽莎 / 理之律者，22.05kHz、各 120MB）真机听验后全部撤掉 —— 音色与发音
+质量都不达标；更早的两条 Piper int8（`chaowen` / `xiao_ya`）也不是更好的选择。
+
+重新挑模型时的候选实测（PC、sherpa-onnx 1.13.8、同一段中英混合文本；手机更慢）：
+
+| 候选 | 采样率 | RTF | 结论 |
+|---|---|---|---|
+| Matcha zh-baker | 22.05k | 0.18 | 最快、自然；单女声；训练集非商用；另需 54MB 声码器 |
+| Matcha zh-en | 16k | 0.17 | 中英双语；单说话人 |
+| Piper huayan | 22.05k | 0.16 | 快；数据集授权不明 |
+| MeloTTS zh-en | 44.1k | 0.55 | MIT；不传 `dict_dir` 也能合成；手机上可能压不到实时 |
+| Kokoro v1.1 zh | 24k | 1.1–1.4 | 音色最多、Apache-2.0；**PC 上都跑不到实时** |
+| VITS zh-ll | 16k | 0.31 | 5 个音色，保底 |
+| VITS aishell3 | 8k | 0.16–0.18 | 导出即 8kHz，听感发闷 |
+
+**加模型之前先修播放管线**：现在回调里 `AudioTrack.write(WRITE_BLOCKING)` 只喂约 100ms
+的缓冲区，而 sherpa 每合成完一个标点级子句才回调一次 —— 子句之间必然停顿。RTF 再低也会
+听到；RTF > 1 的模型（Kokoro）在这个结构下不可能实时。
 
 **为什么不是塔菲 / 菲比**（挑音色的完整过程，省得下次重查）：
 

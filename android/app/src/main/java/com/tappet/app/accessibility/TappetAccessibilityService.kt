@@ -27,14 +27,21 @@ import com.tappet.app.device.DeviceActionResult
 import com.tappet.app.device.DeviceBridge
 import com.tappet.app.device.EMPTY_TREE_HINT
 import com.tappet.app.device.NodeBounds
+import com.tappet.app.device.PageMemoryStore
 import com.tappet.app.device.PressKey
 import com.tappet.app.device.ScreenFrame
 import com.tappet.app.device.ScreenNode
 import com.tappet.app.device.ScreenSnapshot
 import com.tappet.app.device.SwipeDirection
 import com.tappet.app.device.VisionCode
+import com.tappet.app.device.diffSnapshots
 import com.tappet.app.device.hasNoReadableNode
+import com.tappet.app.device.isChurnHeavy
+import com.tappet.app.device.renderDiff
+import com.tappet.app.device.renderPageHint
 import com.tappet.app.device.renderSnapshot
+import com.tappet.app.device.renderUnchanged
+import com.tappet.app.device.screenFingerprint
 import com.tappet.app.device.textInputFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -121,18 +128,28 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
   // ---------- 执行层：原子动作 ----------
 
-  private var lastSnapshot: ScreenSnapshot? = null
+  @Volatile private var lastSnapshot: ScreenSnapshot? = null
+
+  @Volatile private var currentPage: String? = null
+  private val pageMemory by lazy { PageMemoryStore(this) }
 
   override suspend fun execute(action: DeviceAction): DeviceActionResult {
     // 执行前先记「触摸探索实际是否生效」——「点了没反应」是不是预期行为全靠它区分
     observeExploration()
-    return when (action) {
+    val result = dispatch(action)
+    // 页面记忆只记「哪个页面、做了什么类型、落在哪」，不记任何正文（见 PageMemoryStore）。
+    if (result.ok && action !is DeviceAction.ReadScreen) rememberAction(action)
+    return result
+  }
+
+  private suspend fun dispatch(action: DeviceAction): DeviceActionResult =
+    when (action) {
       // 这两个动作**不经过无障碍**（桥直接交给系统 App，见 SystemIntents）。
       // 正常路径走不到这里；留一条明确的失败，比让 when 编译不过或静默落到别处好。
       is DeviceAction.SetAlarm, is DeviceAction.AddCalendarEvent ->
         DeviceActionResult(ok = false, summary = "这个动作由桥直接处理，不经过无障碍", code = "NOT_HANDLED_HERE")
 
-      DeviceAction.ReadScreen -> executeReadScreen()
+      is DeviceAction.ReadScreen -> executeReadScreen(action.full)
 
       is DeviceAction.TapNode -> executeTapNode(action.ref)
 
@@ -156,15 +173,64 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
       DeviceAction.Screenshot -> executeScreenshot()
     }
-  }
 
-  private suspend fun executeReadScreen(): DeviceActionResult = withContext(Dispatchers.Default) {
-    val root = applicationRoot() ?: return@withContext DeviceActionResult(false, "rootInActiveWindow = null")
+  /**
+   * 增量读屏（roadmap §1.2）：默认只回与上一次读屏的差异；[full] 强制全量。
+   *
+   * 三件事必须一起做，缺一个就会让模型点到旧位置：
+   * 1. 稳定 ref —— 未变节点沿用上一次编号，新节点往后接；
+   * 2. 句柄按 ref 重排 —— 触摸探索下的语义点击靠它；
+   * 3. 变化过大或换了 App 时退回全量 —— 弱匹配在整页替换时不可靠。
+   */
+  private suspend fun executeReadScreen(full: Boolean): DeviceActionResult =
+    withContext(Dispatchers.Default) {
+      val root = applicationRoot() ?: return@withContext DeviceActionResult(false, "rootInActiveWindow = null")
+      val collected = collectScreen(root)
+      val pkg = root.packageName?.toString()
+      val fresh = ScreenSnapshot(pkg, collected.nodes, collected.truncated)
+      val fingerprint = screenFingerprint(fresh)
+      currentPage = fingerprint
+      val visit = pageMemory.visit(fingerprint)
+
+      val previous = lastSnapshot
+      // 变化过大时也当没有增量：逐行 diff 在整页替换时既难读、弱匹配也不可靠。
+      val delta =
+        previous
+          ?.takeIf { canDiff(it, fresh, full) }
+          ?.let { diffSnapshots(it, fresh) }
+          ?.takeUnless { it.isChurnHeavy() }
+      val snapshot = delta?.let { ScreenSnapshot(pkg, it.nodes, collected.truncated) } ?: fresh
+      val body =
+        when {
+          delta == null -> renderSnapshot(snapshot)
+          delta.churn == 0 -> renderUnchanged(snapshot)
+          else -> renderDiff(snapshot, delta)
+        }
+      val handlesByRef = snapshot.nodes.mapIndexed { i, node -> node.ref to collected.handles[i] }.toMap()
+
+      lastSnapshot = snapshot
+      lastNodeHandles = handlesByRef
+
+      val labeled = snapshot.nodes.count { it.hasLabel }
+      val editable = snapshot.nodes.count { it.editable }
+      val change = delta?.let { "+${it.added.size} -${it.removed.size} ~${it.changed.size}" } ?: "全量"
+      DeviceActionResult(
+        ok = true,
+        summary = "读到 ${snapshot.nodes.size} 个节点（$change；有文字 $labeled，可编辑 $editable）",
+        payload =
+          buildString {
+            append(body)
+            if (snapshot.hasNoReadableNode()) append('\n').append(EMPTY_TREE_HINT)
+            append('\n').append(renderPageHint(fingerprint, visit))
+          },
+      )
+    }
+
+  /** 一次前序遍历：节点、与之同序的活句柄、是否因为上限被截断。 */
+  private fun collectScreen(root: AccessibilityNodeInfo): CollectedScreen {
     val nodes = mutableListOf<ScreenNode>()
-    // 与 nodes 同序：ref 即下标。触摸探索下点击只能走 performAction，需要活句柄。
     val handles = mutableListOf<AccessibilityNodeInfo>()
     var truncated = false
-    var ref = 0
     val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
     stack.addLast(root to 0)
     while (stack.isNotEmpty()) {
@@ -173,38 +239,72 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         break
       }
       val (node, depth) = stack.removeLast()
-      val rect = Rect().also { node.getBoundsInScreen(it) }
-      nodes +=
-        ScreenNode(
-          ref = ref++,
-          className = node.className?.toString().orEmpty(),
-          text = node.text?.toString(),
-          contentDescription = node.contentDescription?.toString(),
-          bounds = NodeBounds(rect.left, rect.top, rect.right, rect.bottom),
-          depth = depth,
-          clickable = node.isClickable,
-          longClickable = node.isLongClickable,
-          editable = node.isEditable,
-          scrollable = node.isScrollable,
-          focused = node.isFocused,
-          visible = node.isVisibleToUser,
-        )
+      nodes += node.toScreenNode(nodes.size, depth)
       handles += node
       for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it to depth + 1) }
     }
-    val snapshot = ScreenSnapshot(root.packageName?.toString(), nodes, truncated)
-    lastSnapshot = snapshot
-    lastNodeHandles = handles
-    val labeled = nodes.count { it.hasLabel }
-    val editable = nodes.count { it.editable }
-    DeviceActionResult(
-      ok = true,
-      summary = "读到 ${nodes.size} 个节点（有文字 $labeled，可编辑 $editable）",
-      payload =
-        renderSnapshot(snapshot) +
-          if (snapshot.hasNoReadableNode()) "\n" + EMPTY_TREE_HINT else "",
+    return CollectedScreen(nodes, handles, truncated)
+  }
+
+  private fun AccessibilityNodeInfo.toScreenNode(ref: Int, depth: Int): ScreenNode {
+    val rect = Rect().also { getBoundsInScreen(it) }
+    return ScreenNode(
+      ref = ref,
+      className = className?.toString().orEmpty(),
+      text = text?.toString(),
+      contentDescription = contentDescription?.toString(),
+      bounds = NodeBounds(rect.left, rect.top, rect.right, rect.bottom),
+      depth = depth,
+      clickable = isClickable,
+      longClickable = isLongClickable,
+      editable = isEditable,
+      scrollable = isScrollable,
+      focused = isFocused,
+      visible = isVisibleToUser,
     )
   }
+
+  /** 只有「同一 App、两次都没截断、且不是强制全量」时才敢做增量。 */
+  private fun canDiff(previous: ScreenSnapshot, fresh: ScreenSnapshot, full: Boolean): Boolean =
+    !full &&
+      !previous.truncated &&
+      !fresh.truncated &&
+      previous.packageName == fresh.packageName &&
+      fresh.nodes.isNotEmpty()
+
+  private class CollectedScreen(
+    val nodes: List<ScreenNode>,
+    val handles: List<AccessibilityNodeInfo>,
+    val truncated: Boolean,
+  )
+
+  /**
+   * 把刚成功的动作记到**动作发生时所在页面**上。只保留类型与坐标：
+   * 输入的文字、点到的控件文字都不进来 —— 与 PageMemoryStore 的隐私边界一致。
+   */
+  private fun rememberAction(action: DeviceAction) {
+    val page = currentPage ?: return
+    val descriptor =
+      when (action) {
+        is DeviceAction.TapNode -> nodeAction("tap", action.ref)
+        is DeviceAction.LongPressNode -> nodeAction("long", action.ref)
+        is DeviceAction.TapPoint -> "tap@(${action.x},${action.y})"
+        is DeviceAction.LongPressPoint -> "long@(${action.x},${action.y})"
+        is DeviceAction.TypeText -> "type"
+        is DeviceAction.Press -> "press ${action.key.name.lowercase()}"
+        is DeviceAction.Swipe -> "swipe ${action.direction.name.lowercase()}"
+        else -> null
+      }
+    if (descriptor != null) pageMemory.recordAction(page, descriptor)
+  }
+
+  /** 节点中心点；节点已经不在快照里时退回类型名（仍然不含正文）。 */
+  private fun nodeAction(prefix: String, ref: Int): String =
+    lastSnapshot?.nodes
+      ?.firstOrNull { it.ref == ref }
+      ?.bounds
+      ?.let { "$prefix@(${it.centerX},${it.centerY})" }
+      ?: prefix
 
   private suspend fun executeTapNode(ref: Int): DeviceActionResult {
     val node =
@@ -828,12 +928,14 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
     }
   }
 
-  private var lastNodeHandles: List<AccessibilityNodeInfo> = emptyList()
+  // 增量读屏后 ref 不再等于下标：稳定 ref 可能来自更早的一次读屏，所以按 ref 建映射。
+  // 插入顺序与当前快照的前序一致（nodeAt 依赖「同坐标最后一个 = 最深」）。
+  @Volatile private var lastNodeHandles: Map<Int, AccessibilityNodeInfo> = emptyMap()
 
   /** 语义点击：ref 的节点自身或最近的 clickable 祖先执行 ACTION_CLICK / ACTION_LONG_CLICK。 */
   private suspend fun semanticClick(ref: Int, long: Boolean): DeviceActionResult {
     val handle =
-      lastNodeHandles.getOrNull(ref)
+      lastNodeHandles[ref]
         ?: return DeviceActionResult(false, "ref=$ref 没有活的节点句柄：重新 read_ui_tree")
     val label = if (long) "长按" else "点击"
     val target =
@@ -869,7 +971,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
    */
   private fun nodeAt(x: Int, y: Int, long: Boolean): AccessibilityNodeInfo? {
     val deepest =
-      lastNodeHandles.lastOrNull { handle ->
+      lastNodeHandles.values.lastOrNull { handle ->
         Rect().also { handle.getBoundsInScreen(it) }.contains(x, y)
       } ?: return null
     return actionableAncestor(deepest, long)
@@ -884,7 +986,7 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
         else -> return null
       }
     val target =
-      lastNodeHandles
+      lastNodeHandles.values
         .filter { it.isScrollable && it.isVisibleToUser }
         .maxByOrNull { handle ->
           val rect = Rect().also { handle.getBoundsInScreen(it) }

@@ -5,7 +5,11 @@ package com.tappet.app.device
  * 具体实现（无障碍 / 将来的其它执行器）不参与语义判断。
  */
 sealed interface DeviceAction {
-  data object ReadScreen : DeviceAction
+  /**
+   * 读当前屏幕。默认**增量**：与上一次读屏相同的部分不再重发（roadmap §1.2）。
+   * [full] 强制全量，用于模型已经看不到上一次输出的情况（上下文被截断）。
+   */
+  data class ReadScreen(val full: Boolean = false) : DeviceAction
 
   /** 点最近一次 [ReadScreen] 快照里的节点，ref 对应渲染行首的 [n]。 */
   data class TapNode(val ref: Int) : DeviceAction
@@ -211,33 +215,44 @@ fun renderSnapshot(
       out.append("…（截断）\n")
       break
     }
-    repeat(node.depth) { out.append("  ") }
-    out.append('[').append(node.ref).append("] ")
-    out.append(node.className.substringAfterLast('.'))
-    val label =
-      listOfNotNull(
-        node.text?.takeIf { it.isNotBlank() },
-        node.contentDescription?.takeIf { it.isNotBlank() },
-      )
-        .joinToString(" ")
-        .replace('\n', ' ')
-        .trim()
-        .take(maxTextChars)
-    if (label.isNotEmpty()) out.append(" \"").append(label).append('"')
-    val flags =
-      buildList {
-        if (node.clickable) add("clickable")
-        if (node.longClickable) add("long_clickable")
-        if (node.editable) add("editable")
-        if (node.scrollable) add("scrollable")
-        if (node.focused) add("focused")
-      }
-    if (flags.isNotEmpty()) out.append(' ').append(flags.joinToString(","))
-    out.append(" @(").append(node.bounds.centerX).append(',').append(node.bounds.centerY).append(')')
-    out.append('\n')
+    out.append(renderNodeLine(node, maxTextChars)).append('\n')
     lines++
   }
   return out.toString().trimEnd()
+}
+
+/**
+ * 单个节点的渲染行：缩进 + `[ref]` + 类名 + 标签 + 状态 + 中心点。
+ *
+ * 全量、增量、targets 三段共用同一个函数 —— 行格式只有一处定义，
+ * 模型看到的格式才不会因为走了哪条渲染路径而变。
+ */
+fun renderNodeLine(node: ScreenNode, maxTextChars: Int = 80): String {
+  val out = StringBuilder()
+  repeat(node.depth) { out.append("  ") }
+  out.append('[').append(node.ref).append("] ")
+  out.append(node.className.substringAfterLast('.'))
+  val label =
+    listOfNotNull(
+      node.text?.takeIf { it.isNotBlank() },
+      node.contentDescription?.takeIf { it.isNotBlank() },
+    )
+      .joinToString(" ")
+      .replace('\n', ' ')
+      .trim()
+      .take(maxTextChars)
+  if (label.isNotEmpty()) out.append(" \"").append(label).append('"')
+  val flags =
+    buildList {
+      if (node.clickable) add("clickable")
+      if (node.longClickable) add("long_clickable")
+      if (node.editable) add("editable")
+      if (node.scrollable) add("scrollable")
+      if (node.focused) add("focused")
+    }
+  if (flags.isNotEmpty()) out.append(' ').append(flags.joinToString(","))
+  out.append(" @(").append(node.bounds.centerX).append(',').append(node.bounds.centerY).append(')')
+  return out.toString()
 }
 
 /**

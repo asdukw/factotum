@@ -33,9 +33,28 @@ object VoiceSettings {
   const val MAX_RATE = 2.0f
   const val DEFAULT_RATE = 1.0f
 
-  /** 认不出的值（改过 id / 手改过 prefs）一律退回系统引擎，而不是让朗读整个不可用。 */
+  /**
+   * 认不出的值（改过 id / 手改过 prefs）一律退回系统引擎，而不是让朗读整个不可用。
+   *
+   * 本地朗读当前没有可下载模型（[TtsModelCatalog.ALL] 为空）：老用户存着 `local` 时直接
+   * 回落到系统引擎，而不是让设置页停在一个永远不可用的选项上。
+   */
   fun engineId(context: Context): String =
-    prefs(context).getString(KEY_ENGINE, null)?.takeIf { it in VoiceEngines.ALL } ?: VoiceEngines.SYSTEM
+    effectiveEngineId(
+      stored = prefs(context).getString(KEY_ENGINE, null),
+      localAvailable = TtsModelCatalog.ALL.isNotEmpty(),
+    )
+
+  /**
+   * [engineId] 的纯函数部分：给定存下来的值与「本地目录里有没有模型」，决定实际用哪个引擎。
+   *
+   * 抽出来是为了能在 JVM 单测里钉住回落规则 —— SharedPreferences 那层不值得也不方便测。
+   */
+  internal fun effectiveEngineId(stored: String?, localAvailable: Boolean): String {
+    val known = stored?.takeIf { it in VoiceEngines.ALL } ?: return VoiceEngines.SYSTEM
+    if (known == VoiceEngines.LOCAL && !localAvailable) return VoiceEngines.SYSTEM
+    return known
+  }
 
   fun setEngineId(context: Context, id: String) {
     prefs(context).edit { putString(KEY_ENGINE, id) }

@@ -130,7 +130,7 @@ class DeviceActionReceiver : BroadcastReceiver() {
 
   private fun parse(name: String, intent: Intent): DeviceAction? =
     when (name) {
-      "READ_SCREEN" -> DeviceAction.ReadScreen
+      "READ_SCREEN" -> DeviceAction.ReadScreen(full = intent.getBooleanExtra(EXTRA_FULL, false))
 
       "TAP_NODE" -> intent.getIntExtra(EXTRA_REF, -1).takeIf { it >= 0 }?.let(DeviceAction::TapNode)
 
@@ -207,6 +207,7 @@ class DeviceActionReceiver : BroadcastReceiver() {
     const val EXTRA_KEY = "key"
     const val EXTRA_DURATION_MS = "duration_ms"
     const val EXTRA_LOG_PAYLOAD = "logPayload"
+    const val EXTRA_FULL = "full"
     const val EXTRA_FRAME_ID = "screenshot_id"
     const val EXTRA_X1 = "x1"
     const val EXTRA_Y1 = "y1"

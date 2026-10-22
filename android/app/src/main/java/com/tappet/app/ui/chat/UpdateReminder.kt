@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tappet.app.BuildConfig
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.ui.components.UpdateProgressBar
 import com.tappet.app.update.UpdateManager
@@ -43,7 +44,11 @@ fun UpdateReminder() {
   // 那时不该再弹一次模态框打断他。
   var noticed by remember { mutableStateOf(false) }
 
-  LaunchedEffect(Unit) { UpdateManager.check(context) }
+  // debug 包与 release 签名不同：下载下来的 release APK 必然装不上。
+  // 自动检查只会每次启动都弹一个无法完成的「有新版」，所以只在 release 里查。
+  LaunchedEffect(Unit) {
+    if (!BuildConfig.DEBUG) UpdateManager.check(context)
+  }
 
   LaunchedEffect(state) {
     val current = state

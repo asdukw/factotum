@@ -49,10 +49,15 @@ App 侧用固定 tag `TappetAudit` 打 `ev=<名> <k>=<v>` 一行；`collect.mjs`
 ```bash
 node tools/audit/selftest.mjs                  # 离线自检（解码器，不需要设备）
 node tools/audit/run-suite.mjs                 # 跑固定任务集 + 逐个采集
+node tools/audit/run-suite.mjs --suite daily   # 跑 suite-daily.json（日常场景）
 node tools/audit/run-suite.mjs --only calc     # 只跑 id 匹配的任务
 node tools/audit/collect.mjs --label my-run    # 只采集最新会话
 node tools/audit/collect.mjs --session <目录名> --label baseline
 ```
+
+`suite.json` 是冒烟基线（只读为主）；`suite-daily.json` 是日常场景集，覆盖动态内容、文本输入、
+多步表单与跨 App 发送。后三条会留下可见痕迹（闹钟 / 备忘 / 给自己发消息），
+**重复跑之前先清理上一轮**，否则「列表里最后一条」这类判据会失效。
 
 设备必须在线；离线时脚本会直说，不会假装有数据。
 

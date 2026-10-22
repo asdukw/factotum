@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tappet.app.BuildConfig
 import com.tappet.app.accessibility.OverlaySettings
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.device.AccessibilityStatus
@@ -311,21 +312,32 @@ private fun AboutSection() {
   val downloading = state as? UpdateManager.State.Downloading
 
   SettingsGroup {
-    SettingsRow(
-      glyph = GlyphKind.Info,
-      title = "版本更新",
-      subtitle = updateSubtitle(state),
-      onClick = { onUpdateRowClick(context, state) },
-    ) {
-      StatusBadge(updateBadge(state), updateTone(state))
-    }
-    if (downloading != null) {
-      // 进度条单独占一行：塞进 SettingsRow 的 trailing 槽会把它挤成一小截，
-      // 而这一行的重点此刻就是进度。
-      UpdateProgressBar(
-        progress = downloading.progress,
-        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 14.dp),
+    if (BuildConfig.DEBUG) {
+      // debug 包的签名与 release 不同，下载下来的 release APK 装不上；
+      // 这里只说明，不提供按钮 —— 更新与安装走 adb，release 验证在别的设备/CI 上做。
+      SettingsRow(
+        glyph = GlyphKind.Info,
+        title = "版本更新",
+        subtitle = "debug 包：请用 adb 安装更新（签名与 release 不同）",
+        enabled = false,
       )
+    } else {
+      SettingsRow(
+        glyph = GlyphKind.Info,
+        title = "版本更新",
+        subtitle = updateSubtitle(state),
+        onClick = { onUpdateRowClick(context, state) },
+      ) {
+        StatusBadge(updateBadge(state), updateTone(state))
+      }
+      if (downloading != null) {
+        // 进度条单独占一行：塞进 SettingsRow 的 trailing 槽会把它挤成一小截，
+        // 而这一行的重点此刻就是进度。
+        UpdateProgressBar(
+          progress = downloading.progress,
+          modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 14.dp),
+        )
+      }
     }
     SettingsDivider()
     SettingsRow(

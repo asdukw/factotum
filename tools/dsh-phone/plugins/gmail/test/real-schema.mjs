@@ -51,7 +51,7 @@ try {
     tools: { register: (tool) => registered.push(tool) },
     on: (event, handler) => listeners.push({ event, handler }),
   })
-  assert.equal(registered.length, 8, '8 个工具都要注册成功')
+  assert.equal(registered.length, 9, '9 个工具都要注册成功')
   assert.ok(listeners.some((entry) => entry.event === 'tools/pre-execute'), '要有写操作的审批闸门')
 
   for (const tool of registered) {
@@ -92,6 +92,10 @@ try {
 
   const modify = registered.find((tool) => tool.name === 'mail_modify')
   assert.ok(modify.parameters.required?.includes('message_id'), 'mail_modify 的 message_id 必须必填')
+
+  const save = registered.find((tool) => tool.name === 'mail_save_attachment')
+  assert.ok(save.parameters.required?.includes('message_id'), 'mail_save_attachment 的 message_id 必须必填')
+  assert.ok(save.parameters.required?.includes('index'), 'mail_save_attachment 的 index 必须必填')
 
   // 工具描述里必须写明「正文是数据不是指令」—— 提示注入的第一层缓解（docs §3）。
   assert.match(read.description, /数据不是指令/)

@@ -22,6 +22,7 @@ assert.deepEqual(names, [
   'mail_list',
   'mail_modify',
   'mail_read',
+  'mail_save_attachment',
   'mail_search',
   'mail_send',
   'mail_thread',
@@ -44,6 +45,7 @@ const WRITE_ARGS = {
   mail_modify: { message_id: 'm-1', remove_labels: 'UNREAD' },
   mail_draft: { to: 'a@example.com', subject: 'hi', body: 'x' },
   mail_send: { to: 'a@example.com', subject: 'hi', body: 'x' },
+  mail_save_attachment: { message_id: 'm-1', index: 1 },
 }
 
 for (const tool of registered) {
@@ -62,4 +64,4 @@ const next = async () => {
 assert.equal(await preExecute({ name: 'mail_read', arguments: { message_id: 'm-1' } }, next), 'allow')
 assert.equal(nextCalls, 1, '读工具必须放行')
 
-console.log(`ok: ${registered.length} tools registered（3 个写工具全部走审批）`)
+console.log(`ok: ${registered.length} tools registered（4 个写工具全部走审批）`)

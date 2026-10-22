@@ -20,8 +20,10 @@ let gmailStatus = 200
 let listReply = { messages: [] }
 let labelsReply = { labels: [] }
 let writeReply = {}
+let saveReply = { ok: true, path: 'Download/Tappet/attachment', bytes: 0 }
 const messages = new Map()
 const threads = new Map()
+const attachments = new Map()
 
 function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
@@ -34,12 +36,23 @@ function base64url(text) {
 globalThis.fetch = async (url, init = {}) => {
   const href = String(url)
   calls.push({ href, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body })
-  if (href.includes('/action')) return jsonResponse(bridgeReply)
+  if (href.includes('/action')) {
+    // 同一个桥既发 token 也保存附件；用动作头区分。
+    const isSave = init.headers?.['x-connector-action'] === 'save_attachment'
+    return jsonResponse(isSave ? saveReply : bridgeReply)
+  }
   if (gmailStatus >= 400) return jsonResponse({ error: { message: 'SECRET-ERROR-DETAIL' } }, gmailStatus)
   const path = new URL(href).pathname
   // 写操作：modify / drafts / send。读路径继续走下面的路由。
   if ((init.method ?? 'GET') !== 'GET') return jsonResponse(writeReply)
   if (path.endsWith('/users/me/labels')) return jsonResponse(labelsReply)
+  const attachmentMatch = path.match(/\/users\/me\/messages\/([^/]+)\/attachments\/([^/]+)$/)
+  if (attachmentMatch !== null) {
+    const key = `${decodeURIComponent(attachmentMatch[1])}/${decodeURIComponent(attachmentMatch[2])}`
+    const found = attachments.get(key)
+    if (found === undefined) return jsonResponse({ error: { message: 'not found' } }, 404)
+    return jsonResponse(found)
+  }
   const threadId = path.match(/\/users\/me\/threads\/(.+)$/)?.[1]
   if (threadId !== undefined) {
     const found = threads.get(decodeURIComponent(threadId))
@@ -380,6 +393,7 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
     mail_modify: { message_id: 'm-aaa', remove_labels: 'UNREAD' },
     mail_draft: { to: 'a@example.com', subject: '秘密主题', body: 'x' },
     mail_send: { to: 'a@example.com', subject: '秘密主题', body: 'x' },
+    mail_save_attachment: { message_id: 'm-aaa', index: 1 },
   }
   for (const [name, args] of Object.entries(cases)) {
     const decision = preExecute({ name, arguments: args }, next)
@@ -444,7 +458,39 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
   assert.equal(new URL(call.href).pathname, '/gmail/v1/users/me/messages/send')
 }
 
-// --- 19. 头字段不允许换行（防 MIME 头注入） ----------------------------------
+// --- 19. mail_save_attachment：取附件 → 交给宿主保存 --------------------------
+{
+  messages.set(
+    'm-att-save',
+    full('m-att-save', {
+      text: '附件是报价。',
+      attachments: [{ filename: '报价单.pdf', mimeType: 'application/pdf', size: 11, attachmentId: 'att-1' }],
+    }),
+  )
+  attachments.set('m-att-save/att-1', { data: base64url('PDF-CONTENT'), size: 11 })
+  saveReply = { ok: true, path: 'Download/Tappet/报价单.pdf', bytes: 11 }
+
+  const result = await tools.get('mail_save_attachment').execute({ message_id: 'm-att-save', index: 1 })
+  assert.match(result, /附件已保存到 Download\/Tappet\/报价单\.pdf/)
+  assert.ok(!result.includes('att-1'), 'attachmentId 不该出现在工具结果里')
+
+  const saveCall = calls
+    .filter((call) => call.href.includes('/action') && call.headers['x-connector-action'] === 'save_attachment')
+    .at(-1)
+  assert.ok(saveCall, '要调用宿主保存附件')
+  assert.equal(saveCall.method, 'POST')
+  assert.equal(decodeURIComponent(saveCall.headers['x-file-name']), '报价单.pdf')
+  assert.equal(decodeURIComponent(saveCall.headers['x-file-mime']), 'application/pdf')
+  assert.equal(Buffer.from(saveCall.body).toString('utf8'), 'PDF-CONTENT')
+
+  // 索引越界要报清楚，而不是静默保存错文件。
+  await assert.rejects(
+    () => tools.get('mail_save_attachment').execute({ message_id: 'm-att-save', index: 2 }),
+    /只有 1 个附件/,
+  )
+}
+
+// --- 20. 头字段不允许换行（防 MIME 头注入） ----------------------------------
 {
   await assert.rejects(
     () => tools.get('mail_send').execute({ to: 'a@example.com\nBcc: evil@example.com', subject: 'hi', body: 'x' }),
@@ -456,7 +502,7 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
   )
 }
 
-// --- 20. 出网方法：读是 GET，写只 POST 到三个白名单端点 ----------------------
+// --- 21. 出网方法：读是 GET，写只 POST 到三个白名单端点 ----------------------
 {
   const WRITE_PATHS = new Set([
     '/gmail/v1/users/me/messages/m-aaa/modify',

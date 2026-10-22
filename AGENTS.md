@@ -14,7 +14,7 @@ calls. The only runtime is the Android app (Kotlin).
 | Data | Room + SQLCipher; API keys wrapped by Android Keystore |
 | Agent runtime | Embedded Node 24 (nodejs-mobile fork) + dsh phone profile |
 | Device execution | `AccessibilityService` (UI tree first, screenshots fallback) + `DeviceBridgeServer` (127.0.0.1 + token) |
-| Tools | dsh plugin `dsh-plugin-android-tools` (10 primitives + optional `run_command`), separate public repo, HTTP bridge → `DeviceAction`; plus a read-only mail connector |
+| Tools | dsh plugin `dsh-plugin-android-tools` (10 primitives + optional `run_command`), separate public repo, HTTP bridge → `DeviceAction`; plus a mail connector (read tools + approval-gated writes) |
 | Linux on phone | Termux + proot Debian, `tools/termux/bridge.py` (127.0.0.1 + token) → plugin `run_command` (bypasses accessibility) |
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
@@ -206,8 +206,9 @@ Then `bundle-dsh.ps1` and reinstall.
 Model-visible tools (10): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
 `capture_screenshot()`, `tap_target(screenshot_id,x1,y1,x2,y2)`, `long_press_target(...)`,
 `type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`. With Linux
-configured add `run_command`; with a mail connector add five read-only mail tools (`mail_list`,
-`mail_search`, `mail_read`, `mail_thread`, `mail_labels`).
+configured add `run_command`; with a mail connector add eight mail tools (five read-only:
+`mail_list`, `mail_search`, `mail_read`, `mail_thread`, `mail_labels`; three approval-gated
+writes: `mail_modify`, `mail_draft`, `mail_send`).
 
 - **Coordinate contract:** the model uses only the **image pixels of the latest
   `capture_screenshot`** (1080×2344 → 943×2047), never screen pixels.

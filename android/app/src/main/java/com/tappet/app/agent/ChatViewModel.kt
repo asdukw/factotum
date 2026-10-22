@@ -193,7 +193,12 @@ class ChatViewModel(
           streamer.stream(sessionId, prompt).collect { event ->
             when (event) {
               is AgentStreamEvent.ReasoningDelta -> {
-                if (thinkingStartedAt == null) thinkingStartedAt = clock()
+                if (thinkingStartedAt == null) {
+                  val started = clock()
+                  thinkingStartedAt = started
+                  // 界面据此把「思考中 1.2 秒」实时往上走；结算时换成 thinkingMs。
+                  markThinkingStarted(draft.id, started)
+                }
                 if (event.startsStep) reasoningStepStart = reasoning.length
                 reasoning.append(event.text)
                 val now = clock()
@@ -284,6 +289,8 @@ class ChatViewModel(
             flush(draft.id, content, reasoning, status, error)
             // 这一轮没跑完就被停/出错时，把还挂在「执行中」的工具卡落成中断态。
             if (stopped || failure != null) finishRunningToolCalls(draft.id)
+            // 思考中被打断也要结算时长，否则界面会永远停在「思考中」。
+            settleThinking()
             finishStream(draft.id, error)
           }
         }
@@ -481,11 +488,26 @@ class ChatViewModel(
     )
   }
 
-  /** 记录思考时长（毫秒）；界面显示「思考了 3.8 秒」。 */
+  /** 记录思考时长（毫秒）；界面显示「思考了 3.8 秒」。清掉起点，实时计时停止。 */
   private fun markThinkingMs(assistantId: String, ms: Long) {
     _state.update { state ->
       state.copy(
-        messages = state.messages.map { message -> if (message.id == assistantId) message.copy(thinkingMs = ms) else message },
+        messages =
+          state.messages.map { message ->
+            if (message.id == assistantId) message.copy(thinkingMs = ms, thinkingStartedAt = null) else message
+          },
+      )
+    }
+  }
+
+  /** 记录思考开始时间；界面据此实时显示「思考中 X 秒」。 */
+  private fun markThinkingStarted(assistantId: String, at: Long) {
+    _state.update { state ->
+      state.copy(
+        messages =
+          state.messages.map { message ->
+            if (message.id == assistantId) message.copy(thinkingStartedAt = at) else message
+          },
       )
     }
   }

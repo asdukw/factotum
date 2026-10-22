@@ -43,6 +43,13 @@ data class ChatMessage(
   val reasoning: String? = null,
   /** 这一轮思考了多久（毫秒）。只在内存里：库里没有这一列，重载后为 null（界面显示「思考过程」）。 */
   val thinkingMs: Long? = null,
+  /**
+   * 这一轮思考开始的时间戳（毫秒，`System.currentTimeMillis`）。只在内存里。
+   *
+   * 界面用它把「思考中」的时长**实时往上走**；结算时换成 [thinkingMs] 并清空。
+   * 与 [thinkingMs] 一样不入库 —— 重载后没有起点，只能显示「思考过程」。
+   */
+  val thinkingStartedAt: Long? = null,
   val error: String? = null,
   val toolCalls: List<ToolCallView> = emptyList(),
 )

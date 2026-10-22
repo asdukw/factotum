@@ -1,6 +1,7 @@
 package com.tappet.app.ui.chat
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,9 +9,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -22,9 +26,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -56,6 +63,18 @@ internal fun ProcessBlock(message: ChatMessage) {
   LaunchedEffect(message.streaming) {
     if (!message.streaming && !userToggled) expanded = false
   }
+
+  // 多轮工具调用会把过程撑得很长：展开区有高度上限，自己滚，并跟随最新一步。
+  val stepsScroll = rememberScrollState()
+  var followSteps by remember(message.id) { mutableStateOf(true) }
+  ProcessStepAutoScroll(
+    scroll = stepsScroll,
+    expanded = expanded,
+    stepCount = message.toolCalls.size,
+    reasoningLength = reasoning?.length ?: 0,
+    following = followSteps,
+    onFollowingChange = { followSteps = it },
+  )
 
   Surface(
     color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -89,13 +108,55 @@ internal fun ProcessBlock(message: ChatMessage) {
       }
       if (expanded) {
         HorizontalDivider(Modifier.padding(horizontal = 12.dp))
-        message.toolCalls.forEach { call -> ToolStepRow(call) }
-        if (reasoning != null) {
-          ThinkingStepRow(reasoning = reasoning, thinkingMs = message.thinkingMs, running = message.thinking)
+        Column(
+          Modifier
+            .fillMaxWidth()
+            .heightIn(max = processStepsMaxHeight)
+            .verticalScroll(stepsScroll),
+        ) {
+          message.toolCalls.forEach { call -> ToolStepRow(call) }
+          if (reasoning != null) {
+            ThinkingStepRow(
+              reasoning = reasoning,
+              thinkingMs = message.thinkingMs,
+              startedAt = message.thinkingStartedAt,
+              running = message.thinking,
+            )
+          }
+          Spacer(Modifier.height(4.dp))
         }
-        Spacer(Modifier.height(4.dp))
       }
     }
+  }
+}
+
+/**
+ * 过程卡的内部滚动：新步骤到达时贴到底部，用户自己上滑后暂停，滑回底部再恢复。
+ * 与聊天列表的 FollowOutput 同一套意图判定（只在滚动结束时采样位置）。
+ */
+@Composable
+private fun ProcessStepAutoScroll(
+  scroll: ScrollState,
+  expanded: Boolean,
+  stepCount: Int,
+  reasoningLength: Int,
+  following: Boolean,
+  onFollowingChange: (Boolean) -> Unit,
+) {
+  LaunchedEffect(scroll) {
+    snapshotFlow { scroll.isScrollInProgress }.collect { scrolling ->
+      if (!scrolling) onFollowingChange(scroll.value >= scroll.maxValue - 8)
+    }
+  }
+  // 展开 = 回到最新一步。
+  LaunchedEffect(expanded) {
+    if (expanded) onFollowingChange(true)
+  }
+  // 新工具 / 新推理：等这一帧布局更新 maxValue，再贴到底部。
+  LaunchedEffect(expanded, stepCount, reasoningLength, following) {
+    if (!expanded || !following) return@LaunchedEffect
+    withFrameNanos {}
+    scroll.scrollTo(scroll.maxValue)
   }
 }
 
@@ -144,9 +205,24 @@ private fun ToolStepRow(call: ToolCallView) {
  * 收起时给一行推理摘要，展开后是完整推理（Markdown，次要字号）。
  */
 @Composable
-private fun ThinkingStepRow(reasoning: String, thinkingMs: Long?, running: Boolean) {
+private fun ThinkingStepRow(
+  reasoning: String,
+  thinkingMs: Long?,
+  startedAt: Long?,
+  running: Boolean,
+) {
   var expanded by remember { mutableStateOf(false) }
   val summary = remember(reasoning) { reasoningSummary(reasoning) }
+  // 思考中每 100ms 重算一次已经过去多久；结算后停在 thinkingMs（RikkaHub 同一条做法）。
+  val liveMs by
+    produceState(0L, running, startedAt) {
+      if (!running || startedAt == null) return@produceState
+      while (true) {
+        value = (System.currentTimeMillis() - startedAt).coerceAtLeast(0)
+        delay(100)
+      }
+    }
+  val shownMs = shownThinkingMs(running = running, thinkingMs = thinkingMs, startedAt = startedAt, liveMs = liveMs)
   Column(Modifier.fillMaxWidth()) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
@@ -154,12 +230,7 @@ private fun ThinkingStepRow(reasoning: String, thinkingMs: Long?, running: Boole
     ) {
       BulbGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
       Text(
-        text =
-          when {
-            running -> "思考中…"
-            thinkingMs != null -> "思考了 ${formatThinkingDuration(thinkingMs)}"
-            else -> "思考过程"
-          },
+        text = thinkingLabel(running = running, shownMs = shownMs),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.weight(1f).padding(start = 10.dp),
@@ -260,4 +331,23 @@ private fun SheetCode(title: String, text: String) {
   }
 }
 
+/** 思考中优先用实时值；结算后用 thinkingMs。 */
+private fun shownThinkingMs(running: Boolean, thinkingMs: Long?, startedAt: Long?, liveMs: Long): Long? =
+  if (running) {
+    if (startedAt != null) liveMs else null
+  } else {
+    thinkingMs
+  }
+
+private fun thinkingLabel(running: Boolean, shownMs: Long?): String =
+  when {
+    running && shownMs != null -> "思考中 ${formatThinkingDuration(shownMs)}"
+    running -> "思考中…"
+    shownMs != null -> "思考了 ${formatThinkingDuration(shownMs)}"
+    else -> "思考过程"
+  }
+
 private const val MAX_SHEET_CODE_CHARS = 4000
+
+/** 过程卡展开区的高度上限：超过就内部滚动，避免多轮工具调用把消息撑成几屏。 */
+private val processStepsMaxHeight = 280.dp

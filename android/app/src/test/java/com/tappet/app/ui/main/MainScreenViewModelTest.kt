@@ -10,15 +10,18 @@ import org.junit.Test
 
 class MainScreenViewModelTest {
   @Test
-  fun uiState_initiallyLoading() = runTest {
+  fun uiState_initiallyLoading() {
     val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
+    // 不订阅上游：StateFlow 的初值才是 Loading。用 first() 会先订阅，
+    // 冷流可能在收集器拿到初值前就把它改成 Success（CI 上偶发失败）。
+    assertEquals(MainScreenUiState.Loading, viewModel.uiState.value)
   }
 
   @Test
   fun uiState_onItemSaved_isDisplayed() = runTest {
     val viewModel = MainScreenViewModel(FakeMyModelRepository())
-    assertEquals(viewModel.uiState.first(), MainScreenUiState.Loading)
+    val success = viewModel.uiState.first { it is MainScreenUiState.Success }
+    assertEquals(MainScreenUiState.Success(listOf("Sample")), success)
   }
 }
 

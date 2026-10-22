@@ -206,9 +206,9 @@ Then `bundle-dsh.ps1` and reinstall.
 Model-visible tools (10): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
 `capture_screenshot()`, `tap_target(screenshot_id,x1,y1,x2,y2)`, `long_press_target(...)`,
 `type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`. With Linux
-configured add `run_command`; with a mail connector add eight mail tools (five read-only:
-`mail_list`, `mail_search`, `mail_read`, `mail_thread`, `mail_labels`; three approval-gated
-writes: `mail_modify`, `mail_draft`, `mail_send`).
+configured add `run_command`; with a mail connector add nine mail tools (five read-only:
+`mail_list`, `mail_search`, `mail_read`, `mail_thread`, `mail_labels`; four approval-gated
+writes: `mail_modify`, `mail_draft`, `mail_send`, `mail_save_attachment`).
 
 - **Coordinate contract:** the model uses only the **image pixels of the latest
   `capture_screenshot`** (1080×2344 → 943×2047), never screen pixels.

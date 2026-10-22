@@ -1,13 +1,18 @@
 package com.tappet.app.bridge
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.RequiresApi
 import com.tappet.app.connector.AccessTokenResult
+import com.tappet.app.connector.AttachmentFileName
 import com.tappet.app.connector.GMAIL_CONNECTOR_ID
 import com.tappet.app.connector.GmailAuth
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -16,6 +21,7 @@ import java.io.BufferedOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URLDecoder
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -28,8 +34,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 3. 两者的信任边界不同：设备桥交出的是「能操作这台手机」，连接器桥交出的是
  *    「一个短命的、只读邮箱的令牌」。混在一个端点里，将来收紧其中一个就得同时动另一个。
  *
- * 桥只做一件事：把 Kotlin 侧换好的 access token 交给插件。
- * **Graph 的 REST 语义（`$select` / `$search` / 分页）全在插件里**，不在这里 ——
+ * 桥只做两件事：把 Kotlin 侧换好的 access token 交给插件；把插件取到的附件字节写进
+ * 公共「下载/Tappet」（分区存储下 Node 进程写不了公共目录，MediaStore 只有宿主侧能用）。
+ * **Gmail 的 REST 语义（路径、`q`、分页）全在插件里**，不在这里 ——
  * 否则一处 API 会被劈成「宿主知道路径、插件知道描述」两半（见 `docs/email-connector.md` §5.1）。
  */
 object ConnectorBridgeServer {
@@ -37,6 +44,16 @@ object ConnectorBridgeServer {
 
   /** 鉴权头名。与设备桥的 `x-android-bridge-token` 分开：两个桥的令牌互不通用。 */
   private const val TOKEN_HEADER = "x-connector-bridge-token"
+
+  /** 保存附件走二进制 body：附件最大 20MB，再套一层 JSON/base64 会多一倍内存。 */
+  private const val ACTION_HEADER = "x-connector-action"
+  private const val SAVE_ATTACHMENT_ACTION = "save_attachment"
+  private const val FILE_NAME_HEADER = "x-file-name"
+  private const val FILE_MIME_HEADER = "x-file-mime"
+
+  /** Gmail 的附件硬上限是 25MB；这里留余量，避免把整机内存打满。 */
+  private const val MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+  private const val DOWNLOAD_SUBDIR = "Tappet"
 
   private val started = AtomicBoolean(false)
   private val token = UUID.randomUUID().toString()
@@ -100,13 +117,35 @@ object ConnectorBridgeServer {
     }
     val headers = readHeaders(input)
     if (headers[TOKEN_HEADER] != token) return errorJson("UNAUTHORIZED", "未授权")
-    val body = readJsonBody(input, headers["content-length"]?.toIntOrNull() ?: 0)
-    val action = body?.string("action")
-    if (action == null) return errorJson("BAD_REQUEST", "非法 JSON 或缺 action")
+    return handleAction(headers, input, headers["content-length"]?.toIntOrNull() ?: 0)
+  }
+
+  /** 按动作头分派：附件是二进制 body，其余动作是 JSON。 */
+  private fun handleAction(headers: Map<String, String>, input: BufferedInputStream, contentLength: Int): String {
+    handleSaveAttachment(headers, input, contentLength)?.let { return it }
+    val body =
+      runCatching {
+        Json.parseToJsonElement(String(readBodyBytes(input, contentLength), Charsets.UTF_8)).jsonObject
+      }.getOrNull()
+    val action = body?.string("action") ?: return errorJson("BAD_REQUEST", "非法 JSON 或缺 action")
     return when (action) {
       "access_token" -> accessToken(body.string("connector"))
       else -> errorJson("UNKNOWN_ACTION", "未知 action：$action")
     }
+  }
+
+  /** 附件保存分支；不是这个动作时返回 null。**读 body 前先挡住超长请求**，别先分配再拒绝。 */
+  private fun handleSaveAttachment(
+    headers: Map<String, String>,
+    input: BufferedInputStream,
+    contentLength: Int,
+  ): String? {
+    if (headers[ACTION_HEADER] != SAVE_ATTACHMENT_ACTION) return null
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      return errorJson("UNSUPPORTED_OS", "保存到公共下载目录需要 Android 10+")
+    }
+    if (contentLength > MAX_ATTACHMENT_BYTES) return errorJson("TOO_LARGE", "附件超过 20 MB 上限")
+    return saveAttachment(headers, readBodyBytes(input, contentLength))
   }
 
   /**
@@ -129,8 +168,8 @@ object ConnectorBridgeServer {
     return headers
   }
 
-  /** 按 Content-Length 读满请求体并解析成 JSON。读不满 / 不是 JSON 都回 null。 */
-  private fun readJsonBody(input: BufferedInputStream, contentLength: Int): JsonObject? {
+  /** 按 Content-Length 读满请求体；读不满时返回实际读到的字节。 */
+  private fun readBodyBytes(input: BufferedInputStream, contentLength: Int): ByteArray {
     val length = contentLength.coerceAtLeast(0)
     val body = ByteArray(length)
     var read = 0
@@ -139,7 +178,62 @@ object ConnectorBridgeServer {
       if (count < 0) break
       read += count
     }
-    return runCatching { Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject }.getOrNull()
+    return if (read == length) body else body.copyOf(read)
+  }
+
+  /**
+   * 把附件写入公共「下载/Tappet」。
+   *
+   * 为什么走 MediaStore 而不是直接写 `/sdcard/Download`：Android 10+ 的分区存储不允许
+   * 直接路径写公共目录；MediaStore 不需要任何新权限，文件也能被系统「文件」App 看到。
+   * **App 不保留副本**：写完即返回，插件那边也没有落盘路径。
+   */
+  @RequiresApi(Build.VERSION_CODES.Q)
+  private fun saveAttachment(headers: Map<String, String>, bytes: ByteArray): String {
+    if (bytes.isEmpty()) return errorJson("BAD_REQUEST", "附件内容为空")
+    if (bytes.size > MAX_ATTACHMENT_BYTES) return errorJson("TOO_LARGE", "附件超过 20 MB 上限")
+    val context = appContext ?: return errorJson("BRIDGE_FAILED", "连接器桥尚未初始化")
+    val filename =
+      runCatching { URLDecoder.decode(headers[FILE_NAME_HEADER].orEmpty(), "UTF-8") }.getOrNull()
+    val mime = runCatching { URLDecoder.decode(headers[FILE_MIME_HEADER].orEmpty(), "UTF-8") }.getOrNull()
+    val safeName = AttachmentFileName.sanitize(filename)
+    val safeMime =
+      mime?.takeIf { it.isNotBlank() && '\n' !in it && '\r' !in it } ?: "application/octet-stream"
+    val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOAD_SUBDIR"
+    val resolver = context.contentResolver
+    val values =
+      ContentValues().apply {
+        put(MediaStore.Downloads.DISPLAY_NAME, safeName)
+        put(MediaStore.Downloads.MIME_TYPE, safeMime)
+        put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+        put(MediaStore.Downloads.IS_PENDING, 1)
+      }
+    val uri =
+      runCatching { resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) }.getOrNull()
+        ?: return errorJson("WRITE_FAILED", "无法在下载目录创建文件")
+    val written =
+      runCatching {
+        resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("no output stream")
+        resolver.update(
+          uri,
+          ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
+          null,
+          null,
+        )
+      }
+    if (written.isFailure) {
+      runCatching { resolver.delete(uri, null, null) }
+      Log.w(TAG, "save_attachment failed: ${written.exceptionOrNull()?.javaClass?.simpleName}")
+      return errorJson("WRITE_FAILED", "写入下载目录失败")
+    }
+    // 文件名属于用户内容：只记大小与 MIME，不记文件名。
+    Log.i(TAG, "save_attachment bytes=${bytes.size} mime=$safeMime")
+    return buildJsonObject {
+      put("ok", true)
+      put("path", "$relativePath/$safeName")
+      put("bytes", bytes.size)
+    }
+      .toString()
   }
 
   /**

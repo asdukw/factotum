@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-gmail",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Gmail tools (list/search/read/thread/labels) plus approval-gated writes (modify/draft/send) for the Tappet phone runtime",
+  "description": "Gmail tools (list/search/read/thread/labels) plus approval-gated writes (modify/draft/send) and attachment download for the Tappet phone runtime",
   "type": "module",
   "main": "index.mjs",
   "exports": {

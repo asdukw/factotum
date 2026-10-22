@@ -69,6 +69,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -508,8 +509,6 @@ private fun ChatBody(
   val sessionTitle =
     state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
 
-  val lastMessage = state.messages.lastOrNull()
-
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
   val dictation by VoiceInput.state.collectAsStateWithLifecycle()
@@ -520,18 +519,8 @@ private fun ChatBody(
   DictationErrorLinger(dictation)
   AutoReadOnFinish(messages = state.messages, sessionId = state.sessionId)
 
-  // 新消息 / 流式增量都跟着滚到底部
-  LaunchedEffect(
-    state.messages.size,
-    lastMessage?.content?.length,
-    lastMessage?.reasoning?.length,
-    lastMessage?.error,
-    lastMessage?.toolCalls?.size,
-  ) {
-    if (state.messages.isNotEmpty()) {
-      listState.scrollToItem(state.messages.lastIndex)
-    }
-  }
+  // 跟随流式输出的底部。规则见 FollowOutput：用户一上手就交出滚动权，回到列表底部再交回来。
+  FollowOutput(listState = listState, sessionId = state.sessionId, messageCount = state.messages.size)
 
   Column(modifier.fillMaxSize().safeDrawingPadding()) {
     val modelSubtitle =
@@ -579,6 +568,73 @@ private fun ChatBody(
       onMicClick = onMicClick,
     )
   }
+}
+
+/**
+ * 流式输出的自动跟随。
+ *
+ * 旧实现每来一个 token 就 `scrollToItem(lastIndex)`，在长代码块上必现两个问题：
+ * 1. 它把**最后一条的顶部**对到视口顶部 —— 一条比屏幕高的代码块会一直停在开头，
+ *    新内容全在屏幕下面，看起来就是「焦点不跟着走」；
+ * 2. 它不看用户意图，也不看手势 —— 用户往上拖的同时下一个 token 又把人拽回去，
+ *    所以流式期间「完全划不动」。
+ *
+ * 现在的规则（与 RikkaHub / Chatbox 的做法一致）：
+ * - `following` 是**用户意图**，不是几何：只在用户自己滚动结束时按落点重新判定；
+ *   内容长高本身不改变它（否则第一次长高就会把自己关掉）。
+ * - 用户滚动 / fling 期间绝不请求滚动（`isScrollInProgress`）。
+ * - 跟随时滚到**列表末尾**（下标越过末项，由布局钳住），不是最后一条的顶部。
+ * - 新消息 / 换会话是明确意图，直接回到跟随。
+ *
+ * 用 `requestScrollToItem` 而不是 `scrollToItem`：前者不挂起、不参与手势仲裁，
+ * 只请求下一次布局落位；后者在流式期间每 token 调一次，会和用户的拖动抢滚动。
+ */
+@Composable
+private fun FollowOutput(
+  listState: LazyListState,
+  sessionId: String?,
+  messageCount: Int,
+) {
+  var following by remember { mutableStateOf(true) }
+  var userScrolling by remember { mutableStateOf(false) }
+
+  // 只在用户滚动「开始 → 结束」时采样位置。内容长高也会改 layoutInfo，但那时不该重判意图。
+  LaunchedEffect(listState) {
+    snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+      if (scrolling) {
+        userScrolling = true
+      } else if (userScrolling) {
+        userScrolling = false
+        following = listState.isAtBottom()
+      }
+    }
+  }
+
+  // 换会话 / 新增消息：回到跟随。发送是明确意图，不该被之前「在读历史」的状态挡住。
+  LaunchedEffect(sessionId, messageCount) {
+    if (messageCount == 0) return@LaunchedEffect
+    following = true
+    listState.requestScrollToItem(messageCount + 1)
+  }
+
+  // 内容长高：仍在跟随、且用户没在拖动时，追到列表末尾。
+  LaunchedEffect(listState) {
+    snapshotFlow { listState.layoutInfo }.collect {
+      if (!following || listState.isScrollInProgress) return@collect
+      if (listState.isAtBottom()) return@collect
+      // 下标越过末项，布局会钳到列表底部；不用 Int.MAX_VALUE 偏移，避免尺寸运算溢出。
+      listState.requestScrollToItem(listState.layoutInfo.totalItemsCount)
+    }
+  }
+}
+
+/** 最后一条是否已经完整落在视口内（留一点容差给 contentPadding 与小数像素）。 */
+private fun LazyListState.isAtBottom(tolerancePx: Int = 8): Boolean {
+  val info = layoutInfo
+  if (info.totalItemsCount == 0) return true
+  val last = info.visibleItemsInfo.lastOrNull() ?: return true
+  return last.index >= info.totalItemsCount - 1 &&
+    last.offset + last.size <= info.viewportEndOffset + tolerancePx
 }
 
 @Composable

@@ -57,7 +57,9 @@ function foreground(pkg) {
 
 function broadcast(pkg, args) {
   // 带空格的参数必须把整条远程命令再包一层引号，否则会被设备 shell 拆词。
-  const remote = `am broadcast -n ${pkg}/.node.NodeDebugReceiver -a ${pkg}.debug.NODE ${args}`
+  // 显式组件 + **完整类名**：debug 包可能带 applicationIdSuffix（并行 worktree 共存），
+  // 这时 `.node.NodeDebugReceiver` 这种相对写法会解析到后缀包里不存在的类。
+  const remote = `am broadcast -n ${pkg}/com.tappet.app.node.NodeDebugReceiver -a com.tappet.app.debug.NODE ${args}`
   return adbText(['shell', remote]).trim()
 }
 

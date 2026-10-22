@@ -27,6 +27,29 @@ fun agentValue(
 
 fun buildConfigString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
 
+/**
+ * 并行 worktree 的 debug 包用不同 applicationId，避免两个会话的 `adb install` 互相覆盖。
+ *
+ * 在 `android/local.properties` 里写（该文件在 .gitignore 内，每台机器/每个 worktree 各自一份）：
+ *
+ * ```
+ * tappet.debugSuffix=.foamy
+ * ```
+ *
+ * 产物变成 `com.tappet.app.foamy`，与正式包并存；数据、密钥、无障碍授权都是另一份。
+ * 留空 = 与发布包相同的身份（默认，CI 与普通开发不受影响）。
+ */
+val debugSuffix =
+  localProperties
+    .getProperty("tappet.debugSuffix")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.also {
+      require(Regex("^\\.[a-z][a-z0-9_]*$").matches(it)) {
+        "tappet.debugSuffix 必须形如 .foamy（小写字母开头，只含小写字母/数字/下划线）"
+      }
+    }
+
 // 模拟器调试：-Ptappet.abis=x86_64；默认只打真机在用的 arm64-v8a（控制 APK 体积）
 val tappetAbis =
   (project.findProperty("tappet.abis") as String?)
@@ -112,6 +135,8 @@ android {
   }
   buildTypes {
     debug {
+      // 并行 worktree：独立的 applicationId，装在同一台设备上互不覆盖（见文件顶部的 debugSuffix）。
+      if (debugSuffix != null) applicationIdSuffix = debugSuffix
       // 本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
       // 于是 debug ↔ release 可以互相覆盖安装（Android 要求更新包签名与已装版本一致）。
       //

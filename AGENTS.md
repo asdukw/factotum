@@ -268,10 +268,17 @@ same device. For the same reason the in-app updater is disabled in debug builds;
 `adb install -r`.
 
 **Parallel worktrees share `applicationId`.** Another session's install can replace your build
-(same version code), and ColorOS does not always kill the running process on update. After
-installing, verify the device really runs your code — pull the installed `base.apk` and grep a
-marker, or check a log format you just changed — and `am force-stop` before testing. Otherwise a
-whole trace can silently come from someone else's build.
+(same version code), and ColorOS does not always kill the running process on update. Two ways out:
+give each worktree its own debug identity, or never install from two sessions at once. To coexist,
+put `tappet.debugSuffix=.foamy` in `android/local.properties` (gitignored) — the debug APK becomes
+`com.tappet.app.foamy` with its own data, key and accessibility grant; `run-suite` reads the same
+file. Debug broadcasts then need the **full class name**
+(`<pkg>/com.tappet.app.node.NodeDebugReceiver`) and accessibility must be enabled for
+`<pkg>/com.tappet.app.accessibility.TappetAccessibilityService` — the relative `.node.X` form
+expands against the suffixed package and points at a class that does not exist. After installing,
+verify the device really runs your code — pull the installed `base.apk` and grep a marker, or check
+a log format you just changed — and `am force-stop` before testing. Otherwise a whole trace can
+silently come from someone else's build.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug
@@ -309,6 +316,9 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a 
 Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, `TERMUX`, voice `ASR`/`VAD`) are in
 `docs/android-accessibility.md` §10, `docs/termux.md`, and `docs/voice.md` §9. Quote the whole
 `am broadcast` with `adb shell "..."` when arguments contain spaces.
+
+With `tappet.debugSuffix` set, replace both the package and the component shorthand:
+`-n com.tappet.app.foamy/com.tappet.app.node.NodeDebugReceiver` (classes never take the suffix).
 
 ### 8.3 Task audit
 

@@ -77,9 +77,10 @@ node tools/audit/collect.mjs --session <目录名> --label baseline
 ## 三个刻意的设计
 
 **1. 包名不硬编码。** 唯一的来源是 `android/app/build.gradle.kts` 的 `applicationId`，
-每次现读。上一轮改名时有一批手工脚本因为硬编码旧包名一起失效 —— 而且是**静默**失效：
-路径不存在，报出来像"没有 session 目录"，看着像设备问题。这类脚本一律现读。
-需要覆盖时用环境变量 `TAPPET_PACKAGE`。
+每次现读；debug 包若在 `android/local.properties` 里配了 `tappet.debugSuffix`（并行 worktree
+共存用），后缀一起拼上 —— 否则审计会去找一个没装的身份。上一轮改名时有一批手工脚本因为
+硬编码旧包名一起失效 —— 而且是**静默**失效：路径不存在，报出来像"没有 session 目录"，
+看着像设备问题。这类脚本一律现读。需要覆盖时用环境变量 `TAPPET_PACKAGE`。
 
 **2. 会话容器目录也不硬编码。** dsh 的 `sessions/--data-user-0-<包名>-files-dsh-home--`
 是派生的，改名就变。这里直接列目录找。

@@ -56,6 +56,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,6 +70,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -508,8 +510,6 @@ private fun ChatBody(
   val sessionTitle =
     state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
 
-  val lastMessage = state.messages.lastOrNull()
-
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
   val dictation by VoiceInput.state.collectAsStateWithLifecycle()
@@ -520,18 +520,16 @@ private fun ChatBody(
   DictationErrorLinger(dictation)
   AutoReadOnFinish(messages = state.messages, sessionId = state.sessionId)
 
-  // 新消息 / 流式增量都跟着滚到底部
-  LaunchedEffect(
-    state.messages.size,
-    lastMessage?.content?.length,
-    lastMessage?.reasoning?.length,
-    lastMessage?.error,
-    lastMessage?.toolCalls?.size,
-  ) {
-    if (state.messages.isNotEmpty()) {
-      listState.scrollToItem(state.messages.lastIndex)
-    }
-  }
+  // 跟随流式输出的底部。规则见 FollowOutput：用户一上手就交出滚动权，回到列表底部再交回来。
+  var following by remember { mutableStateOf(true) }
+  val lastUserMessageId = state.messages.lastOrNull { it.role == ChatRole.User }?.id
+  FollowOutput(
+    listState = listState,
+    sessionId = state.sessionId,
+    lastUserMessageId = lastUserMessageId,
+    following = following,
+    onFollowingChange = { following = it },
+  )
 
   Column(modifier.fillMaxSize().safeDrawingPadding()) {
     val modelSubtitle =
@@ -551,17 +549,33 @@ private fun ChatBody(
     voiceError?.let { reason -> BannerText("朗读失败：$reason") }
     (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
 
-    LazyColumn(
-      state = listState,
-      modifier = Modifier.weight(1f).fillMaxWidth(),
-      contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
-      verticalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
-      if (state.messages.isEmpty()) {
-        item { EmptyHint() }
+    Box(Modifier.weight(1f).fillMaxWidth()) {
+      LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+      ) {
+        if (state.messages.isEmpty()) {
+          item { EmptyHint() }
+        }
+        items(items = state.messages, key = { it.id }) { message ->
+          MessageBubble(message, speakingId = voiceState?.messageId)
+        }
       }
-      items(items = state.messages, key = { it.id }) { message ->
-        MessageBubble(message, speakingId = voiceState?.messageId)
+
+      // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
+      if (!following) {
+        SmallFloatingActionButton(
+          onClick = {
+            following = true
+            listState.requestScrollToBottom()
+          },
+          modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp),
+          containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+          ChevronDownGlyph(tint = MaterialTheme.colorScheme.onSurface)
+        }
       }
     }
 
@@ -579,6 +593,106 @@ private fun ChatBody(
       onMicClick = onMicClick,
     )
   }
+}
+
+/**
+ * 流式输出的自动跟随。
+ *
+ * 旧实现每来一个 token 就 `scrollToItem(lastIndex)`，在长代码块上必现两个问题：
+ * 1. 它把**最后一条的顶部**对到视口顶部 —— 一条比屏幕高的代码块会一直停在开头，
+ *    新内容全在屏幕下面，看起来就是「焦点不跟着走」；
+ * 2. 它不看用户意图，也不看手势 —— 用户往上拖的同时下一个 token 又把人拽回去，
+ *    所以流式期间「完全划不动」。
+ *
+ * 现在的规则（与 RikkaHub / Chatbox 的做法一致）：
+ * - `following` 是**用户意图**，不是几何：只在用户自己滚动结束时按落点重新判定；
+ *   内容长高本身不改变它（否则第一次长高就会把自己关掉）。
+ * - 用户滚动 / fling 期间绝不请求滚动（`isScrollInProgress`）。
+ * - 跟随时把**最后一条的底部**贴到视口底部。`requestScrollToItem(lastIndex)` 只把它的
+ *   顶部对到视口顶部，长消息会停在开头 —— 这正是上一版没修干净的地方。
+ * - 用户拖回底部会恢复跟随；新用户消息 / 换会话直接跳到底部。
+ *
+ * 用 `requestScrollToItem` 而不是 `scrollToItem`：前者不挂起、不参与手势仲裁。
+ */
+@Composable
+private fun FollowOutput(
+  listState: LazyListState,
+  sessionId: String?,
+  lastUserMessageId: String?,
+  following: Boolean,
+  onFollowingChange: (Boolean) -> Unit,
+) {
+  val currentFollowing by rememberUpdatedState(following)
+  val currentOnFollowingChange by rememberUpdatedState(onFollowingChange)
+  var userScrolling by remember { mutableStateOf(false) }
+
+  // 只在用户滚动「开始 → 结束」时采样位置。内容长高也会改 layoutInfo，但那时不该重判意图。
+  LaunchedEffect(listState) {
+    snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+      if (scrolling) {
+        userScrolling = true
+      } else if (userScrolling) {
+        userScrolling = false
+        currentOnFollowingChange(listState.isAtBottom())
+      }
+    }
+  }
+
+  // 换会话 / 新的用户消息：明确意图，直接回到底部。助手消息 / 工具卡新增时不抢滚动，
+  // 用户可能正在读历史。
+  LaunchedEffect(sessionId) {
+    currentOnFollowingChange(true)
+    listState.requestScrollToBottom()
+  }
+  LaunchedEffect(lastUserMessageId) {
+    if (lastUserMessageId != null) {
+      currentOnFollowingChange(true)
+      listState.requestScrollToBottom()
+    }
+  }
+
+  // 内容长高：仍在跟随、且用户没在拖动时，把最后一条的底部贴到视口底部。
+  LaunchedEffect(listState) {
+    snapshotFlow { listState.layoutInfo }.collect {
+      if (listState.isScrollInProgress) {
+        // 用户自己拖回底部时立刻恢复跟随；真正滚动等手势结束后的下一次长高。
+        if (userScrolling && listState.isAtBottom()) currentOnFollowingChange(true)
+        return@collect
+      }
+      if (!currentFollowing || listState.isAtBottom()) return@collect
+      listState.requestScrollToBottom()
+    }
+  }
+}
+
+/**
+ * 把最后一条的**底部**贴到视口底部。
+ *
+ * `requestScrollToItem(lastIndex)` 对齐的是 item 的顶部 —— 一条比视口高的消息会停在开头。
+ * 这里按已测量的高度算偏移：`item.size - viewport + afterContentPadding`。
+ * 最后一条还没被测量到时先跳到它，下一帧测量完会再贴一次底部。
+ */
+private fun LazyListState.requestScrollToBottom() {
+  val info = layoutInfo
+  if (info.totalItemsCount == 0) return
+  val lastIndex = info.totalItemsCount - 1
+  val last = info.visibleItemsInfo.lastOrNull()?.takeIf { it.index == lastIndex }
+  if (last == null) {
+    requestScrollToItem(lastIndex)
+    return
+  }
+  val viewport = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(0)
+  val offset = (last.size - viewport + info.afterContentPadding).coerceAtLeast(0)
+  requestScrollToItem(lastIndex, offset)
+}
+
+/** 最后一条是否已经完整落在视口内（含底部 contentPadding；留一点容差给小数像素）。 */
+private fun LazyListState.isAtBottom(tolerancePx: Int = 8): Boolean {
+  val info = layoutInfo
+  if (info.totalItemsCount == 0) return true
+  val last = info.visibleItemsInfo.lastOrNull() ?: return true
+  return last.index >= info.totalItemsCount - 1 &&
+    last.offset + last.size + info.afterContentPadding <= info.viewportEndOffset + tolerancePx
 }
 
 @Composable

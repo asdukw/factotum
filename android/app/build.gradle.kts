@@ -79,7 +79,7 @@ val releaseStoreFile = releaseSigning["storeFile"]?.let { File(it) }?.takeIf { i
 
 android {
   namespace = "com.tappet.app"
-  compileSdk = 36
+  compileSdk = 37
   ndkVersion = "29.0.14206865"
   defaultConfig {
     // applicationId 是**设备上的应用身份**（uid）。改它 = 设备上变成另一个 App，

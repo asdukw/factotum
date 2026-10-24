@@ -22,8 +22,8 @@
 | 系统 | **Android 17.0**（`PLZ110_17.0.0.107(CN01B110P02)`），**API 37** | `getprop` |
 | 存储 | 512 GB，已用 227 GB | `df` |
 
-> **注意 API 37**：仓库 `compileSdk`/`targetSdk` 还是 36，设备已经超了一级。
-> 这与 `AGENTS.md` 里那条「某依赖 requires compileSdk 37」是同一个方向的债。
+> **注意 API 37**：仓库 `compileSdk` 已是 37，`targetSdk` 还是 36 —— 设备上跑的是
+> API 36 的兼容行为，Android 17 的行为变更要等 targetSdk 升上来才生效。
 
 ## 2. 内存底线（真机实测，`dumpsys meminfo`）
 

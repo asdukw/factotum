@@ -1,5 +1,5 @@
 [versions]
-androidGradlePlugin = "9.0.1"
+androidGradlePlugin = "9.4.1"
 androidxCore = "1.18.0"
 androidxLifecycle = "2.10.0"
 androidxActivity = "1.13.0"
@@ -16,7 +16,7 @@ nav3Core = "1.0.1"
 lifecycleViewmodelNav3 = "2.10.0"
 okhttp = "4.12.0"
 # Markdown 渲染（Compose）：GFM + 表格 + 代码高亮，解析异步在库内完成
-markdownRenderer = "0.41.0"
+markdownRenderer = "0.46.0"
 sqlcipher = "4.19.1"
 # 只为了 tar.bz2：Android 的 java.util.zip 不认 bzip2，而 sherpa-onnx 的模型
 # 只有 .tar.bz2 一种分发格式（纯 Java，Apache-2.0，连带 commons-io/codec/lang3）。

@@ -52,8 +52,15 @@ sealed interface DshEvent {
     override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
   }
 
-  /** turn 结束；[error] 非空表示这一轮以错误结束。 */
-  data class TurnEnded(override val sessionId: String, val error: String?) : DshEvent {
+  /**
+   * turn 结束；[error] 非空表示这一轮以错误结束（provider 原文），[code] 是它的失败代码
+   * （如 `QUOTA`）。模型侧失败走这里，不会以异常的形式从 RPC 回来。
+   */
+  data class TurnEnded(
+    override val sessionId: String,
+    val error: String?,
+    val code: String? = null,
+  ) : DshEvent {
     override fun withSessionId(sessionId: String) = copy(sessionId = sessionId)
   }
 
@@ -96,6 +103,18 @@ object DshProtocol {
       "session.stream" -> parseStreamFrame(sessionId, params["chunk"]?.jsonObject ?: return null)
 
       else -> null
+    }
+  }
+
+  /**
+   * 把 turn/end 的失败翻成用户能看懂的一句话。未知代码原样带出 provider 的消息 ——
+   * 界面停在「正在启动 dsh 运行时…」比一句难看的报错坏得多。
+   */
+  fun turnErrorText(code: String?, message: String?): String {
+    val raw = message?.trim().takeUnless { it.isNullOrEmpty() } ?: "模型调用失败（未返回原因）"
+    return when (code?.uppercase()) {
+      "QUOTA" -> "模型额度已用尽：$raw"
+      else -> raw
     }
   }
 
@@ -158,8 +177,15 @@ object DshProtocol {
 
       "turn/end" -> {
         val reason = data?.get("reason")?.jsonObject
-        val error = if (reason?.get("kind")?.jsonPrimitive?.contentOrNull == "error") reason.toString() else null
-        DshEvent.TurnEnded(sessionId, error)
+        if (reason?.get("kind")?.jsonPrimitive?.contentOrNull != "error") {
+          DshEvent.TurnEnded(sessionId, null)
+        } else {
+          // reason.error = {message, code}；结构变了就退回整个 reason —— 宁可难看，不能吞掉。
+          val failure = (reason["error"] ?: reason["failure"]) as? JsonObject
+          val message = failure?.get("message")?.jsonPrimitive?.contentOrNull
+          val code = failure?.get("code")?.jsonPrimitive?.contentOrNull
+          DshEvent.TurnEnded(sessionId, message ?: reason.toString(), code)
+        }
       }
 
       else -> null

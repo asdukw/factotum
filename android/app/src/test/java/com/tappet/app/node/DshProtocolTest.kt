@@ -113,6 +113,29 @@ class DshProtocolTest {
   }
 
   @Test
+  fun `turn end error keeps provider message and code`() {
+    val event =
+      frame(
+        """
+        {"method":"session.event","params":{"sessionId":"s1","event":{
+          "type":"turn/end","data":{"turn":1,"reason":{"kind":"error",
+            "error":{"message":"429: Go usage limit exceeded","code":"QUOTA"}}}}}}
+        """,
+      )
+    assertEquals(DshEvent.TurnEnded("s1", "429: Go usage limit exceeded", "QUOTA"), event)
+  }
+
+  @Test
+  fun `turn end error text explains known codes and keeps unknown ones raw`() {
+    assertEquals(
+      "模型额度已用尽：429: Go usage limit exceeded",
+      DshProtocol.turnErrorText("QUOTA", "429: Go usage limit exceeded"),
+    )
+    assertEquals("boom", DshProtocol.turnErrorText("X", "boom"))
+    assertEquals("模型调用失败（未返回原因）", DshProtocol.turnErrorText(null, null))
+  }
+
+  @Test
   fun `session status maps running and idle`() {
     assertEquals(
       DshEvent.Status("s1", running = true),

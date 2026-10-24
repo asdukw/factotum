@@ -3,6 +3,7 @@ package com.tappet.app.agent
 import android.content.Context
 import android.util.Log
 import com.tappet.app.node.DshEvent
+import com.tappet.app.node.DshProtocol
 import com.tappet.app.node.NodeRuntime
 import com.tappet.app.node.NodeTaskService
 import com.tappet.app.progress.AgentProgressCenter
@@ -44,6 +45,7 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     try {
       NodeRuntime.initialize(app)
       var sawRunning = false
+      var turnFailure: DshEvent.TurnEnded? = null
       val toolNames = mutableMapOf<String, String>()
       // dsh 每个 step 各发一条完整助手消息；第二次起补空行，避免多步回答粘成一句。
       var emittedText = false
@@ -137,7 +139,12 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                 }
               }
 
-              is DshEvent.TurnEnded -> Unit
+              is DshEvent.TurnEnded -> {
+                if (event.error != null && turnFailure == null) turnFailure = event
+                // turn 已经结束：出错时 idle 未必会来，两条等待都放行。
+                if (!started.isCompleted) started.complete(Unit)
+                if (!finished.isCompleted) finished.complete(Unit)
+              }
             }
           }
         }
@@ -152,6 +159,11 @@ class DshStreamer(private val context: Context) : ChatStreamer {
         ?: throw AgentException("任务未能启动（会话可能卡在上一轮，请新建会话或清除会话数据）")
       finished.await()
       collector.cancel()
+      // 模型侧失败（额度用尽、鉴权失败…）走 turn/end 的 error，不抛就等于没发生：
+      // 界面会停在那句「正在启动 dsh 运行时…」，用户只看到「没有反应」。
+      turnFailure?.let { failure ->
+        throw AgentException(DshProtocol.turnErrorText(failure.code, failure.error))
+      }
       AgentProgressCenter.complete(sessionId)
       send(AgentStreamEvent.Completed)
     } catch (cancelled: CancellationException) {

@@ -198,6 +198,32 @@ class ChatViewModelTest {
   }
 
   @Test
+  fun `send_failureDropsStatusPlaceholder`() = runTest(dispatcher) {
+    val store = FakeSessionStore()
+    val viewModel =
+      ChatViewModel(
+        config = testConfig(),
+        streamer =
+          FakeStreamer(
+            events = listOf(AgentStreamEvent.Status("正在启动 dsh 运行时…")),
+            failure = IOException("模型额度已用尽：429"),
+          ),
+        store = store,
+      )
+    advanceUntilIdle()
+
+    viewModel.onInputChange("你好")
+    viewModel.send()
+    advanceUntilIdle()
+
+    val assistant = viewModel.state.value.messages.last()
+    // 占位文案不能当回答留下来：气泡里只留错误。
+    assertEquals("", assistant.content)
+    assertEquals("模型额度已用尽：429", assistant.error)
+    assertEquals(MessageStatus.Error, store.rows.last().status)
+  }
+
+  @Test
   fun send_blankInputDoesNothing() = runTest(dispatcher) {
     val store = FakeSessionStore()
     val viewModel = ChatViewModel(config = testConfig(), streamer = FakeStreamer(events = emptyList()), store = store)

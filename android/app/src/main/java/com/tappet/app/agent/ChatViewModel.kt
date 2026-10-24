@@ -283,6 +283,12 @@ class ChatViewModel(
                 else -> MessageStatus.Complete
               }
             val error = failure?.let { it.message ?: it.javaClass.simpleName }
+            // 只有状态占位（没等到任何正文）时，别把它当成回答留下来 —— 气泡里只留错误。
+            if (statusOnly && (failure != null || stopped)) {
+              content.clear()
+              // 空缓冲时下面的 appendText 会被跳过，占位文案就留在界面上 —— 这里显式覆盖成空。
+              appendText(draft.id, "", replace = true)
+            }
             // 收尾前把 UI 与本地缓冲对齐：增量是合并刷新的（≤50ms），最后几个字可能还没上屏
             if (content.isNotEmpty()) appendText(draft.id, content.toString(), replace = true)
             if (reasoning.isNotEmpty()) markReasoning(draft.id, reasoning.toString())

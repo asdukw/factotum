@@ -18,7 +18,7 @@
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
 | 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
-| `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
+| `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk N` | 该依赖要求的最低 compileSdk 高于本项目（`app/build.gradle.kts` 的 `compileSdk`）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移：先升 AGP 到支持 N 的版本（日志里的 `maximum recommended compile SDK version for Android Gradle plugin X` 就是当前上限），再改 compileSdk，并同步 CI 里 `sdkmanager "platforms;android-N…"`。Dependabot 单独升这类依赖的 PR 会在这一步红 |
 
 ## 运行时 / dsh
 

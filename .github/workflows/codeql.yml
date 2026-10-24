@@ -43,7 +43,7 @@ jobs:
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36"
+          sdkmanager "platforms;android-37.0"
       # 缓存依赖与 wrapper；编译本身仍要 --rerun-tasks，CodeQL 才能观察到。
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:

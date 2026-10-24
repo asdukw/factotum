@@ -21,7 +21,7 @@ calls. The only runtime is the Android app (Kotlin).
 ## 2. Setup and assembly
 
 Environment: **JDK 21** (`C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\`), Node 24 + npm on the
-PC, Android SDK (compileSdk 36), `ndk;29.0.14206865`, `cmake;3.31.6` (last three via `sdkmanager`).
+PC, Android SDK (compileSdk 37), `ndk;29.0.14206865`, `cmake;3.31.6` (last three via `sdkmanager`).
 
 ```powershell
 git submodule update --init --recursive   # device-tools plugin lives in its own repo

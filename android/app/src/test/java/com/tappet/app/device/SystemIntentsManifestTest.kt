@@ -30,4 +30,31 @@ class SystemIntentsManifestTest {
       text.contains("android:name=\"com.android.alarm.permission.SET_ALARM\""),
     )
   }
+
+  @Test
+  fun `manifest declares the calendar permissions silent event creation needs`() {
+    assumeTrue("仓库里没有 AndroidManifest.xml（不是完整检出），跳过", manifest.isFile)
+    val text = manifest.readText()
+
+    // 少了 WRITE：插入直接被拒；少了 READ：查不到可写日历的 id，同样写不进去。
+    // 两条都是运行时权限，声明只是必要条件 —— 授权入口在聊天页的 CalendarPermissionPrompt。
+    for (permission in listOf("READ_CALENDAR", "WRITE_CALENDAR")) {
+      assertTrue(
+        "清单里没有 android.permission.$permission —— 静默建日程会以 SecurityException 失败",
+        text.contains("android:name=\"android.permission.$permission\""),
+      )
+    }
+  }
+
+  @Test
+  fun `manifest registers the notice dismiss receiver`() {
+    assumeTrue("仓库里没有 AndroidManifest.xml（不是完整检出），跳过", manifest.isFile)
+    val text = manifest.readText()
+
+    // ongoing 通知划不掉，只能靠「关闭」动作 → 这个 receiver。不注册的话卡片永远撤不掉。
+    assertTrue(
+      "清单里没有 .device.NoticeDismissReceiver —— 流体云/通知的「关闭」按钮会静默失效",
+      text.contains("android:name=\".device.NoticeDismissReceiver\""),
+    )
+  }
 }

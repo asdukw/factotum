@@ -67,7 +67,7 @@ sealed interface DeviceAction {
 
   /**
    * 设置闹钟。**走系统 intent**（`AlarmClock.ACTION_SET_ALARM`）—— 不需要任何权限，
-   * 也**不需要无障碍**：确认留给时钟 App 自己（`EXTRA_SKIP_UI` 是 false）。
+   * 也**不需要无障碍**：静默设置（`EXTRA_SKIP_UI=true`），不弹确认界面。
    *
    * 为什么不用 AlarmManager 直接建：那只是「几小时后响一次」的定时器，不是用户在时钟 App 里
    * 看得见、能改、能关的闹钟。用户要的是后者。
@@ -75,11 +75,10 @@ sealed interface DeviceAction {
   data class SetAlarm(val hour: Int, val minute: Int, val label: String?) : DeviceAction
 
   /**
-   * 新建日程。**走系统 intent**（`CalendarContract` 的 insert）—— 同样不需要权限，
-   * 日历 App 会带着预填内容打开、由用户点保存。
+   * 新建日程。**直接写 `CalendarContract`**（`ContentResolver.insert`）—— 不开界面、不用点保存。
    *
-   * 直接写 `ContentResolver` 要 `WRITE_CALENDAR` 运行时权限，那会弹系统授权框；
-   * 一个「可选功能」不该为了建一条日程先要一个账号级权限。
+   * 代价是 `READ_CALENDAR` + `WRITE_CALENDAR` 两个运行时权限（READ 只为查可写日历的 id）。
+   * 授权入口在聊天里的提示条（`ChatScreen`），没有权限时动作回 [CODE_CALENDAR_PERMISSION]。
    */
   data class AddCalendarEvent(
     val title: String,
@@ -87,7 +86,42 @@ sealed interface DeviceAction {
     val endMillis: Long,
     val location: String?,
     val description: String?,
+    /** 提前多少分钟提醒；null = 不设提醒。 */
+    val reminderMinutes: Int? = null,
   ) : DeviceAction
+
+  companion object {
+    /** 没有日历权限：UI 据此弹授权提示，模型据此知道该让用户授权而不是重试。 */
+    const val CODE_CALENDAR_PERMISSION = "CALENDAR_PERMISSION_REQUIRED"
+
+    /** 设备上没有可写的日历（没有登录账号 / 全是只读日历）。 */
+    const val CODE_NO_WRITABLE_CALENDAR = "NO_WRITABLE_CALENDAR"
+
+    /** 日程 id 不存在（已被删 / 记错了）。让模型重新 list，不要按标题猜。 */
+    const val CODE_EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
+  }
+
+  /**
+   * 列出时间窗内的日程。**这是改 / 删日程的前置**：模型要拿到真实的 event id，
+   * 而不是靠标题猜、更不是跑到日历界面里翻。
+   */
+  data class ListCalendarEvents(val beginMillis: Long, val endMillis: Long) : DeviceAction
+
+  /**
+   * 修改日程。字段为 null 表示「不改这一项」—— 全量替换会把模型没提到的字段抹掉。
+   */
+  data class UpdateCalendarEvent(
+    val eventId: Long,
+    val title: String? = null,
+    val beginMillis: Long? = null,
+    val endMillis: Long? = null,
+    val location: String? = null,
+    val description: String? = null,
+    val reminderMinutes: Int? = null,
+  ) : DeviceAction
+
+  /** 删除日程。破坏性操作，必须经审批闸门。 */
+  data class DeleteCalendarEvent(val eventId: Long) : DeviceAction
 }
 
 enum class SwipeDirection {

@@ -1,6 +1,7 @@
 package com.tappet.app.ui.chat
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
@@ -53,5 +54,43 @@ class ToolLabelsTest {
   @Test
   fun `negative duration renders empty`() {
     assertEquals("", formatThinkingDuration(-1))
+  }
+
+  /**
+   * 模型能调的工具必须**全都有**显示名 —— 漏一个，界面上就冒出 `add_calendar_event` 这种
+   * 下划线英文（真机踩过）。这份名单跟 AGENTS.md §7.3 的工具有意重复：插件在本仓库之外，
+   * 加工具时这里不红就说明没人同步 UI。
+   */
+  @Test
+  fun `every model-visible tool has a chinese label`() {
+    val tools =
+      listOf(
+        "read_ui_tree",
+        "tap_node",
+        "long_press",
+        "capture_screenshot",
+        "tap_target",
+        "long_press_target",
+        "type_text",
+        "press",
+        "launch_app",
+        "swipe",
+        "set_alarm",
+        "add_calendar_event",
+        "list_calendar_events",
+        "update_calendar_event",
+        "delete_calendar_event",
+        "run_command",
+        "mail_list",
+        "mail_search",
+        "mail_read",
+        "mail_thread",
+        "mail_labels",
+        "mail_modify",
+        "mail_draft",
+        "mail_send",
+        "mail_save_attachment",
+      )
+    for (tool in tools) assertNotNull("$tool 没有中文显示名", toolLabelOrNull(tool))
   }
 }

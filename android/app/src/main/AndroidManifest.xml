@@ -24,6 +24,13 @@
          不弹框。厂商时钟（ColorOS 等）不校验它，所以真机上不声明也「碰巧」能用。 -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
+    <!-- 静默建日程（add_calendar_event → ContentResolver.insert）。
+         READ 只为查「哪个日历可写」，但一旦授予就等于能读用户**整本日历** —— 这是一次
+         隐私边界的移动（AGENTS.md §6.1），因此授权入口只在聊天里、由一次真实的日程动作
+         失败后触发，不在启动时索要。开着 App 不用日程的人，这两条权限永远是未授予。 -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
     <!-- 让启动器类 App 对 launch_app 可见（不针对任何具体 App） -->
     <queries>
         <intent>
@@ -107,6 +114,10 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <!-- 静默写操作的流体云/通知回执：ongoing 通知划不掉，用户点「关闭」时由它取消。 -->
+        <receiver
+            android:name=".device.NoticeDismissReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

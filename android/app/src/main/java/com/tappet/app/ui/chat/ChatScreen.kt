@@ -110,6 +110,7 @@ import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
+import com.tappet.app.device.DeviceAction
 import com.tappet.app.ui.components.ProviderModelIcon
 import com.tappet.app.voice.RecognizedText
 import com.tappet.app.voice.VoiceInput
@@ -541,6 +542,7 @@ private fun ChatBody(
       onNewSession = onNewSession,
     )
     AccessibilityPrompt()
+    CalendarPermissionPrompt()
     if (!state.configured) {
       // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
       BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
@@ -767,6 +769,45 @@ private fun AccessibilityPrompt() {
         },
       ) {
         Text("去开启")
+      }
+    },
+    dismissButton = { TextButton(onClick = { BridgeHealth.dismiss() }) { Text("稍后") } },
+  )
+}
+
+/**
+ * 「新建日程缺日历权限」：和 [AccessibilityPrompt] 同一套机制 —— **只在一次真实动作因此失败后**
+ * 出现，不在启动时索要。授权完让 agent 再试一次即可（工具结果里已经这么说）。
+ *
+ * 文案必须承认代价：READ_CALENDAR 名义上是「找可写日历」，实际等于能读用户全部日程。
+ */
+@Composable
+private fun CalendarPermissionPrompt() {
+  val lastBridgeError by BridgeHealth.lastErrorCode.collectAsStateWithLifecycle()
+  val launcher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+      BridgeHealth.dismiss()
+    }
+  if (lastBridgeError != DeviceAction.CODE_CALENDAR_PERMISSION) return
+  AlertDialog(
+    onDismissRequest = { BridgeHealth.dismiss() },
+    title = { Text("「新建日程」需要日历权限") },
+    text = {
+      Text(
+        "Tappet 会直接写进系统日历，不再让你在日历 App 里点保存；代价是需要日历的读写权限。\n\n" +
+          "读权限只用来找「哪个日历能写」，但它同时意味着能读到你全部日程。" +
+          "不想给的话点「稍后」，之后不会再问。",
+      )
+    },
+    confirmButton = {
+      TextButton(
+        onClick = {
+          launcher.launch(
+            arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
+          )
+        },
+      ) {
+        Text("去授权")
       }
     },
     dismissButton = { TextButton(onClick = { BridgeHealth.dismiss() }) { Text("稍后") } },

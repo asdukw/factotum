@@ -204,17 +204,31 @@ One atomic action touches four places: `device/DeviceAction.kt` (definition),
 and `tools/dsh-phone/plugins/android-tools/index.mjs` (`ctx.tools` + model-facing description).
 Then `bundle-dsh.ps1` and reinstall.
 
-Model-visible tools (10): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
+Model-visible tools (15): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
 `capture_screenshot()`, `tap_target(screenshot_id,x1,y1,x2,y2)`, `long_press_target(...)`,
-`type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`. With Linux
+`type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`,
+`set_alarm(hour,minute,label?)`, `add_calendar_event(...)`, `list_calendar_events(begin,end)`,
+`update_calendar_event(event_id,...)`, `delete_calendar_event(event_id)`. With Linux
 configured add `run_command`; with a mail connector add nine mail tools (five read-only:
 `mail_list`, `mail_search`, `mail_read`, `mail_thread`, `mail_labels`; four approval-gated
 writes: `mail_modify`, `mail_draft`, `mail_send`, `mail_save_attachment`).
+
+- **Calendar and alarms never go through the UI.** `ContentResolver` + `AlarmClock` intents
+  (`device/SystemIntents.kt`), silent: no editor, no system confirmation. Editing an event by
+  tapping the Calendar app cost 27 UI actions for one change — `list_calendar_events` first, then
+  update/delete by `event_id`. All four writes are approval-gated (`tools/pre-execute` → `ask`)
+  and post a notification receipt (`DeviceNotices`, promoted/流体云 where the ROM allows it).
+  Needs `READ_CALENDAR`/`WRITE_CALENDAR`, granted from the chat prompt only after a real failure.
 
 - **Coordinate contract:** the model uses only the **image pixels of the latest
   `capture_screenshot`** (1080×2344 → 943×2047), never screen pixels.
   `device/ScreenFrame.kt#toScreen` is the single conversion point. Screenshots are stateful
   (`STALE_SCREENSHOT`); out-of-bounds boxes are rejected (`OUT_OF_SCREENSHOT`), never clamped.
+- **Two kinds of failure, never conflated.** An action name the bridge does not know is a
+  contract error (plugin and app versions mismatch): the message must say **retrying will not
+  help**. Missing required parameters are the model's own to fix: say **retry once they are
+  supplied**. Sharing one "unknown or incomplete action" line made the model hit the same dead
+  error six times in a row; `DeviceBridgeActionContractTest` pins the split.
 - **Text input:** UI tree first; if unreadable, use the accessibility text-injection channel
   (`flagInputMethodEditor`, API 33+, no IME switch). `text_no_channel` = tap the field first;
   `text_flag_missing` = re-enable accessibility after the upgrade.

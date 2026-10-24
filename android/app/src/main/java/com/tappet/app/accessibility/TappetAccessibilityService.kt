@@ -160,9 +160,14 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
 
   private suspend fun dispatch(action: DeviceAction): DeviceActionResult =
     when (action) {
-      // 这两个动作**不经过无障碍**（桥直接交给系统 App，见 SystemIntents）。
+      // 这些动作**不经过无障碍**（桥直接交给 SystemIntents）。
       // 正常路径走不到这里；留一条明确的失败，比让 when 编译不过或静默落到别处好。
-      is DeviceAction.SetAlarm, is DeviceAction.AddCalendarEvent ->
+      is DeviceAction.SetAlarm,
+      is DeviceAction.AddCalendarEvent,
+      is DeviceAction.ListCalendarEvents,
+      is DeviceAction.UpdateCalendarEvent,
+      is DeviceAction.DeleteCalendarEvent,
+      ->
         DeviceActionResult(ok = false, summary = "这个动作由桥直接处理，不经过无障碍", code = "NOT_HANDLED_HERE")
 
       is DeviceAction.ReadScreen -> executeReadScreen(action.full)

@@ -120,7 +120,7 @@ object DeviceBridgeServer {
       runCatching { Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject }.getOrNull()
         ?: return errorJson("非法 JSON")
     val action = root.string("action") ?: return errorJson("缺少 action")
-    val deviceAction = toDeviceAction(action, root) ?: return errorJson("未知或参数不全的 action：$action")
+    val deviceAction = toDeviceAction(action, root) ?: return errorJson(actionParseError(action))
     val context = appContext ?: return errorJson("设备桥尚未初始化")
     // 闹钟与日程**不经过无障碍**（见 SystemIntents）：先把它们分出去，
     // 否则无障碍没开时这两个动作会被误判成失败。
@@ -129,6 +129,12 @@ object DeviceBridgeServer {
         is DeviceAction.SetAlarm -> SystemIntents.setAlarm(context, deviceAction)
 
         is DeviceAction.AddCalendarEvent -> SystemIntents.addCalendarEvent(context, deviceAction)
+
+        is DeviceAction.ListCalendarEvents -> SystemIntents.listCalendarEvents(context, deviceAction)
+
+        is DeviceAction.UpdateCalendarEvent -> SystemIntents.updateCalendarEvent(context, deviceAction)
+
+        is DeviceAction.DeleteCalendarEvent -> SystemIntents.deleteCalendarEvent(context, deviceAction)
 
         else -> {
           val service = TappetAccessibilityService.get()
@@ -144,6 +150,50 @@ object DeviceBridgeServer {
     Log.i(TAG, "$action ok=${result.ok} code=${result.code ?: "-"} ${result.summary}")
     return resultJson(result)
   }
+
+  /** 桥认识的 action 名。必须与 [toDeviceAction] 的 `when` 分支同增同删（有测试盯着）。 */
+  internal val KNOWN_ACTIONS: Set<String> =
+    setOf(
+      "read_ui_tree",
+      "tap_node",
+      "tap_point",
+      "long_press",
+      "type_text",
+      "press",
+      "press_back",
+      "launch_app",
+      "screenshot",
+      "capture_screenshot",
+      "tap_target",
+      "long_press_target",
+      "swipe",
+      "set_alarm",
+      "add_calendar_event",
+      "list_calendar_events",
+      "update_calendar_event",
+      "delete_calendar_event",
+    )
+
+  /**
+   * 动作解析失败时回给模型的话。
+   *
+   * 两种失败要分开说：**名字不认识**是契约错误——本机装的是别的版本的插件，重试多少次都是同一个
+   * 结果（实测模型会连着撞 6 次「未知或参数不全」才放弃）；**参数不全**是模型自己能补的，
+   * 必须明说可以重试，否则它会连能修的错误一起放掉。
+   */
+  internal fun actionParseError(action: String): String =
+    if (action in KNOWN_ACTIONS) {
+      "参数不全：action「$action」缺少必填参数，补齐后可以重试。"
+    } else {
+      "工具契约错误（重试无效）：本 App 不认识 action「$action」——插件与本机 App 版本不匹配，" +
+        "这个工具在当前安装里用不了。不要重试，也不要换参数再试；改用其它工具，或者直接把情况告诉用户。"
+    }
+
+  /**
+   * 请求体 → 动作。[toDeviceAction] 保持 private：它的复杂度已经进了 detekt 基线，
+   * 改可见性会让基线条目失配（见 config/detekt/baseline.xml 的规矩）。测试从这里进。
+   */
+  internal fun parseAction(action: String, root: JsonObject): DeviceAction? = toDeviceAction(action, root)
 
   private fun toDeviceAction(action: String, root: JsonObject): DeviceAction? =
     when (action) {
@@ -209,8 +259,29 @@ object DeviceBridgeServer {
 
       "add_calendar_event" -> calendarEvent(root)
 
+      "list_calendar_events" ->
+        root.long("begin")?.let { begin ->
+          root.long("end")?.let { end -> DeviceAction.ListCalendarEvents(begin, end) }
+        }
+
+      "update_calendar_event" -> root.long("event_id")?.let { updateCalendarEvent(it, root) }
+
+      "delete_calendar_event" -> root.long("event_id")?.let(DeviceAction::DeleteCalendarEvent)
+
       else -> null
     }
+
+  /** 修改日程：除 event_id 外全是可空字段，null = 这一项不改。 */
+  private fun updateCalendarEvent(eventId: Long, root: JsonObject): DeviceAction.UpdateCalendarEvent =
+    DeviceAction.UpdateCalendarEvent(
+      eventId = eventId,
+      title = root.string("title"),
+      beginMillis = root.long("begin"),
+      endMillis = root.long("end"),
+      location = root.string("location"),
+      description = root.string("description"),
+      reminderMinutes = root.int("reminder_minutes")?.takeIf { it >= 0 },
+    )
 
   /** 日程参数单独一个函数：四个可空字段凑一个对象，写成嵌套 `let` 会撞 detekt 的嵌套深度。 */
   private fun calendarEvent(root: JsonObject): DeviceAction.AddCalendarEvent? {
@@ -218,7 +289,14 @@ object DeviceBridgeServer {
     val begin = root.long("begin")
     val end = root.long("end")
     return if (title != null && begin != null && end != null) {
-      DeviceAction.AddCalendarEvent(title, begin, end, root.string("location"), root.string("description"))
+      DeviceAction.AddCalendarEvent(
+        title,
+        begin,
+        end,
+        root.string("location"),
+        root.string("description"),
+        root.int("reminder_minutes")?.takeIf { it >= 0 },
+      )
     } else {
       null
     }

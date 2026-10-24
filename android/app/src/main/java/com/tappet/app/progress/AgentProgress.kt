@@ -1,5 +1,6 @@
 package com.tappet.app.progress
 
+import com.tappet.app.ui.chat.toolLabelOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -141,41 +142,16 @@ object AgentProgressCenter {
 internal fun describeToolCall(name: String, arguments: String): Pair<String, String?> =
   toolCallLabel(name) to toolCallDetail(name, parseArguments(arguments))
 
-/** 动作名。认不出的工具如实显示原始名，不猜。 */
-private fun toolCallLabel(name: String): String =
-  when (name) {
-    "read_ui_tree" -> "读取当前屏幕"
-    "tap_node" -> "点击控件"
-    "tap_point" -> "按坐标点击"
-    "capture_screenshot" -> "截取画面"
-    "tap_target" -> "按图点击"
-    "long_press_target" -> "按图长按"
-    "long_press" -> "长按屏幕"
-    "type_text" -> "输入文字"
-    "press" -> "按下系统键"
-    "launch_app" -> "启动应用"
-    "swipe" -> "滑动屏幕"
-    else -> "调用 $name"
-  }
+/** 动作名。与聊天页共用 [toolLabelOrNull] —— 两份 `when` 漏同步时会漏出原始工具名。 */
+private fun toolCallLabel(name: String): String = toolLabelOrNull(name) ?: "调用 $name"
 
 /** 补充说明（节点号 / 坐标 / 时长…）。没什么可说的就回 null。 */
 private fun toolCallDetail(name: String, args: JsonObject?): String? =
   when (name) {
     "tap_node" -> args?.int("ref")?.let { "节点 #$it" }
 
-    "tap_point" -> args?.point()
-
-    "tap_target" -> args?.imageBox()
-
-    "long_press", "long_press_target" ->
-      listOfNotNull(
-        args?.int("ref")?.let { "节点 #$it" },
-        args?.imageBox(),
-        args?.point(),
-        args?.int("duration_ms")?.let { "${it}ms" },
-      )
-        .takeIf { it.isNotEmpty() }
-        ?.joinToString(" · ")
+    // 三种手势的参数形状是同一套（ref / 图像外框 / 屏幕坐标 / 时长），合到一处判。
+    "tap_point", "tap_target", "long_press", "long_press_target" -> gestureDetail(name, args)
 
     "type_text" -> args?.string("text")?.let { "${it.length} 个字符" }
 
@@ -185,22 +161,81 @@ private fun toolCallDetail(name: String, args: JsonObject?): String? =
 
     "swipe" -> args?.string("direction")?.let(::swipeLabel)
 
+    // 静默写入类单独一个函数：塞在这里会把圈复杂度顶出阈值（detekt 实测 20 > 15）。
+    "add_calendar_event", "set_alarm", "run_command" -> writeToolDetail(name, args)
+
     else -> null
   }
 
+/** 点击 / 长按的补充说明：有哪几项就说哪几项，缺项不猜（不显示半截坐标）。 */
+private fun gestureDetail(name: String, args: JsonObject?): String? =
+  when (name) {
+    "tap_point" -> args?.point()
+
+    "tap_target" -> args?.imageBox()
+
+    else ->
+      listOfNotNull(
+        args?.int("ref")?.let { "节点 #$it" },
+        args?.imageBox(),
+        args?.point(),
+        args?.int("duration_ms")?.let { "${it}ms" },
+      )
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
+  }
+
+/** 静默写入（日程 / 闹钟）与命令行的补充说明。只显示参数里的内容，不碰屏幕数据。 */
+private fun writeToolDetail(name: String, args: JsonObject?): String? =
+  when (name) {
+    "add_calendar_event" ->
+      listOfNotNull(
+        args?.string("title")?.let { summarizeText(it, 18) },
+        args?.string("begin"),
+      )
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
+
+    "set_alarm" ->
+      listOfNotNull(args?.int("hour"), args?.int("minute"))
+        .takeIf { it.size == 2 }
+        ?.let { "%02d:%02d".format(it[0], it[1]) }
+
+    "run_command" -> args?.string("cmd")?.let { summarizeText(it, 40) }
+
+    // 改 / 删要显示 event id：用户核对「改的是哪一条」时唯一能对上的就是它。
+    "update_calendar_event", "delete_calendar_event" ->
+      args?.long("event_id")?.let { "日程 #$it" }
+
+    "list_calendar_events" -> args?.string("begin")?.let { summarizeText(it, 20) }
+
+    else -> null
+  }
+
+private val RESULT_TITLES =
+  mapOf(
+    "read_ui_tree" to "屏幕读取完成",
+    "tap_node" to "点击已完成",
+    "tap_point" to "点击已完成",
+    "tap_target" to "点击已完成",
+    "long_press" to "长按已完成",
+    "long_press_target" to "长按已完成",
+    "capture_screenshot" to "画面已截取",
+    "type_text" to "文字已输入",
+    "press" to "按键已完成",
+    "launch_app" to "应用已启动",
+    "swipe" to "滑动已完成",
+    "set_alarm" to "闹钟已设置",
+    "add_calendar_event" to "日程已创建",
+    "update_calendar_event" to "日程已修改",
+    "delete_calendar_event" to "日程已删除",
+    "list_calendar_events" to "日程已读取",
+    "run_command" to "命令已执行",
+  )
+
 internal fun toolResultTitle(name: String?, ok: Boolean): String {
   if (!ok) return "操作失败"
-  return when (name) {
-    "read_ui_tree" -> "屏幕读取完成"
-    "tap_node", "tap_point", "tap_target" -> "点击已完成"
-    "long_press", "long_press_target" -> "长按已完成"
-    "capture_screenshot" -> "画面已截取"
-    "type_text" -> "文字已输入"
-    "press" -> "按键已完成"
-    "launch_app" -> "应用已启动"
-    "swipe" -> "滑动已完成"
-    else -> "操作已完成"
-  }
+  return RESULT_TITLES[name] ?: "操作已完成"
 }
 
 internal fun summarizeToolResult(name: String?, text: String?): String? {
@@ -247,6 +282,9 @@ private fun JsonObject.string(key: String): String? =
 
 private fun JsonObject.int(key: String): Int? =
   this[key]?.let { runCatching { it.jsonPrimitive.contentOrNull?.toIntOrNull() }.getOrNull() }
+
+private fun JsonObject.long(key: String): Long? =
+  this[key]?.let { runCatching { it.jsonPrimitive.contentOrNull?.toLongOrNull() }.getOrNull() }
 
 private fun JsonObject.point(): String? {
   val x = int("x") ?: return null

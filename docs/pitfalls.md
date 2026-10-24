@@ -8,6 +8,7 @@
 | 现象 | 原因 / 处理 |
 |---|---|
 | 全新安装 Gradle 挂 5 分钟后失败 | ColorOS 拦 `adb install` 通道 → 手动 `adb install -r` |
+| `adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` | 新包与设备上那份签名不同：本机有 release keystore 时 debug 包默认用它签，而设备上那份是默认 debug 密钥签的（从没有 `local.properties` 的 worktree 打的就是这把）→ `android/local.properties` 写 `tappet.debugSigning=debug` 重打。**别卸载了事**：SQLCipher 库与密钥随卸载永久丢失。查两边指纹：`apksigner verify --print-certs <apk>` 对 `dumpsys package <pkg>` |
 | `nativeOpen` UnsatisfiedLinkError | 忘加载 SQLCipher → `TappetDatabaseProvider` 显式 `loadLibrary` |
 | `dlopen failed: libc++_shared.so not found` | 重跑 `tools/fetch-libnode.ps1`；确认文件**确实落在** `jniLibs/<abi>/`（脚本有自检，别只看它打印成功） |
 | APK 里有 libnode.so 但没有 libc++_shared.so | AGP 不会自动打包 STL，jniLibs 是唯一来源 → 同上；`assemble.yml` 会拦住 |

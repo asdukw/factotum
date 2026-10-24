@@ -44,7 +44,7 @@ VoiceSettings    偏好：自动朗读 / 语速（**非密**）
 | `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `lastError` / `maxChunk` |
 | `voice/FishTtsEngine.kt` | Fish Audio 合成 + 播放；请求体与错误文案是纯函数（JVM 单测钉住） |
 | `voice/VoiceSecretStore.kt` | Fish API key：SecretVault + `revision`（换 key 后重建引擎） |
-| `voice/FishVoices.kt` | 预置音色（`reference_id`）目录：默认、流萤（试听选定）、菲比（`like_count` 最高）；空 id = Fish 默认音色 |
+| `voice/FishVoices.kt` | 预置音色（`reference_id`）目录：默认、流萤（试听选定）、菲比 / 胡桃（`task_count` 与 `like_count` 最高）；空 id = Fish 默认音色 |
 | `voice/VoiceReader.kt` | 单例状态机：切段、串行播放、音频焦点、错误 |
 | `voice/VoiceSettings.kt` | 偏好：引擎 id（仅回落用）/ 自动朗读 / 语速 |
 | `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」：key、自动朗读、语速、音色、试听 |

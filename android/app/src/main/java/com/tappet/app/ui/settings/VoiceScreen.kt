@@ -1,6 +1,8 @@
 package com.tappet.app.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,52 +12,42 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.tappet.app.voice.TtsVoice
-import com.tappet.app.voice.VoiceEngines
-import com.tappet.app.voice.VoiceModel
-import com.tappet.app.voice.VoiceModelDownloader
-import com.tappet.app.voice.VoiceModelInstaller
+import com.tappet.app.voice.FISH_MODEL
 
 /**
- * 语音设置页：朗读用哪个引擎、要不要自动读、读多快、用哪个音色，以及朗读模型的下载管理。
+ * 语音设置页：Fish Audio 的 API key、自动朗读、语速、试听。
  *
- * **语音输入不在这页**：识别模型只有 paraformer 一条、随安装自动下载，没有可选项 ——
- * 一个只有一种取法的设置项只是噪音。
- *
- * 两个引擎是**两种取舍**，不是新旧关系：系统 TTS 装完就能用、离线、不要流量，但音色随 ROM；
- * 本地引擎音色可选可换，代价是下一个十几 MB 的模型。所以这一页不做「推荐哪个」，
- * 只把两者的状态与代价写清楚。
- *
- * 本地朗读当前没有可下载模型（`TtsModelCatalog.ALL` 为空），所以页面上只剩系统 TTS；
- * 模型目录恢复后，本地引擎那一行与模型列表会自动回来。
- *
- * 模型的**授权写在下载按钮旁边**：这些权重训练自不同来源的数据集，授权各不相同
- * （有的数据集只授权非商用）。用户点之前就该知道自己在下什么，而不是等装完了去翻仓库。
+ * 朗读全部走 Fish Audio 的云端免费模型（`s2.1-pro-free`）：本机不再合成任何语音。
+ * 代价是**助手正文会离开设备**，所以这一页把这句话写在设置项旁边，而不是藏在文档里。
+ * 语音输入不受影响 —— 识别仍然完全在本机（paraformer），这一页也就没有识别相关设置。
  */
 @Composable
 fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -66,38 +58,30 @@ fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
   VoiceScreen(
     state = state,
     onBack = onBack,
-    onSelectEngine = viewModel::selectEngine,
+    onKeyInput = viewModel::onKeyInput,
+    onToggleReveal = viewModel::toggleReveal,
+    onSaveKey = viewModel::saveKey,
+    onClearKey = viewModel::clearKey,
     onAutoReadChange = viewModel::setAutoRead,
     onRateChange = viewModel::setRate,
-    onSelectVoice = viewModel::selectVoice,
     onPreview = viewModel::preview,
-    onSelectModel = viewModel::selectModel,
-    onInstallModel = viewModel::installModel,
-    onCancelInstall = viewModel::cancelInstall,
-    onDeleteModel = viewModel::deleteModel,
     modifier = modifier,
   )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun VoiceScreen(
   state: VoiceViewModel.UiState,
   onBack: () -> Unit,
-  onSelectEngine: (String) -> Unit,
+  onKeyInput: (String) -> Unit,
+  onToggleReveal: () -> Unit,
+  onSaveKey: () -> Unit,
+  onClearKey: () -> Unit,
   onAutoReadChange: (Boolean) -> Unit,
   onRateChange: (Float) -> Unit,
-  onSelectVoice: (String?) -> Unit,
   onPreview: () -> Unit,
-  onSelectModel: (VoiceModel) -> Unit,
-  onInstallModel: (VoiceModel) -> Unit,
-  onCancelInstall: () -> Unit,
-  onDeleteModel: (VoiceModel) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  var voiceSheetOpen by remember { mutableStateOf(false) }
-  val sheetState = rememberModalBottomSheetState()
-
   Column(modifier.fillMaxSize().safeDrawingPadding()) {
     SettingsHeader(title = "语音", onBack = onBack)
     Column(
@@ -107,24 +91,31 @@ internal fun VoiceScreen(
           .verticalScroll(rememberScrollState())
           .padding(horizontal = 16.dp),
     ) {
-      EngineSection(
-        state = state,
-        showLocal = state.models.isNotEmpty(),
-        onSelectEngine = onSelectEngine,
-      )
-      // 模型列表只在选了本地引擎时出现：没选它的时候，这一组只是噪音。
-      if (state.engineId == VoiceEngines.LOCAL) {
-        ModelSection(
-          title = "朗读模型",
-          models = state.models,
-          selectedId = state.selectedModelId,
-          installing = state.installing,
-          onSelectModel = onSelectModel,
-          onInstallModel = onInstallModel,
-          onCancelInstall = onCancelInstall,
-          onDeleteModel = onDeleteModel,
+      SectionLabel("Fish Audio")
+      SettingsGroup {
+        SettingsRow(
+          glyph = GlyphKind.Key,
+          title = "API Key",
+          subtitle = if (state.hasKey) "已配置（Keystore 封装）" else "未配置：朗读不可用",
+        ) {
+          if (state.hasKey) {
+            TextButton(onClick = onClearKey) { Text("清除") }
+          }
+        }
+        SettingsDivider()
+        KeyField(
+          state = state,
+          onKeyInput = onKeyInput,
+          onToggleReveal = onToggleReveal,
+          onSaveKey = onSaveKey,
         )
       }
+
+      Spacer(Modifier.height(12.dp))
+      InfoBanner(
+        "朗读会把助手回复的正文发给 Fish Audio（$FISH_MODEL，官方免费档）合成语音，" +
+          "这是唯一把正文送出设备的朗读路径。语音输入仍然完全在本机识别。",
+      )
 
       SectionLabel("朗读")
       SettingsGroup {
@@ -138,254 +129,70 @@ internal fun VoiceScreen(
         SettingsDivider()
         RateRow(rate = state.rate, label = state.rateLabel, onRateChange = onRateChange)
         SettingsDivider()
-        VoiceRow(state = state, onOpenVoices = { voiceSheetOpen = true })
-        SettingsDivider()
         SettingsRow(
           glyph = GlyphKind.Mic,
           title = "试听",
-          subtitle = "读一句中文，听当前的引擎 / 语速 / 音色",
+          subtitle = "读一句中文，听当前的语速与音色",
         ) {
           Button(onClick = onPreview, enabled = state.unavailableReason == null) { Text("播放") }
         }
       }
 
-      state.unavailableReason?.let { reason ->
+      state.saveError?.let { message ->
         Spacer(Modifier.height(12.dp))
-        InfoBanner("当前引擎不可用：$reason")
+        InfoBanner(message)
       }
 
       Spacer(Modifier.height(24.dp))
     }
   }
-
-  if (voiceSheetOpen) {
-    ModalBottomSheet(onDismissRequest = { voiceSheetOpen = false }, sheetState = sheetState) {
-      VoiceList(voices = state.voices, selected = state.selectedVoice, onSelect = {
-        onSelectVoice(it)
-        voiceSheetOpen = false
-      })
-    }
-  }
 }
 
-/**
- * 引擎选项。两者是取舍关系，不标「推荐」；不可用的那个把原因写在副标题里。
- *
- * 本地模型目录为空时（当前状态）不显示本地那一行：给一个点进去没有任何模型的入口，
- * 比不显示更让人困惑。目录恢复后这一行会自动回来。
- */
 @Composable
-private fun EngineSection(
+private fun KeyField(
   state: VoiceViewModel.UiState,
-  showLocal: Boolean,
-  onSelectEngine: (String) -> Unit,
+  onKeyInput: (String) -> Unit,
+  onToggleReveal: () -> Unit,
+  onSaveKey: () -> Unit,
 ) {
-  SectionLabel("朗读引擎")
-  SettingsGroup {
-    EngineRow(
-      title = "系统 TTS",
-      subtitle = "用手机自带的语音引擎：离线、不用下模型、音色随 ROM",
-      selected = state.engineId == VoiceEngines.SYSTEM,
-      unavailableReason = state.engineReasons[VoiceEngines.SYSTEM],
-      onClick = { onSelectEngine(VoiceEngines.SYSTEM) },
+  Column(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    OutlinedTextField(
+      value = state.keyInput,
+      onValueChange = onKeyInput,
+      label = { Text(if (state.hasKey) "API Key（已保存，留空不修改）" else "API Key") },
+      singleLine = true,
+      shape = RoundedCornerShape(12.dp),
+      // Password 类型让输入法不要学习 / 联想 / 首字母大写这一段；只遮住显示是不够的。
+      keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+      keyboardActions = KeyboardActions(onDone = { onSaveKey() }),
+      visualTransformation =
+        if (state.revealKey) VisualTransformation.None else PasswordVisualTransformation(),
+      trailingIcon = {
+        Box(
+          modifier =
+            Modifier
+              .size(44.dp)
+              .clip(CircleShape)
+              .clickable(onClick = onToggleReveal)
+              .semantics { contentDescription = if (state.revealKey) "隐藏 API Key" else "显示 API Key" },
+          contentAlignment = Alignment.Center,
+        ) {
+          Glyph(
+            kind = if (state.revealKey) GlyphKind.EyeOff else GlyphKind.Eye,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      },
+      modifier = Modifier.fillMaxWidth(),
     )
-    if (showLocal) {
-      SettingsDivider()
-      EngineRow(
-        title = "本地引擎",
-        subtitle = "模型在手机上推理：音色可选可换，要先下一个十几 MB 的模型",
-        selected = state.engineId == VoiceEngines.LOCAL,
-        unavailableReason = state.engineReasons[VoiceEngines.LOCAL],
-        onClick = { onSelectEngine(VoiceEngines.LOCAL) },
-      )
-    }
-  }
-}
-
-/** 本地模型：下载 / 选中 / 删除。下载中的那一条把进度画在原地。 */
-@Composable
-private fun ModelSection(
-  title: String,
-  models: List<VoiceViewModel.ModelUi>,
-  selectedId: String?,
-  installing: VoiceModelInstaller.State?,
-  onSelectModel: (VoiceModel) -> Unit,
-  onInstallModel: (VoiceModel) -> Unit,
-  onCancelInstall: () -> Unit,
-  onDeleteModel: (VoiceModel) -> Unit,
-) {
-  SectionLabel(title)
-  SettingsGroup {
-    models.forEachIndexed { index, model ->
-      if (index > 0) SettingsDivider()
-      ModelRow(
-        model = model,
-        selected = model.model.id == selectedId,
-        // 同一时刻只装一个（VoiceModelInstaller），进度条只会出现在那一条上。
-        installing = installing?.takeIf { it.modelId == model.model.id },
-        onSelect = { onSelectModel(model.model) },
-        onInstall = { onInstallModel(model.model) },
-        onCancel = onCancelInstall,
-        onDelete = { onDeleteModel(model.model) },
-      )
-    }
-  }
-}
-
-@Composable
-private fun ModelRow(
-  model: VoiceViewModel.ModelUi,
-  selected: Boolean,
-  installing: VoiceModelInstaller.State?,
-  onSelect: () -> Unit,
-  onInstall: () -> Unit,
-  onCancel: () -> Unit,
-  onDelete: () -> Unit,
-) {
-  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      Column(Modifier.weight(1f)) {
-        Text(
-          text = model.model.label,
-          style = MaterialTheme.typography.bodyLarge,
-          color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-          text = modelSubtitle(model),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-          text = "授权：${model.model.license} —— ${model.model.licenseNote}",
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    if (state.keyInput.isNotBlank()) {
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Button(onClick = onSaveKey) { Text("保存密钥") }
       }
-      Spacer(Modifier.width(12.dp))
-      ModelAction(
-        model = model,
-        installing = installing,
-        selected = selected,
-        onInstall = onInstall,
-        onCancel = onCancel,
-        onDelete = onDelete,
-        onSelect = onSelect,
-      )
-    }
-    // 失败时不画进度条：那一条已经结束了，留着一条走到一半的进度条会让人以为还在下。
-    if (installing != null && installing.error == null) {
-      Spacer(Modifier.height(8.dp))
-      ModelProgress(installing)
-    }
-    installing?.error?.let { reason ->
-      Spacer(Modifier.height(6.dp))
-      Text(text = "下载失败：$reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-    }
-  }
-}
-
-@Composable
-private fun ModelAction(
-  model: VoiceViewModel.ModelUi,
-  installing: VoiceModelInstaller.State?,
-  selected: Boolean,
-  onInstall: () -> Unit,
-  onCancel: () -> Unit,
-  onDelete: () -> Unit,
-  onSelect: () -> Unit,
-) {
-  when {
-    // 失败：同一个位置直接变成「重试」。用户刚看完「连不上 github.com」，下一步动作就是
-    // 开 VPN 再点一次 —— 不该先让他点「取消」把错误清掉（以前这里就停在一个写着「取消」的
-    // 按钮上，语义和下一步动作正好相反）。
-    installing?.error != null -> Button(onClick = onInstall) { Text("重试") }
-
-    installing != null -> TextButton(onClick = onCancel) { Text("取消") }
-
-    // 本体没装：下载。
-    !model.installed ->
-      Button(onClick = onInstall) { Text("下载 ${formatMegabytes(model.missingBytes)}") }
-
-    selected -> TextButton(onClick = onDelete) { Text("删除") }
-
-    else -> Button(onClick = onSelect) { Text("使用") }
-  }
-}
-
-@Composable
-private fun ModelProgress(installing: VoiceModelInstaller.State) {
-  val progress = installing.progress
-  when (progress) {
-    is VoiceModelDownloader.Progress.Downloading ->
-      if (progress.known) {
-        LinearProgressIndicator(
-          progress = { progress.percent / 100f },
-          modifier = Modifier.fillMaxWidth(),
-        )
-      } else {
-        // 服务器没给 Content-Length：显示不确定进度条，不编一个假百分比。
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-      }
-
-    VoiceModelDownloader.Progress.Extracting -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-
-    null -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-  }
-}
-
-private fun modelSubtitle(model: VoiceViewModel.ModelUi): String {
-  val size =
-    when {
-      model.installed -> "已下载 ${formatMegabytes(model.installedBytes)}"
-      model.partialBytes > 0 -> "已下载 ${formatMegabytes(model.partialBytes)}，会接着下"
-      else -> "需要下载 ${formatMegabytes(model.missingBytes)}"
-    }
-  return "${model.model.summary} · $size"
-}
-
-private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1024.0 / 1024.0)
-
-/** 音色行。本地引擎的音色由模型决定，所以那一档不给点。 */
-@Composable
-private fun VoiceRow(state: VoiceViewModel.UiState, onOpenVoices: () -> Unit) {
-  SettingsRow(
-    glyph = GlyphKind.Sliders,
-    title = "音色",
-    subtitle = voiceSubtitle(state),
-    enabled = state.engineId == VoiceEngines.SYSTEM && state.voices.isNotEmpty(),
-    onClick = onOpenVoices,
-  ) {
-    ChevronRight()
-  }
-}
-
-private fun voiceSubtitle(state: VoiceViewModel.UiState): String =
-  when {
-    state.engineId == VoiceEngines.LOCAL -> "由模型决定，本地引擎没有额外音色可选"
-    state.loadingVoices -> "正在读取系统里的音色…"
-    state.voices.isEmpty() -> "系统里没有可选的音色"
-    else -> state.voices.firstOrNull { it.id == state.selectedVoice }?.label ?: "跟随系统默认"
-  }
-
-/** 引擎选项：右边一个对勾，不可用时把原因写在副标题里（而不是禁用这一行 —— 用户得知道为什么）。 */
-@Composable
-private fun EngineRow(
-  title: String,
-  subtitle: String,
-  selected: Boolean,
-  unavailableReason: String?,
-  onClick: () -> Unit,
-) {
-  SettingsRow(
-    glyph = GlyphKind.Speaker,
-    title = title,
-    subtitle = unavailableReason?.let { "$subtitle\n不可用：$it" } ?: subtitle,
-    onClick = onClick,
-  ) {
-    if (selected) {
-      Glyph(GlyphKind.Check, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
     }
   }
 }
@@ -409,38 +216,5 @@ private fun RateRow(rate: Float, label: String, onRateChange: (Float) -> Unit) {
       steps = 14,
       modifier = Modifier.fillMaxWidth(),
     )
-  }
-}
-
-@Composable
-private fun VoiceList(voices: List<TtsVoice>, selected: String?, onSelect: (String?) -> Unit) {
-  Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-    Text(
-      text = "音色",
-      style = MaterialTheme.typography.titleMedium,
-      fontWeight = FontWeight.SemiBold,
-      modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-    )
-    VoiceListRow(label = "跟随系统默认", active = selected == null) { onSelect(null) }
-    voices.forEach { voice ->
-      VoiceListRow(label = voice.label, active = voice.id == selected) { onSelect(voice.id) }
-    }
-  }
-}
-
-@Composable
-private fun VoiceListRow(label: String, active: Boolean, onClick: () -> Unit) {
-  Row(
-    verticalAlignment = Alignment.CenterVertically,
-    modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
-  ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.bodyLarge,
-      color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-      modifier = Modifier.weight(1f),
-    )
-    Spacer(Modifier.width(12.dp))
-    if (active) Glyph(GlyphKind.Check, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
   }
 }

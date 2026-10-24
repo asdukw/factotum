@@ -1,62 +1,62 @@
 # 语音：朗读（TTS）与语音输入（STT）
 
-两个方向共用同一套**模型管线**（目录 / 下载 / 解 tar.bz2 / 安装）与同一个 native 库
-（sherpa-onnx），但引擎、状态机、取舍各一套。§0–§5 是朗读，§6 起是语音输入。
+两个方向现在**走两条完全不同的路**：朗读交给 Fish Audio 的云端免费模型合成，语音输入
+仍然完全在本机（sherpa-onnx + paraformer）。§0–§5 是朗读，§6 起是语音输入。
 
-## 0. 为什么是「系统 TTS 打底 + 本地引擎可选」
+## 0. 为什么朗读改用 Fish Audio（2026-10-24）
 
-朗读这件能力有两种取法，代价完全不同：
+旧方案是「系统 TTS 打底 + 本地 sherpa 引擎可选」，两条都不出网。现在的取舍反过来了：
 
-| | 系统 TTS（`android.speech.tts`） | 本地开源引擎（sherpa-onnx + 中文模型） |
+| | Fish Audio 云端（`s2.1-pro-free`） | 系统 TTS / 本地 sherpa |
 |---|---|---|
-| 装完能用 | 是 | 要先下几十 MB 的模型 |
-| 音色 | 随 ROM，ColorOS 上是可用的中文女声 | 好得多，且可选 |
-| 联网 | 不联网 | 不联网 |
-| 正文去哪 | 不出设备 | 不出设备 |
-| 维护成本 | 零依赖 | 一个 native 依赖 + 模型下载与管理 |
+| 音色 | 明显更好，且同一音色跨设备一致 | 随 ROM；本地候选模型实测都不达标 |
+| 成本 | 官方免费档 $0 / 百万字节 | 免费 |
+| 联网 | **要联网** | 不联网 |
+| 助手正文 | **离开设备**，发给 `api.fish.audio` | 不出设备 |
+| 维护 | 一个 HTTP 调用 | 24MB native 库 + 模型下载与管理 |
 
-两种取舍都成立，所以**做成用户的一个设置**而不是代码里的一个分支。默认系统 TTS：
-一个不联网、不要流量、不要额外空间的方案，对「把回答念出来」这件事已经够用。
+也就是说：**朗读是 Tappet 里一条会把聊天正文送出设备的路径**（另一条是视觉路径，
+那是截图）。这是用户明确选择的方向，边界与做法：
 
-**都不走云端 TTS**（提供商的 `/audio/speech`）：那会把回复正文发给另一个服务，
-而这个项目对正文的处理原则是「只进给模型的工具结果，不落日志、不落盘」
-（AGENTS.md「安全与隐私红线」）。多一条出网路径要有明确理由，音色好还不是。
+- 请求体只有 `text`（已经过 `SpeakableText` 摊平的正文）与合成参数，不带任何设备标识。
+- key 只存 `SecretVault`（Keystore 封装，见 `voice/VoiceSecretStore.kt`）：不进 BuildConfig、
+  不进日志、不进 `runtime-config.json`。
+- 合成结果只在播放期间存在于 `cacheDir`（临时文件，播完立即删），不落库。
+- **语音输入不受影响**：音频不出设备，也没有云端选项（§6）。
+- 设置页把这句话写在 key 输入框下面（`VoiceScreen`），不是只写在文档里。
+
+免费模型是 `s2.1-pro-free`；`s2.1-pro` / `s2-pro` / `s1` 都是付费模型。**model 走 HTTP
+header**，写进 JSON body 会被忽略并静默按付费模型计费 —— `FishTtsEngineTest` 钉住
+「body 里没有 model」。
 
 ## 1. 分层
 
 ```
-SpeakableText   纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测）
-TtsEngine       接口：initialize / speak / stop / voices
-SystemTtsEngine 设备自带引擎
-LocalTtsEngine  本地引擎（见 §4）
-VoiceReader     单例：唯一状态源、串行朗读、音频焦点
-VoiceSettings   偏好：引擎 / 自动朗读 / 语速 / 音色
+SpeakableText    纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测）
+TtsEngine        接口：initialize / speak / stop / lastError
+FishTtsEngine    POST /v1/tts → mp3 字节 → MediaPlayer（唯一实现）
+VoiceSecretStore Fish API key（SecretVault，Keystore 封装）
+VoiceReader      单例：唯一状态源、串行朗读、音频焦点
+VoiceSettings    偏好：自动朗读 / 语速（**非密**）
 ```
 
-切分**不在引擎里**（在 `SpeakableText.chunks`，由 `VoiceReader` 驱动）：两个引擎的差异面
-因此只剩 `maxChunk` 一个数字。
+切分**不在引擎里**（在 `SpeakableText.chunks`，由 `VoiceReader` 驱动）：引擎只负责
+「把这一段合成出来」。
 
 ### 文件地图
 
 | 位置 | 管什么 |
 |---|---|
 | `voice/SpeakableText.kt` | 纯 Kotlin：Markdown → 可朗读文本 + 按句切段（JVM 单测钉住） |
-| `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `voices` / `maxChunk` |
-| `voice/SystemTtsEngine.kt` | 设备自带引擎（默认） |
-| `voice/LocalTtsEngine.kt` | 本地引擎：sherpa-onnx 合成 + AudioTrack 流式播放 |
-| `voice/VoiceModel.kt` | 合成与识别共用的模型抽象：怎么下、怎么解、装到哪 |
-| `voice/VoiceModelStore\|Downloader\|Installer.kt` | 模型落盘 / 下载（复用更新那套续传）/ 单例安装状态 |
-| `voice/SherpaArchive.kt` | 解 sherpa 的 `.tar.bz2`（剥顶层目录 + 挡路径穿越） |
-| `voice/TtsModelCatalog.kt` / `AsrModelCatalog.kt` | 两侧的模型目录（地址 / 文件布局 / **授权**） |
-| `voice/LocalRecognizer.kt` | 本地识别引擎：`OfflineRecognizer` + 与合成同一道闸门 |
-| `voice/AudioCapture.kt` | 麦克风采集：16kHz 单声道 → `FloatArray` + RMS |
-| `voice/VadSegmenter.kt` | 端点判定：sherpa-onnx 自带的 silero VAD（`assets/silero_vad.onnx`，629KB） |
-| `voice/DictationEnd.kt` | 纯 Kotlin：会话的三个收尾条件（单测钉住） |
-| `voice/RecognizedText.kt` | 纯 Kotlin：识别结果清理 + 回填输入框（单测钉住） |
-| `voice/VoiceInput.kt` | 单例：语音输入的唯一状态源、按模型 id 缓存识别器 |
-| `voice/VoiceSettings.kt` | 偏好：朗读引擎 / 自动朗读 / 语速 / 音色（**非密**） |
-| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（`Tts` / `OfflineRecognizer` / `OfflineStream` / `Vad` / `FeatureConfig` / `WaveReader`）；与 `fetch-sherpa.ps1` 同 tag，别手改 |
-| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」（只有朗读；识别模型没有入口） |
+| `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `lastError` / `maxChunk` |
+| `voice/FishTtsEngine.kt` | Fish Audio 合成 + 播放；请求体与错误文案是纯函数（JVM 单测钉住） |
+| `voice/VoiceSecretStore.kt` | Fish API key：SecretVault + `revision`（换 key 后重建引擎） |
+| `voice/VoiceReader.kt` | 单例状态机：切段、串行播放、音频焦点、错误 |
+| `voice/VoiceSettings.kt` | 偏好：引擎 id（仅回落用）/ 自动朗读 / 语速 |
+| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」：key、自动朗读、语速、试听 |
+| `voice/VoiceModel*.kt` / `SherpaArchive.kt` / `AsrModelCatalog.kt` / `PunctModelCatalog.kt` | **只剩语音输入用**：识别模型与标点模型的下载 / 安装 |
+| `voice/LocalRecognizer.kt` / `LocalPunctuator.kt` / `VadSegmenter.kt` / `AudioCapture.kt` / `VoiceInput.kt` | 语音输入链路（§6 起） |
+| `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（识别 / VAD 仍在用）；与 `fetch-sherpa.ps1` 同 tag，别手改 |
 | `debug/.../VoiceDebugReceiver.kt` | **仅 debug**：把 WAV 喂给识别引擎 / 无 UI 装模型（`op ASR` / `INSTALL` / `MODELS`） |
 
 ## 2. 为什么不能把正文直接交给 TTS
@@ -74,185 +74,69 @@ VoiceSettings   偏好：引擎 / 自动朗读 / 语速 / 音色
 换行是**强制**断点：模型写的换行是有意义的（列表项、标题、表格行），合并成一段会让
 「买菜 取快递 记得带伞」连成一口气，列表就读没了。
 
-切段上限 320 字符（远低于 `getMaxSpeechInputLength()` 的 4000）：切得短才有得停 ——
-一段读完才检查一次取消，长段会让「停止」要等好几秒才生效。
+切段上限 320 字符：一段 = 一次 HTTP 请求 + 一次播放。切得短，第一声来得快，取消的粒度
+也细（一段读完才检查一次取消）；切得长只会让「停止」更迟钝。
 
-## 3. Android 11+ 的包可见性（**踩过，静默失败**）
+## 3. 云端合成的行为与失败
 
-`TextToSpeech` 靠一个隐式意图（`ACTION_TTS_SERVICE`）找引擎服务。Android 11 起包可见性
-默认过滤，**清单里不声明就看不见任何 TTS 引擎**：
+一次 `speak` = 一次 `POST /v1/tts`（同步，60s call timeout）+ 一次本地播放。失败一律
+落到 `TtsEngine.lastError`，`VoiceReader` 把它显示在聊天页的错误条上 —— 不静默：
 
-```
-I AppsFilter: interaction: PackageSetting{com.tappet.app} ->
-  PackageSetting{com.oplus.ttsaccessibilityengine} BLOCKED
-```
-
-现象是「点了朗读没反应」—— `OnInitListener` 直接回 ERROR，界面上只有一句几秒后自动消失的
-提示。修法是 `<queries>` 里加：
-
-```xml
-<intent>
-    <action android:name="android.intent.action.TTS_SERVICE" />
-</intent>
-```
-
-`SystemIntentsManifestTest` 钉住这一条（与 `SET_ALARM` 权限同一条规矩：两处必须一致、
-错了不报错的约束一律用单测钉住）。
-
-**另一件必须做的事**：`initialize()` 加 5 秒超时。设备上一个引擎都没有时
-（国产 ROM 常见：引擎装了但要用户先去系统设置里选一次）回调可能**永远不来**，
-不设超时就是静默卡死。
-
-## 4. 本地引擎（sherpa-onnx）
-
-模型跑在 Tappet 自己的进程里，不依赖 ROM 装了什么引擎。四处：
-
-| 位置 | 管什么 |
+| 情况 | 用户看到的 |
 |---|---|
-| `tools/fetch-sherpa.ps1` | 拉官方预编译的 `libsherpa-onnx-jni.so` → `jniLibs/<abi>/`（不入库） |
-| `com/k2fsa/sherpa/onnx/Tts.kt` | **vendor** 的 Kotlin/JNI 绑定，与 `fetch-sherpa.ps1` 的版本必须同 tag |
-| `voice/TtsModelCatalog.kt` | 可下载模型的目录（地址 / 文件布局 / **授权**） |
-| `voice/TtsModelDownloader.kt` + `SherpaArchive.kt` | 下载（复用更新那套续传）、解 tar.bz2、原子换目录 |
-| `voice/LocalTtsEngine.kt` | 合成 + 播放 |
+| 没配 key | 「还没有配置 Fish Audio API key（设置 → 语音 → Fish Audio）」 |
+| HTTP 401 | 「Fish Audio API key 无效或已过期」 |
+| HTTP 402 | 「Fish Audio 余额不足」 |
+| HTTP 429 | 「Fish Audio 限流（并发达上限），请稍后重试」 |
+| HTTP 503 | 「Fish Audio 服务暂时不可用」 |
+| 其它非 2xx | 「Fish Audio 返回 HTTP <code>：<服务端 message>」 |
+| 连不上 / 超时 | 「连不上 Fish Audio：<异常类名>」 |
 
-**为什么是 static-link 变体**：官方有两个 Android 包。默认的 `sherpa-onnx-<ver>-android.tar.bz2`
-是 `jni + c-api + cxx-api + libonnxruntime.so` 四个 .so（arm64 合计约 32MB）；`-static-link-onnxruntime`
-只有一个 `libsherpa-onnx-jni.so`（24MB，AGP strip 后 23MB），还省掉「四个 .so 必须配套」。
-它也不依赖 `libc++_shared.so`（动态段里查不到这个名字），所以与 libnode 那份 STL 无关。
+失败**不自动重试**：一句没合成出来就停，界面给原因（与下载失败同一条策略）。
+免费档按并发计费档位限流（Starter 5 并发），而我们的段是串行播放的，正常不会撞上。
 
-**vendor 的文件只删了一个函数**：官方 `Tts.kt` 末尾的 `getOfflineTtsConfig(...)` 便捷函数
-（20 个参数，给示例用的）删掉了，配置在 `LocalTtsEngine` 里自己拼。其余部分**不要手改**：
-JNI 按 Kotlin 对象的字段名取值，少一个字段不报编译错，会在 native 层崩。
+## 4. 本地引擎已删除（2026-10-24）
 
-**当前没有本地朗读模型（2026-10-21）**：`TtsModelCatalog.ALL` 为空，设置页只剩系统 TTS；
-`LocalTtsEngine` 与 `TtsModel` 的代码保留，往目录里加条目即可恢复。原先的四条游戏角色音
-（刻晴 / 优菈 / 德丽莎 / 理之律者，22.05kHz、各 120MB）真机听验后全部撤掉 —— 音色与发音
-质量都不达标；更早的两条 Piper int8（`chaowen` / `xiao_ya`）也不是更好的选择。
+删掉的东西：`SystemTtsEngine` / `LocalTtsEngine` / `TtsModelCatalog`、清单里的
+`TTS_SERVICE` 包可见性声明、本地模型的下载与设置 UI、`TtsCallbackSignatureTest`。
+老用户偏好里存的 `system` / `local` 由 `VoiceSettings.effectiveEngineId` 安静地落到
+`fish`（`VoiceEngineChoiceTest` 钉住）。
 
-重新挑模型时的候选实测（PC、sherpa-onnx 1.13.8、同一段中英混合文本；手机更慢）：
+**没删、也不能删**：sherpa 的 native 库与 vendored 绑定、silero VAD、paraformer 与标点
+模型 —— 语音输入还在用它们（§6 起）。`com/k2fsa/sherpa/onnx/Tts.kt` 作为 vendored 绑定
+的一部分保留，但 Kotlin 侧已无人调用。
 
-| 候选 | 采样率 | RTF | 结论 |
-|---|---|---|---|
-| Matcha zh-baker | 22.05k | 0.18 | 最快、自然；单女声；训练集非商用；另需 54MB 声码器 |
-| Matcha zh-en | 16k | 0.17 | 中英双语；单说话人 |
-| Piper huayan | 22.05k | 0.16 | 快；数据集授权不明 |
-| MeloTTS zh-en | 44.1k | 0.55 | MIT；不传 `dict_dir` 也能合成；手机上可能压不到实时 |
-| Kokoro v1.1 zh | 24k | 1.1–1.4 | 音色最多、Apache-2.0；**PC 上都跑不到实时** |
-| VITS zh-ll | 16k | 0.31 | 5 个音色，保底 |
-| VITS aishell3 | 8k | 0.16–0.18 | 导出即 8kHz，听感发闷 |
+**如果将来恢复本地合成**，别重踩这两个坑：
 
-**加模型之前先修播放管线**：现在回调里 `AudioTrack.write(WRITE_BLOCKING)` 只喂约 100ms
-的缓冲区，而 sherpa 每合成完一个标点级子句才回调一次 —— 子句之间必然停顿。RTF 再低也会
-听到；RTF > 1 的模型（Kokoro）在这个结构下不可能实时。
-
-**为什么不是塔菲 / 菲比**（挑音色的完整过程，省得下次重查）：
-
-| 目标 | 结论 |
-|---|---|
-| 永雏塔菲 | 公开权重**全是 Bert-VITS2** 的 `G_*.pth`（HF Spaces：`MelodyYuuka/Taffy-Bert`、`songdaooi/Taffy-Bert-VITS2`、`xiao666/Taffy-Bert-VITS2.0.2666`），另有 so-vits-svc 模型（`cynika/taffy`，是**变声**不是合成）。sherpa-onnx 的 `OfflineTtsModelConfig` 只有 vits / matcha / kokoro / kitten / zipvoice / pocket —— **没有 Bert-VITS2**，而且两者架构不同（它的文本编码器吃的是 BERT 特征，1024 维/字，不是 token id），**不能靠转换塞进 VITS 那条路** |
-| 鸣潮·菲比 | **全网没有 TTS 权重**：HF 的 models / spaces / datasets 全量搜（phoebe / 菲比 / feibi / wuwa / wuthering / 鸣潮 / sovits / vits）、GitHub 仓库 + 代码搜索、k2-fsa 的 646 个 `tts-models` 资产 —— 都没有。只有一个 RVC 变声模型（`PGR-RVC/Wuthering_Waves_RVC_v2` 的 `JP/PhoebeJP_*`）和一个**空仓库**（`suannaige/GPT-Sovitsv4-Phoebe`，只有 README）。ModelScope 要登录搜不了、爱发电/网盘够不着，这两处是盲区 |
-| 自建 Bert-VITS2 引擎的代价 | ONNX Runtime + 生成器自己导出 + BERT（1.3GB fp32）+ 可选 g2pW + Kotlin 侧中文文本前端；下载 0.7–2GB，每句 2–6 秒（现在 Piper 是 0.3 秒），**以周计** —— 用户判定「完全不值得」 |
-
-### 4.1 `sid` 是**角色**，不是常量（2026-10-21）
-
-这批模型是「**一个游戏一份多说话人模型**」，角色只是里面的某一行：
-
-- 导出脚本把 `sid` 做成了 ONNX 的**输入**（`vits-zh-hf-models.py` 里 `torch.onnx.export` 的
-  `input_names` 含 `sid`，元数据 `n_speakers=804`）—— 所以 `generate(sid=)` 选的是说话人。
-- **填错不报错，只是读出别人的声音**，只有耳朵能发现。`TtsModel.sid` 因此是必填项，
-  值来自源合集 `zomehwh/vits-models-genshin-bh3` 的 `pretrained_models/info.json`
-  （它的试听页用的就是这一份）：刻晴 115 / 优菈 124 / 德丽莎 193 / 理之律者 193。
-  `TtsModelCatalogTest` 逐个钉住。
-- **改了音色要真机听一遍**：这一层没有别的判据（PC 上用 sherpa 的 Windows 版能合成、
-  能证明「sid 确实换声音」，但证明不了「这一行就是那个角色」）。
-- 归档里除了模型还有 `dict/`（jieba 分词）与四个 FST；我们挂 `phone.fst,number.fst,date.fst`
-  三个（`new_heteronym.fst` 是给词典用的，不挂）。
-
-**加条目的标准**（别放宽）：地址是公开、稳定、直接可下的 GitHub release 资产，与本仓库的
-应用内更新同一个来源，不引入第二个下载域；授权必须说得清，且显示在下载按钮旁边。
-**这四条授权都不干净**（游戏角色音，米哈游没授权）—— 那是用户明确知情后的选择，
-别拿它当先例。
-**MeloTTS 没进来**不是授权问题（它是 MIT），是产物问题：GitHub 归档里的 `model.int8.onnx`
-是个 133 字节的 **git-lfs 指针**（真身在 HF，53MB），归档里能用的只有 170MB 的 fp32，
-手机上又大又慢。要收它得改从 HF 下载，那会引入第二个下载域，而 HF 墙内直连不通。
-
-**下载复用 `UpdateDownloader.fetchInto`**，不是重写一套：断点续传的三条细节（`If-Range`
-而不是裸 `Range`、206 的 `Content-Length` 是剩余长度、416 要丢掉本地重来）没必要写第二遍。
-归档留在 `cacheDir` 的 `.part` 里跨进程存活。
-
-**装的过程是「解到 staging → rename 成正式目录」**：直接解到正式目录的话，解到一半被杀
-会留下一个「看起来装好了」的目录，`isInstalled` 放行，然后在 native 层崩。
-`isInstalled` 的判据是**关键文件都在**，不是「目录存在」。
-
-**解包有两道闸**：剥掉归档的顶层目录（否则运行时拼不对路径）；**挡住路径穿越**
-（tar 条目名可以是 `../../databases/tappet.db`，越界的条目直接跳过）。都用
-`SherpaArchiveTest` 里自造的 tar.bz2 钉住了 —— 不需要设备，也不需要下真模型。
-
-**合成与播放是流水的**：`generateWithCallback` 一边算一边往 AudioTrack 里写，
-不是「算完一整段再播」（后者要等一两秒才出声）。停止靠回调里看一眼 `stopped` 标志
-让 native 收手，外加 `pause + flush` 立刻静音。
-
-**依赖代价**：`commons-compress`（+ commons-io / codec / lang3）。Android 的 `java.util.zip`
-不认 bzip2，而这些模型只有 `.tar.bz2` 一种分发格式。四个纯 Java jar，Apache-2.0。
-
-### 4.1 回调**必须**是匿名对象，不能写成 lambda（真机闪退，2026-10-20）
-
-sherpa-onnx 的 JNI 按**名字与签名**取回调方法：
-
-```cpp
-GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;")   // 参数 float[]，返回装箱的 Integer
-```
-
-Kotlin 2.x 默认把 lambda 字面量编成 invokedynamic，D8 再落成一个
-`Xxx$$ExternalSyntheticLambda0`，那个类里**没有**这个专用重载（只有擦除后的
-`invoke(Object)Object`）。于是 `GetMethodID` 返回 null，native 侧接着调 `NewFloatArray`
-时撞上 pending exception，直接 SIGABRT：
-
-```
-Abort message: 'JNI DETECTED ERROR IN APPLICATION: JNI NewFloatArray called with pending exception
-java.lang.NoSuchMethodError: no non-static method
-"Lcom/tappet/app/voice/LocalTtsEngine$$ExternalSyntheticLambda0;.invoke([F)Ljava/lang/Integer;"'
-```
-
-**整个 App 闪退，而堆栈里只有 sherpa 与协程的帧，一个字都指不到自己写的代码。**
-`javap` 两种写法对比：
-
-| 写法 | 编出来的 `invoke` |
-|---|---|
-| `{ samples -> ... }`（lambda 字面量） | 无类（indy）；D8 落成的类里只有 `invoke(Object)Object` |
-| `object : (FloatArray) -> Int { override fun invoke(...) }` | `Integer invoke(float[])` + `Object invoke(Object)` ✅ |
-
-所以 `LocalTtsEngine.samplesCallback` 是匿名对象，`TtsCallbackSignatureTest` 断言编译产物
-里真的有那个重载（把实现换回 lambda，这条测试立刻 `NoSuchMethodException` —— 验过）。
-
-**另一条踩过的**：`destroyIfIdle()` 里 `if (!released) return` 那一行不能省。少了它，
-每次合成结束（`finally` 里无条件调它）都会把引擎释放掉，表现是「第一段读完就停了，
-日志里一句『朗读中断』」。
+1. 多说话人模型的 `sid` 是**角色索引**，填错不报错，只是读出别人的声音 —— 只能靠耳朵验。
+2. 合成回调**必须是匿名对象**，不能写 lambda：JNI 按 `invoke([F)Ljava/lang/Integer;`
+   取方法，Kotlin 的 lambda 字面量编出来的类里没有这个重载，整个 App 会以
+   `JNI DETECTED ERROR ... NoSuchMethodError` 闪退。
 
 ## 5. 已知边界
 
 - **不在后台继续读**。没有前台服务，App 退到后台后进程可能被冻结，朗读会卡住。
   与「只在用户点的时候联网」同一条原则：不做用户没要求的常驻。
 - **焦点被抢走就停，不自动续读**。从半句话中间接上去比不读更让人困惑，用户再点一次即可。
-- **一次只读一条**。点另一条 = 停掉当前的、开始新的。这也是 TTS 引擎本身的约束
-  （一个引擎一个输出流），与其在下面排队，不如在上面就定义清楚。
-- **正文不进日志**。`TappetVoice` 只记引擎名、段数、失败原因。
+- **一次只读一条**。点另一条 = 停掉当前的、开始新的。
+- **正文不进日志**。`TappetVoice` 只记引擎名、段数、HTTP 状态码与失败原因。
+- **断网就不读**，并说明原因；没有本地兜底（这是 2026-10-24 的明确取舍）。
 
 ## 6. 语音输入：为什么只有本机识别这一条路
 
-朗读那边是「系统引擎打底 + 本地可选」，语音输入这边**没有系统那一档**，不对称是刻意的：
+朗读现在走云端（Fish Audio，§0），语音输入这边**仍然只有本机这一条路**，不对称是刻意的：
 
 Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Google 的、ColorOS 的）。
-而这条路上出去的是**用户的声音** —— 比屏幕正文更私密，也更容易被拿去做别的事。
-朗读之所以能用系统引擎，是因为它的输入是**我们自己写的文本**、且系统 TTS 不联网；
-两件事不是一回事，不能因为「朗读那样做了」就照搬。
+这条路上出去的是**用户的声音** —— 比屏幕正文更私密。朗读之所以可以出网，是因为它的输入
+是**助手写的文本**，用户能预期「这段字会被念出来」；麦克风里的东西不是同一回事。
+**多一条出网路径要有明确理由，「更准」还不是。**
 
-同样的理由排除云端 ASR（各家 `/audio/transcriptions`）：它们确实比端侧准，
-但那是把麦克风里的东西交给另一个服务。**多一条出网路径要有明确理由，「更准」还不是。**
+Fish Audio 自己的 ASR（`POST /v1/asr`，`transcribe-1` / `transcribe-1-pro`）按音频小时
+计费（$0.36/小时，**不属于免费档**），接进来既多一条出网路径又多一笔成本 —— 暂不采用。
 
 **`OfflineRecognizer` 不是线程安全的**，而协程取消打断不了阻塞的 native 调用 ——
-并发进去就是 `FORTIFY ... destroyed mutex` + 整个 App 闪退。合成那边是同一道闸门
-（`LocalTtsEngine` 串行化），两边都别绕开。
+并发进去就是 `FORTIFY ... destroyed mutex` + 整个 App 闪退。识别实例由
+`LocalRecognizer` 的闸门串行化，别绕开。
 
 推论：语音输入必须有识别模型（paraformer-zh-small + 标点模型，见 §8）。它**没有设置页入口** ——
 模型随安装自动下载，没下完时点麦克风说的是「正在下载」而不是「不可用」。
@@ -338,7 +222,7 @@ VAD 本身的耗时可以忽略：5.6 秒音频 20~53ms。
 | 语言 | 中文（中英混说也认） |
 | 解码 | 非自回归（一次前向出整句），手机上最快的一档 |
 | 授权 | FunASR 模型开源许可 1.1 —— 可自由使用 / 修改 / 分发，必须署名并保留模型名；不是 OSI 标准许可 |
-| 来源 | k2-fsa/sherpa-onnx 的 `asr-models` release 资产（与朗读模型、应用内更新同一个域） |
+| 来源 | k2-fsa/sherpa-onnx 的 `asr-models` release 资产（与应用内更新同一个域） |
 | 伴生 | 标点模型 CT-Transformer（§8.1） |
 
 **一加 15T 实测**（`adb` 广播喂 WAV，绕开麦克风，同一段 5.6 秒中文）：
@@ -466,6 +350,10 @@ App 读自己的私有目录没有障碍，所以直接给绝对路径即可 —
    （**别**从宿主侧直接 `cat file | adb shell ...`：会截断成几十字节）。
 2. **先 `monkey` 把 App 拉到前台再广播**：ColorOS 会 defer 后台广播，
    现象是广播回 `result=0` 但日志里什么都没有。
+
+**朗读这条路的验法**（需要真 key 与网络，与识别无关）：设置 → 语音 → 存 Fish Audio 的
+key → 点「试听」；随后在聊天页点某条回复的喇叭。失败会在聊天页顶部出错误条（§3 的文案），
+`logcat -s TappetVoice` 只有段数、HTTP 状态码与失败原因，没有正文。
 
 **只能由人验的那一段**：聊天页点麦克风 → 说一句话 → 看电平条动、停顿后自动结束、
 文本出现在输入框。VAD 在真机上的手感（0.8 秒算说完是不是太急、10 秒切段会不会在句中断开）

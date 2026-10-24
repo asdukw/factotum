@@ -55,3 +55,6 @@ android/app/src/main/assets/model-modalities.json
 android/app/src/main/assets/silero_vad.onnx
 # 离线自检的 js-yaml 依赖（tools/offline-checks.sh 用 npm ci 临时安装，检出即弃）
 tools/offline-checks/node_modules/
+
+# 本机密钥（Fish Audio 等），绝不入库
+.env

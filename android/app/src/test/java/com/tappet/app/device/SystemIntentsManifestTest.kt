@@ -30,16 +30,4 @@ class SystemIntentsManifestTest {
       text.contains("android:name=\"com.android.alarm.permission.SET_ALARM\""),
     )
   }
-
-  @Test
-  fun `manifest declares the TTS service query the read-aloud feature needs`() {
-    assumeTrue("仓库里没有 AndroidManifest.xml（不是完整检出），跳过", manifest.isFile)
-    val text = manifest.readText()
-
-    assertTrue(
-      "清单的 <queries> 里没有 TTS_SERVICE —— Android 11+ 的包可见性会让 TextToSpeech 初始化直接失败" +
-        "（真机实测：AppsFilter 把 TTS 引擎判成 BLOCKED，界面上只表现为「点了朗读没反应」）",
-      text.contains("android.intent.action.TTS_SERVICE"),
-    )
-  }
 }

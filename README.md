@@ -48,10 +48,11 @@ user's own cloud account directly, without going through accessibility.
 - **Bring your own model.** Five presets plus custom endpoints. Keys live in a Keystore-wrapped
   vault and are passed to the runtime as environment variables at Node start — never written to
   disk or compiled into the APK.
-- **Local voice.** Voice input uses sherpa-onnx with Paraformer, segmented by silero VAD, with the
-  punctuation model installed alongside it. Both download automatically after install and have no
-  settings entry. TTS uses the system engine or a local VITS voice. Audio never leaves the device
-  and is never persisted.
+- **Voice.** Read-aloud uses Fish Audio's free cloud model (`s2.1-pro-free`): the assistant's text
+  is sent to `api.fish.audio` and the key lives in a Keystore-wrapped vault. The synthesized audio
+  is a temp file deleted after playback. Voice input stays fully on-device — sherpa-onnx with
+  Paraformer, segmented by silero VAD, punctuation model installed alongside; the microphone audio
+  never leaves the device and is never persisted.
 - **Connectors.** Gmail is read-only: list, search and read. The connector bridge is separate from
   accessibility, so mail tools keep working when accessibility is off.
 - **Web search.** `web_search` / `web_fetch` use the model provider's own server-side search — no
@@ -74,7 +75,7 @@ device".
 | LLM providers | Only OpenCode Go has been exercised with a real key; the other presets match the runtime contract but have not sent a real request |
 | Visual path | Coordinate conversion is pinned by unit tests; the model's pixel estimation has not been verified on device |
 | Voice input | Verified on device (VAD segmentation and transcription with Paraformer; the model downloads on its own) |
-| TTS | Verified on device (system engine, local VITS, auto-read) |
+| TTS | Settings and the no-key path verified on device; cloud synthesis not yet run with a live Fish Audio key |
 | Gmail connector | Verified on device with one account, including the full OAuth flow |
 | Web search | Verified on device with OpenCode Go only |
 | Memory, file tools, `ask_user_question` | End-to-end on an Android 16 emulator; not yet verified on a physical device |
@@ -114,7 +115,7 @@ Prerequisites: **JDK 21**, **Node 24 + npm** on the PC, and the Android SDK with
 ```powershell
 git submodule update --init --recursive   # the device-tools plugin lives in its own repo
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so
-.\tools\fetch-sherpa.ps1                  # local TTS runtime + silero VAD model
+.\tools\fetch-sherpa.ps1                  # sherpa runtime for voice input + silero VAD model
 .\tools\bundle-dsh.ps1                    # vendored dsh -> assets/dsh-runtime.zip
 
 $env:JAVA_HOME = '<path-to-jdk-21>'

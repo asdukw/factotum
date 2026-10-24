@@ -43,8 +43,9 @@ v0.5.0 起它多了**第二条获取信息的通道**：连接器（首版 Gmail
   控件树可读时仍然优先走语义路径。
 - **自带模型**：5 个预选 + 自定义端点。密钥存在 Keystore 封装的 `SecretVault` 里，
   Node 启动时以环境变量传入 —— 不落盘，也不编进 APK。
-- **本地语音**：语音输入用 sherpa-onnx + Paraformer，由 silero VAD 切段；标点模型跟着一起装。
-  两个模型随安装自动下载，设置页里没有入口。朗读可用系统 TTS 或本地 VITS 音色。
+- **语音**：朗读走 Fish Audio 的云端免费模型（`s2.1-pro-free`）—— 助手正文会发给
+  `api.fish.audio`，key 存在 Keystore 封装的 vault 里；合成音频只在播放期间落临时文件，播完即删。
+  语音输入仍然完全在本机：sherpa-onnx + Paraformer，silero VAD 切段，标点模型跟着一起装；
   音频不出设备、不落盘。
 - **连接器**：Gmail 只读 —— 列邮件 / 检索 / 读正文。连接器桥与无障碍分离，
   无障碍关掉时邮件工具照常可用。
@@ -66,7 +67,7 @@ Tappet 对「验到什么程度」说得比较直白：**单测通过 ≠ 真机
 | LLM 接入 | 只有 OpenCode Go 用真 key 跑通过；其余预选与运行时契约对得上，但还没真正发过请求 |
 | 视觉路径 | 坐标换算有单测钉住；模型在图上估坐标准不准尚未真机验证 |
 | 语音输入 | 真机验证（VAD 切段与 Paraformer 识别；标点模型跟随安装） |
-| 朗读 | 真机验证（系统 TTS、本地 VITS、自动朗读） |
+| 朗读 | 设置页与「未配置 key」路径已真机验证；云端合成还没用真 key 跑过 |
 | Gmail 连接器 | 真机验证（完整 OAuth 流程 + 真实读到邮件，仅一个账号） |
 | 联网搜索 | 真机验证（仅 OpenCode Go） |
 | 记忆、文件工具、`ask_user_question` | Android 16 模拟器端到端验过；尚未真机验证 |
@@ -106,7 +107,7 @@ APK 由 CI 在 `v*` tag 上用 release keystore 签名，并附带 GitHub build-
 ```powershell
 git submodule update --init --recursive   # 设备工具插件在独立仓库
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so
-.\tools\fetch-sherpa.ps1                  # 本地 TTS native 库 + silero VAD 模型
+.\tools\fetch-sherpa.ps1                  # 语音输入的 sherpa 库 + silero VAD 模型
 .\tools\bundle-dsh.ps1                    # vendored dsh → assets/dsh-runtime.zip
 
 $env:JAVA_HOME = '<JDK 21 的安装路径>'

@@ -26,7 +26,7 @@ PC, Android SDK (compileSdk 36), `ndk;29.0.14206865`, `cmake;3.31.6` (last three
 ```powershell
 git submodule update --init --recursive   # device-tools plugin lives in its own repo
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so from the NDK
-.\tools\fetch-sherpa.ps1                  # local TTS native lib + silero VAD model
+.\tools\fetch-sherpa.ps1                  # sherpa native lib + silero VAD model (ASR only)
 .\tools\bundle-dsh.ps1                    # vendored dsh → assets/dsh-runtime.zip
 ```
 
@@ -112,11 +112,17 @@ rewrite pushed history or force-push `master` without explicit approval.
 3. **The visual path sends the full screen image to the model provider** (including all on-screen
    text). Treat it like a UI-tree payload: tool results only, never logged or persisted — and
    never describe it as "structure only".
-4. **`tappet.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses
+4. **Read-aloud sends assistant text to Fish Audio** (`POST /v1/tts`, free model
+   `s2.1-pro-free`) — the one path that puts chat text off-device. The key lives in
+   `VoiceSecretStore` (`SecretVault`); the text appears only in the request body, never in logs,
+   and the synthesized mp3 is a temp file deleted after playback. Speech input stays fully
+   on-device — do not add a cloud STT option without a documented privacy gate. See
+   `docs/voice.md`.
+5. **`tappet.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses
    it permanently. Export before uninstalling or clearing data.
-5. **`TappetDatabaseProvider` must call `System.loadLibrary("sqlcipher")`**; otherwise `nativeOpen`
+6. **`TappetDatabaseProvider` must call `System.loadLibrary("sqlcipher")`**; otherwise `nativeOpen`
    throws `UnsatisfiedLinkError`.
-6. **Do not collect other people's data.** Any new collection capability needs a documented
+7. **Do not collect other people's data.** Any new collection capability needs a documented
    boundary and privacy gate in `docs/` first.
 
 Pre-release scan — `-SelfTest` is mandatory; the scanner's identifier heuristic only warns:

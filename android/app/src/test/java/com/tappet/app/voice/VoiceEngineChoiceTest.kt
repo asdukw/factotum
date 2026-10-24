@@ -6,45 +6,25 @@ import org.junit.Test
 /**
  * 朗读引擎的回落规则（纯 JVM）。
  *
- * 本地朗读目录当前是空的（`TtsModelCatalog.ALL`），但老用户偏好里可能还存着 `local`。
- * 这条回落如果错了，表现是「设置里选着本地引擎、点朗读只弹一句不可用」，而系统 TTS
- * 明明能用 —— 所以把它抽成纯函数钉住，不依赖 SharedPreferences。
+ * 本地引擎与系统 TTS 都已经删掉，只剩 Fish Audio。老用户的偏好里可能还存着 `local` /
+ * `system`，这条回落如果错了，表现是「设置页看着正常、点朗读却停在一个不存在的引擎上」
+ * —— 所以把它抽成纯函数钉住，不依赖 SharedPreferences。
  */
 class VoiceEngineChoiceTest {
   @Test
-  fun `本地目录为空时 local 回落到系统引擎`() {
-    assertEquals(
-      VoiceEngines.SYSTEM,
-      VoiceSettings.effectiveEngineId(VoiceEngines.LOCAL, localAvailable = false),
-    )
+  fun `老版本存的 local 与 system 都落到 fish`() {
+    assertEquals(VoiceEngines.FISH, VoiceSettings.effectiveEngineId("local"))
+    assertEquals(VoiceEngines.FISH, VoiceSettings.effectiveEngineId("system"))
   }
 
   @Test
-  fun `目录里有模型时保留 local`() {
-    assertEquals(
-      VoiceEngines.LOCAL,
-      VoiceSettings.effectiveEngineId(VoiceEngines.LOCAL, localAvailable = true),
-    )
+  fun `空值与认不出的值都落到 fish`() {
+    assertEquals(VoiceEngines.FISH, VoiceSettings.effectiveEngineId(null))
+    assertEquals(VoiceEngines.FISH, VoiceSettings.effectiveEngineId("cloud-tts"))
   }
 
   @Test
-  fun `系统引擎与模型目录无关`() {
-    assertEquals(
-      VoiceEngines.SYSTEM,
-      VoiceSettings.effectiveEngineId(VoiceEngines.SYSTEM, localAvailable = false),
-    )
-    assertEquals(
-      VoiceEngines.SYSTEM,
-      VoiceSettings.effectiveEngineId(VoiceEngines.SYSTEM, localAvailable = true),
-    )
-  }
-
-  @Test
-  fun `空值与认不出的值都退回系统引擎`() {
-    assertEquals(VoiceEngines.SYSTEM, VoiceSettings.effectiveEngineId(null, localAvailable = true))
-    assertEquals(
-      VoiceEngines.SYSTEM,
-      VoiceSettings.effectiveEngineId("cloud-tts", localAvailable = true),
-    )
+  fun `fish 原样保留`() {
+    assertEquals(VoiceEngines.FISH, VoiceSettings.effectiveEngineId(VoiceEngines.FISH))
   }
 }

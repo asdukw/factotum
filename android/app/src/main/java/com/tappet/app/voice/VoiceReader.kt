@@ -142,8 +142,9 @@ object VoiceReader {
         if (!engine.speak(chunk)) {
           // 被 stop() 打断是正常路径（协程已经不活跃），只有还活着才值得报错。
           if (currentCoroutineContext().isActive) {
-            Log.w(TAG, "引擎 ${engine.id} 朗读中断")
-            _error.value = "朗读中断：${engine.displayName}"
+            // 云端引擎的失败有具体原因（key / 余额 / 限流），优先用它；没有才是「中断」。
+            Log.w(TAG, "引擎 ${engine.id} 朗读失败：${engine.lastError ?: "中断"}")
+            _error.value = engine.lastError ?: "朗读中断：${engine.displayName}"
           }
           return
         }
@@ -161,12 +162,11 @@ object VoiceReader {
   private fun engineFor(context: Context): TtsEngine {
     val engineId = VoiceSettings.engineId(context)
     val rate = VoiceSettings.rate(context)
-    val voice = VoiceSettings.systemVoice(context)
-    val model = VoiceSettings.localModel(context)
-    val key = "$engineId|$rate|$voice|$model"
+    // key 的版本号也在缓存键里：换了 API key 之后下次朗读必须重建引擎，否则还在用旧的。
+    val key = "$engineId|$rate|${VoiceSecretStore.revision(context)}"
     engine?.let { if (key == engineKey) return it }
     engine?.release()
-    val created = build(context, engineId, rate, voice, model)
+    val created = build(context, rate)
     engine = created
     engineKey = key
     return created
@@ -176,20 +176,14 @@ object VoiceReader {
    * 指定引擎是否可用（不初始化、不碰当前实例）。设置页要**同时**显示两个引擎的状态：
    * 「本地引擎」是不是能用，与用户当前选了谁无关 —— 否则得先切过去才知道它没装模型。
    */
-  fun reasonFor(context: Context, engineId: String): String? =
-    build(
-      context = context,
-      engineId = engineId,
-      rate = VoiceSettings.rate(context),
-      voice = VoiceSettings.systemVoice(context),
-      model = VoiceSettings.localModel(context),
-    ).unavailableReason()
+  fun reasonFor(context: Context): String? = build(context).unavailableReason()
 
-  private fun build(context: Context, engineId: String, rate: Float, voice: String?, model: String?): TtsEngine =
-    when (engineId) {
-      VoiceEngines.LOCAL -> LocalTtsEngine(context, model, rate)
-      else -> SystemTtsEngine(context, rate, voice)
-    }
+  private fun build(context: Context, rate: Float = VoiceSettings.rate(context)): TtsEngine =
+    FishTtsEngine(
+      context = context,
+      rate = rate,
+      apiKey = VoiceSecretStore.apiKey(context),
+    )
 
   /**
    * 抢音频焦点：朗读期间让音乐暂停，读完自动恢复。

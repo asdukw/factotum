@@ -85,6 +85,20 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "TAPPET_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
+      # 构建脚本对空值不报错，只会静默退回「要用户自己填 client id」—— 发布包不能这样出去。
+      # 读到空串的常见原因：secret 名字不对，或没配进 `release` 这个 environment（见 docs/releasing.md）。
+      - name: 检查连接器凭据
+        env:
+          TAPPET_GMAIL_CLIENT_ID: ${{ secrets.TAPPET_GMAIL_CLIENT_ID }}
+          TAPPET_GMAIL_CLIENT_SECRET: ${{ secrets.TAPPET_GMAIL_CLIENT_SECRET }}
+        run: |
+          for name in TAPPET_GMAIL_CLIENT_ID TAPPET_GMAIL_CLIENT_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::缺少 secret $name（见 docs/email-connector.md §4.4）"
+              exit 1
+            fi
+          done
+
       - name: 出包（签名）
         working-directory: android
         env:

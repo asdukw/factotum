@@ -4,7 +4,12 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -39,6 +44,8 @@ import kotlin.coroutines.resume
 class FishTtsEngine(
   private val context: Context,
   private val rate: Float,
+  /** 参考音色的 Fish 模型 id；空 = 用 Fish 的默认音色（见 [FishVoices]）。 */
+  private val voiceId: String?,
   private val apiKey: String?,
 ) : TtsEngine {
   override val id: String = VoiceEngines.FISH
@@ -53,6 +60,15 @@ class FishTtsEngine(
   private val lock = Any()
   private var player: MediaPlayer? = null
 
+  /**
+   * 预取用的独立作用域：合成下一段时**所有**段都还在播，把它挂在朗读的 job 上会被
+   * 停止/切歌顺手取消，白丢一次已经发出去的请求。
+   */
+  private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+  /** 单槽预取缓存：只预取**下一段**，多了没有意义（播放是串行的）。 */
+  @Volatile private var pending: Pair<String, Deferred<ByteArray?>>? = null
+
   override fun isAvailable(): Boolean = !apiKey.isNullOrBlank()
 
   override fun unavailableReason(): String? =
@@ -60,10 +76,16 @@ class FishTtsEngine(
 
   override suspend fun initialize(): String? = unavailableReason()
 
-  /** 音色由 Fish 侧决定（默认音色）。没有可选项时返回空表，界面据此不画选择器。 */
-  override fun voices(): List<TtsVoice> = emptyList()
+  /** 预置音色列表（[FishVoices]）；选择由 [VoiceReader] 重建引擎生效。 */
+  override fun voices(): List<TtsVoice> = FishVoices.ALL
 
   override fun selectVoice(id: String?) = Unit
+
+  override suspend fun prefetch(text: String) {
+    val key = apiKey?.takeIf { it.isNotBlank() } ?: return
+    if (pending?.first == text) return
+    pending = text to prefetchScope.async { download(key, text) }
+  }
 
   override suspend fun speak(text: String): Boolean {
     lastError = null
@@ -72,7 +94,10 @@ class FishTtsEngine(
       lastError = unavailableReason()
       return false
     }
-    val audio = download(key, text) ?: return false
+    // 命中预取就直接等它（可能还在路上），否则现取。
+    val prefetched = pending?.takeIf { it.first == text }?.second
+    if (prefetched != null) pending = null
+    val audio = prefetched?.await() ?: download(key, text) ?: return false
     return play(audio)
   }
 
@@ -82,7 +107,10 @@ class FishTtsEngine(
     runCatching { current.release() }
   }
 
-  override fun release() = stop()
+  override fun release() {
+    stop()
+    prefetchScope.cancel()
+  }
 
   /** 合成一段，返回 mp3 字节。失败时把原因留在 [lastError] 里。 */
   private suspend fun download(key: String, text: String): ByteArray? =
@@ -93,7 +121,7 @@ class FishTtsEngine(
           .header("Authorization", "Bearer $key")
           // model 走 **header**：放进 JSON 会被忽略，静默退回默认的付费模型。
           .header("model", FISH_MODEL)
-          .post(fishRequestBody(text, rate).toRequestBody(JSON))
+          .post(fishRequestBody(text, rate, voiceId).toRequestBody(JSON))
           .build()
       try {
         client.newCall(request).execute().use { response ->
@@ -199,12 +227,16 @@ internal const val FISH_MODEL = "s2.1-pro-free"
 internal const val FISH_ENDPOINT = "https://api.fish.audio/v1/tts"
 
 /** `/v1/tts` 的请求体。抽成纯函数，JVM 单测才能钉住「model 不进 body」之外的每个字段。 */
-internal fun fishRequestBody(text: String, rate: Float): String =
+internal fun fishRequestBody(text: String, rate: Float, referenceId: String? = null): String =
   buildJsonObject {
     put("text", text)
     put("format", "mp3")
     put("mp3_bitrate", 128)
+    // 朗读是等着的：让服务端优先低延迟（Fish 还接受 normal / balanced）。
+    put("latency", "low")
     putJsonObject("prosody") { put("speed", rate) }
+    // 空串 / null 都不带这个字段：带空 reference_id 会被服务端当成无效引用。
+    referenceId?.takeIf { it.isNotBlank() }?.let { put("reference_id", it) }
   }.toString()
 
 /**

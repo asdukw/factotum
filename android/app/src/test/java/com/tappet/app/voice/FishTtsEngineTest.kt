@@ -35,6 +35,20 @@ class FishTtsEngineTest {
   }
 
   @Test
+  fun `选了音色时请求体带 reference_id`() {
+    val body =
+      Json.parseToJsonElement(fishRequestBody("hi", 1f, "4ee64e5052834c25b9785b693d3489ab")).jsonObject
+    assertEquals("4ee64e5052834c25b9785b693d3489ab", body["reference_id"]?.jsonPrimitive?.contentOrNull)
+  }
+
+  @Test
+  fun `默认音色不带 reference_id`() {
+    // 带空 reference_id 会被服务端当成无效引用，宁可整条字段都不出现。
+    val body = Json.parseToJsonElement(fishRequestBody("hi", 1f, FishVoices.DEFAULT_ID)).jsonObject
+    assertNull(body["reference_id"])
+  }
+
+  @Test
   fun `已知状态码翻成人话`() {
     assertEquals("Fish Audio API key 无效或已过期", fishErrorText(401, null))
     assertEquals("Fish Audio 余额不足", fishErrorText(402, "{}"))

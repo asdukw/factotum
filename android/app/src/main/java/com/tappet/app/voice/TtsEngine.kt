@@ -46,6 +46,12 @@ interface TtsEngine {
   fun selectVoice(id: String?)
 
   /**
+   * 预取一段的音频（可选，默认空实现）。[VoiceReader] 在播放当前段时预取下一段，
+   * 把「下一句的网络往返」藏进这一段的播放时间里 —— 否则每句之间会空好几秒。
+   */
+  suspend fun prefetch(text: String) = Unit
+
+  /**
    * 读一段，挂起直到读完、被打断或出错。
    *
    * @return true = 正常读完；false = 被 [stop] 打断或引擎报错（原因见 [lastError]）。

@@ -19,20 +19,27 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -40,6 +47,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tappet.app.voice.FishVoices
+import com.tappet.app.voice.TtsVoice
 
 /**
  * 语音设置页：Fish Audio 的 API key、自动朗读、语速、试听。
@@ -63,11 +72,13 @@ fun VoiceScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     onClearKey = viewModel::clearKey,
     onAutoReadChange = viewModel::setAutoRead,
     onRateChange = viewModel::setRate,
+    onSelectVoice = viewModel::selectVoice,
     onPreview = viewModel::preview,
     modifier = modifier,
   )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun VoiceScreen(
   state: VoiceViewModel.UiState,
@@ -78,9 +89,13 @@ internal fun VoiceScreen(
   onClearKey: () -> Unit,
   onAutoReadChange: (Boolean) -> Unit,
   onRateChange: (Float) -> Unit,
+  onSelectVoice: (String) -> Unit,
   onPreview: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  var voiceSheetOpen by remember { mutableStateOf(false) }
+  val sheetState = rememberModalBottomSheetState()
+
   Column(modifier.fillMaxSize().safeDrawingPadding()) {
     SettingsHeader(title = "语音", onBack = onBack)
     Column(
@@ -123,6 +138,15 @@ internal fun VoiceScreen(
         RateRow(rate = state.rate, label = state.rateLabel, onRateChange = onRateChange)
         SettingsDivider()
         SettingsRow(
+          glyph = GlyphKind.Sliders,
+          title = "音色",
+          subtitle = state.voiceLabel,
+          onClick = { voiceSheetOpen = true },
+        ) {
+          ChevronRight()
+        }
+        SettingsDivider()
+        SettingsRow(
           glyph = GlyphKind.Mic,
           title = "试听",
           subtitle = "读一句中文，听当前的语速与音色",
@@ -137,6 +161,47 @@ internal fun VoiceScreen(
       }
 
       Spacer(Modifier.height(24.dp))
+    }
+  }
+
+  if (voiceSheetOpen) {
+    ModalBottomSheet(onDismissRequest = { voiceSheetOpen = false }, sheetState = sheetState) {
+      VoiceList(voices = FishVoices.ALL, selected = state.selectedVoice) { id ->
+        onSelectVoice(id)
+        voiceSheetOpen = false
+      }
+    }
+  }
+}
+
+/** 音色列表。点一条就生效；正在朗读的那条会被停掉，下次朗读按新音色重建引擎。 */
+@Composable
+private fun VoiceList(voices: List<TtsVoice>, selected: String, onSelect: (String) -> Unit) {
+  Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Text(
+      text = "音色",
+      style = MaterialTheme.typography.titleMedium,
+      fontWeight = FontWeight.SemiBold,
+      modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+    )
+    voices.forEach { voice ->
+      Row(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(voice.id) }
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = voice.label,
+          style = MaterialTheme.typography.bodyLarge,
+          modifier = Modifier.weight(1f),
+        )
+        if (voice.id == selected) {
+          Glyph(GlyphKind.Check, Modifier.size(20.dp), MaterialTheme.colorScheme.primary)
+        }
+      }
     }
   }
 }

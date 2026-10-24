@@ -30,6 +30,7 @@ object VoiceSettings {
   private const val KEY_ENGINE = "engine"
   private const val KEY_AUTO_READ = "auto_read"
   private const val KEY_RATE = "rate"
+  private const val KEY_FISH_VOICE = "fish_voice"
 
   const val MIN_RATE = 0.5f
   const val MAX_RATE = 2.0f
@@ -59,6 +60,14 @@ object VoiceSettings {
 
   fun setRate(context: Context, rate: Float) {
     prefs(context).edit { putFloat(KEY_RATE, rate.coerceIn(MIN_RATE, MAX_RATE)) }
+  }
+
+  /** Fish 的参考音色 id；空 = 默认音色（[FishVoices.DEFAULT_ID]）。 */
+  fun fishVoice(context: Context): String =
+    prefs(context).getString(KEY_FISH_VOICE, FishVoices.DEFAULT_ID).orEmpty()
+
+  fun setFishVoice(context: Context, voiceId: String) {
+    prefs(context).edit { putString(KEY_FISH_VOICE, voiceId) }
   }
 
   private fun prefs(context: Context) =

@@ -3,6 +3,7 @@ package com.tappet.app.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tappet.app.voice.FishVoices
 import com.tappet.app.voice.VoiceReader
 import com.tappet.app.voice.VoiceSecretStore
 import com.tappet.app.voice.VoiceSettings
@@ -25,6 +26,8 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
   data class UiState(
     val autoRead: Boolean = false,
     val rate: Float = VoiceSettings.DEFAULT_RATE,
+    /** Fish 的参考音色 id（空 = 默认音色）；可选值见 [FishVoices]。 */
+    val selectedVoice: String = FishVoices.DEFAULT_ID,
     /** key 是否已配置。**不含 key 本身** —— 这个对象会进界面、进截图。 */
     val hasKey: Boolean = false,
     /** 输入框里的草稿；保存成功即清空，不落盘。 */
@@ -36,6 +39,9 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
   ) {
     /** 界面上的语速文案。`1.0x` 读起来比 `100%` 更像语速。 */
     val rateLabel: String get() = "%.1fx".format(rate)
+
+    /** 当前音色名；认不出的 id（模型被删）显示默认音色。 */
+    val voiceLabel: String get() = FishVoices.labelOf(selectedVoice)
   }
 
   private val _state =
@@ -44,6 +50,7 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
         autoRead = VoiceSettings.autoRead(appContext),
         rate = VoiceSettings.rate(appContext),
         hasKey = VoiceSecretStore.hasKey(appContext),
+        selectedVoice = VoiceSettings.fishVoice(appContext),
       ),
     )
   val state: StateFlow<UiState> = _state.asStateFlow()
@@ -101,6 +108,13 @@ class VoiceViewModel(private val appContext: Context) : ViewModel() {
   fun setRate(rate: Float) {
     VoiceSettings.setRate(appContext, rate)
     _state.update { it.copy(rate = rate) }
+  }
+
+  /** 选一条参考音色。正在播的还是旧声音：停掉，下次朗读按新音色重建引擎。 */
+  fun selectVoice(voiceId: String) {
+    VoiceSettings.setFishVoice(appContext, voiceId)
+    VoiceReader.stop()
+    _state.update { it.copy(selectedVoice = voiceId) }
   }
 
   /** 试听：读一句固定的中文，让用户听到当前的语速与音色。 */

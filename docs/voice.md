@@ -44,9 +44,10 @@ VoiceSettings    偏好：自动朗读 / 语速（**非密**）
 | `voice/TtsEngine.kt` | 朗读引擎接口：`initialize` / `speak` / `stop` / `lastError` / `maxChunk` |
 | `voice/FishTtsEngine.kt` | Fish Audio 合成 + 播放；请求体与错误文案是纯函数（JVM 单测钉住） |
 | `voice/VoiceSecretStore.kt` | Fish API key：SecretVault + `revision`（换 key 后重建引擎） |
+| `voice/FishVoices.kt` | 预置音色（`reference_id`）目录；空 id = Fish 默认音色 |
 | `voice/VoiceReader.kt` | 单例状态机：切段、串行播放、音频焦点、错误 |
 | `voice/VoiceSettings.kt` | 偏好：引擎 id（仅回落用）/ 自动朗读 / 语速 |
-| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」：key、自动朗读、语速、试听 |
+| `ui/settings/VoiceScreen.kt` + `VoiceViewModel` | 设置页「语音」：key、自动朗读、语速、音色、试听 |
 | `voice/VoiceModel*.kt` / `SherpaArchive.kt` / `AsrModelCatalog.kt` / `PunctModelCatalog.kt` | **只剩语音输入用**：识别模型与标点模型的下载 / 安装 |
 | `voice/LocalRecognizer.kt` / `LocalPunctuator.kt` / `VadSegmenter.kt` / `AudioCapture.kt` / `VoiceInput.kt` | 语音输入链路（§6 起） |
 | `com/k2fsa/sherpa/onnx/*.kt` | **vendor** 的 JNI 绑定（识别 / VAD 仍在用）；与 `fetch-sherpa.ps1` 同 tag，别手改 |
@@ -72,8 +73,13 @@ VoiceSettings    偏好：自动朗读 / 语速（**非密**）
 
 ## 3. 云端合成的行为与失败
 
-一次 `speak` = 一次 `POST /v1/tts`（同步，60s call timeout）+ 一次本地播放。失败一律
-落到 `TtsEngine.lastError`，`VoiceReader` 把它显示在聊天页的错误条上 —— 不静默：
+一次 `speak` = 一次 `POST /v1/tts`（同步，60s call timeout）+ 一次本地播放。
+
+**句间不空等**：播放第 N 段时并行合成第 N+1 段（`TtsEngine.prefetch`，`FishTtsEngine` 用
+单槽 `Deferred` 缓存），请求带 `latency: "low"`。没有这一层的话，每两句之间都要白等一次
+完整的网络往返 + 合成 —— 听感就是「句子之间空好几秒」。
+
+失败一律落到 `TtsEngine.lastError`，`VoiceReader` 把它显示在聊天页的错误条上 —— 不静默：
 
 | 情况 | 用户看到的 |
 |---|---|

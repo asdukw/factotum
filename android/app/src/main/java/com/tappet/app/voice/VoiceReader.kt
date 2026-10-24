@@ -139,6 +139,8 @@ object VoiceReader {
     try {
       chunks.forEachIndexed { index, chunk ->
         _state.value = State(messageId, index + 1, chunks.size)
+        // 一边播这一段、一边合成下一段：否则每句之间要空等一次网络往返 + 合成。
+        chunks.getOrNull(index + 1)?.let { next -> scope.launch { engine.prefetch(next) } }
         if (!engine.speak(chunk)) {
           // 被 stop() 打断是正常路径（协程已经不活跃），只有还活着才值得报错。
           if (currentCoroutineContext().isActive) {
@@ -162,11 +164,12 @@ object VoiceReader {
   private fun engineFor(context: Context): TtsEngine {
     val engineId = VoiceSettings.engineId(context)
     val rate = VoiceSettings.rate(context)
+    val voice = VoiceSettings.fishVoice(context)
     // key 的版本号也在缓存键里：换了 API key 之后下次朗读必须重建引擎，否则还在用旧的。
-    val key = "$engineId|$rate|${VoiceSecretStore.revision(context)}"
+    val key = "$engineId|$rate|$voice|${VoiceSecretStore.revision(context)}"
     engine?.let { if (key == engineKey) return it }
     engine?.release()
-    val created = build(context, rate)
+    val created = build(context, rate, voice)
     engine = created
     engineKey = key
     return created
@@ -178,10 +181,15 @@ object VoiceReader {
    */
   fun reasonFor(context: Context): String? = build(context).unavailableReason()
 
-  private fun build(context: Context, rate: Float = VoiceSettings.rate(context)): TtsEngine =
+  private fun build(
+    context: Context,
+    rate: Float = VoiceSettings.rate(context),
+    voice: String = VoiceSettings.fishVoice(context),
+  ): TtsEngine =
     FishTtsEngine(
       context = context,
       rate = rate,
+      voiceId = voice,
       apiKey = VoiceSecretStore.apiKey(context),
     )
 

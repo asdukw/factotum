@@ -50,6 +50,24 @@ val debugSuffix =
       }
     }
 
+/**
+ * 本机 debug 包用哪把签名。`adb install -r` 要求新包与设备上已装的包**签名一致**，
+ * 否则报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能卸载 —— SQLCipher 库与密钥随之永久丢失。
+ *
+ * ```
+ * tappet.debugSigning=debug
+ * ```
+ *
+ * - `release`（默认）：有 release keystore 时 debug 包也用它签（见下面 buildTypes.debug）。
+ * - `debug`：用 AGP 默认的 `~/.android/debug.keystore`。设备上那份是这把钥匙签的时候用它
+ *   （从没有 release keystore 的机器或 worktree 打出来的包就是这把）。
+ */
+val debugSigning =
+  (localProperties.getProperty("tappet.debugSigning")?.trim()?.takeIf { it.isNotEmpty() } ?: "release")
+    .also {
+      require(it == "release" || it == "debug") { "tappet.debugSigning 只能是 release 或 debug" }
+    }
+
 // 模拟器调试：-Ptappet.abis=x86_64；默认只打真机在用的 arm64-v8a（控制 APK 体积）
 val tappetAbis =
   (project.findProperty("tappet.abis") as String?)
@@ -137,13 +155,14 @@ android {
     debug {
       // 并行 worktree：独立的 applicationId，装在同一台设备上互不覆盖（见文件顶部的 debugSuffix）。
       if (debugSuffix != null) applicationIdSuffix = debugSuffix
-      // 本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
+      // 默认本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
       // 于是 debug ↔ release 可以互相覆盖安装（Android 要求更新包签名与已装版本一致）。
+      // `tappet.debugSigning=debug` 时不碰它，留给 AGP 用默认 debug 密钥（见文件顶部）。
       //
       // **必须这样写（`?.let`）而不是直接赋值**：没有 release keystore 时 findByName 返回 null，
       // 直接赋值等于把 debug 变体的签名显式设成 null —— AGP 就不签了，产物变成
       // `app-debug-unsigned.apk`，装不上。贡献者机器与 CI 正是这种情况（assemble.yml 抓到过）。
-      signingConfigs.findByName("release")?.let { signingConfig = it }
+      if (debugSigning == "release") signingConfigs.findByName("release")?.let { signingConfig = it }
     }
     release {
       isMinifyEnabled = false

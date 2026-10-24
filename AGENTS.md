@@ -86,6 +86,7 @@ android/                  the only runtime (Kotlin / Compose)
   app/src/test/           JVM unit tests
   app/src/androidTest/    device tests
 tools/                    fetch-libnode, fetch-sherpa, bundle-dsh, check-sensitive,
+                          install-debug (build + install on device),
                           audit/ (task traces), termux/ (bridge), dsh-phone/ (launcher,
                           profile, patches, plugins)
 docs/                     deep docs + releases/<tag>.md
@@ -282,13 +283,14 @@ a log format you just changed — and `am force-stop` before testing. Otherwise 
 silently come from someone else's build.
 
 ```powershell
-.\gradlew.bat :app:assembleDebug
-adb install -r -g app\build\outputs\apk\debug\app-debug.apk
-adb shell settings put secure enabled_accessibility_services com.tappet.app/.accessibility.TappetAccessibilityService
-adb shell settings put secure accessibility_enabled 1
-.\gradlew.bat :app:connectedDebugAndroidTest --console=plain
+.\tools\install-debug.ps1   # assembleDebug → adb install -r -g → re-enable accessibility → print version
+.\gradlew.bat :app:connectedDebugAndroidTest --console=plain   # from android/
 ```
 
+- **The new APK's signature must match the installed one**, or the install fails with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` and the only way out is uninstalling (database + keys lost).
+  With a release keystore in `local.properties`, debug builds are release-signed by default; if the
+  device's copy was signed with the default debug key, set `tappet.debugSigning=debug` there.
 - `adb install -r` disables the accessibility service; re-enable it after every install.
 - `pm grant` / `appops set` are blocked by ColorOS. The app only needs `INTERNET`.
 - Only the user can enable accessibility. Prompt **only after a real device action has failed**,

@@ -109,7 +109,7 @@ material never enters the build, and no API key is compiled into the package.
 
 ### Build from source
 
-Prerequisites: **JDK 21**, **Node 24 + npm** on the PC, and the Android SDK with **compileSdk 36**,
+Prerequisites: **JDK 21**, **Node 24 + npm** on the PC, and the Android SDK with **compileSdk 37**,
 **NDK 29.0.14206865** and **CMake 3.31.6** (install the last three with `sdkmanager`).
 
 ```powershell

@@ -8,6 +8,7 @@
 | 现象 | 原因 / 处理 |
 |---|---|
 | 全新安装 Gradle 挂 5 分钟后失败 | ColorOS 拦 `adb install` 通道 → 手动 `adb install -r` |
+| `adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` | 新包与设备上那份签名不同：本机有 release keystore 时 debug 包默认用它签，而设备上那份是默认 debug 密钥签的（从没有 `local.properties` 的 worktree 打的就是这把）→ `android/local.properties` 写 `tappet.debugSigning=debug` 重打。**别卸载了事**：SQLCipher 库与密钥随卸载永久丢失。查两边指纹：`apksigner verify --print-certs <apk>` 对 `dumpsys package <pkg>` |
 | `nativeOpen` UnsatisfiedLinkError | 忘加载 SQLCipher → `TappetDatabaseProvider` 显式 `loadLibrary` |
 | `dlopen failed: libc++_shared.so not found` | 重跑 `tools/fetch-libnode.ps1`；确认文件**确实落在** `jniLibs/<abi>/`（脚本有自检，别只看它打印成功） |
 | APK 里有 libnode.so 但没有 libc++_shared.so | AGP 不会自动打包 STL，jniLibs 是唯一来源 → 同上；`assemble.yml` 会拦住 |
@@ -17,7 +18,7 @@
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
 | 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
-| `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk 37` | 该依赖要求的最低 compileSdk 高于本项目（36）与 AGP 上限（9.0.1 最高推荐 36）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移。okhttp 5.x 就是这种情况（只被已暂停的客户端用着，所以当初没升） |
+| `checkDebugAarMetadata` 报某依赖 `requires ... compileSdk N` | 该依赖要求的最低 compileSdk 高于本项目（`app/build.gradle.kts` 的 `compileSdk`）→ **不能单独升它**，得连 AGP + compileSdk 一起迁移：先升 AGP 到支持 N 的版本（日志里的 `maximum recommended compile SDK version for Android Gradle plugin X` 就是当前上限），再改 compileSdk，并同步 CI 里 `sdkmanager "platforms;android-N…"`。Dependabot 单独升这类依赖的 PR 会在这一步红 |
 
 ## 运行时 / dsh
 

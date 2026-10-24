@@ -101,7 +101,7 @@ APK 由 CI 在 `v*` tag 上用 release keystore 签名，并附带 GitHub build-
 
 ### 从源码构建
 
-需要 **JDK 21**、PC 上的 **Node 24 + npm**，以及 Android SDK（**compileSdk 36**）、
+需要 **JDK 21**、PC 上的 **Node 24 + npm**，以及 Android SDK（**compileSdk 37**）、
 **NDK 29.0.14206865**、**CMake 3.31.6**（后三个用 `sdkmanager` 装）。
 
 ```powershell

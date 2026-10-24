@@ -71,7 +71,7 @@ jobs:
       - name: 接受 SDK 许可并装 compileSdk 的平台
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36"
+          sdkmanager "platforms;android-37.0"
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           validate-wrappers: true
@@ -119,7 +119,7 @@ jobs:
       - name: 接受 SDK 许可并装 compileSdk 的平台
         run: |
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36"
+          sdkmanager "platforms;android-37.0"
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           validate-wrappers: true

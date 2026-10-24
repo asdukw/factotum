@@ -12,18 +12,11 @@
 | 音色 | 明显更好，且同一音色跨设备一致 | 随 ROM；本地候选模型实测都不达标 |
 | 成本 | 官方免费档 $0 / 百万字节 | 免费 |
 | 联网 | **要联网** | 不联网 |
-| 助手正文 | **离开设备**，发给 `api.fish.audio` | 不出设备 |
 | 维护 | 一个 HTTP 调用 | 24MB native 库 + 模型下载与管理 |
 
-也就是说：**朗读是 Tappet 里一条会把聊天正文送出设备的路径**（另一条是视觉路径，
-那是截图）。这是用户明确选择的方向，边界与做法：
-
-- 请求体只有 `text`（已经过 `SpeakableText` 摊平的正文）与合成参数，不带任何设备标识。
-- key 只存 `SecretVault`（Keystore 封装，见 `voice/VoiceSecretStore.kt`）：不进 BuildConfig、
-  不进日志、不进 `runtime-config.json`。
-- 合成结果只在播放期间存在于 `cacheDir`（临时文件，播完立即删），不落库。
-- **语音输入不受影响**：音频不出设备，也没有云端选项（§6）。
-- 设置页把这句话写在 key 输入框下面（`VoiceScreen`），不是只写在文档里。
+key 只存 `SecretVault`（Keystore 封装，见 `voice/VoiceSecretStore.kt`）：不进 BuildConfig、
+不进日志、不进 `runtime-config.json`。合成结果只在播放期间存在于 `cacheDir`（临时文件，
+播完立即删），不落库。
 
 免费模型是 `s2.1-pro-free`；`s2.1-pro` / `s2-pro` / `s1` 都是付费模型。**model 走 HTTP
 header**，写进 JSON body 会被忽略并静默按付费模型计费 —— `FishTtsEngineTest` 钉住
@@ -124,12 +117,11 @@ VoiceSettings    偏好：自动朗读 / 语速（**非密**）
 
 ## 6. 语音输入：为什么只有本机识别这一条路
 
-朗读现在走云端（Fish Audio，§0），语音输入这边**仍然只有本机这一条路**，不对称是刻意的：
+语音输入只有本机这一条路：
 
 Android 的 `SpeechRecognizer` 在多数 ROM 上把音频发给厂商的云（Google 的、ColorOS 的）。
-这条路上出去的是**用户的声音** —— 比屏幕正文更私密。朗读之所以可以出网，是因为它的输入
-是**助手写的文本**，用户能预期「这段字会被念出来」；麦克风里的东西不是同一回事。
-**多一条出网路径要有明确理由，「更准」还不是。**
+这条路上出去的是**用户的声音** —— 比屏幕正文更私密。**多一条出网路径要有明确理由，
+「更准」还不是。**
 
 Fish Audio 自己的 ASR（`POST /v1/asr`，`transcribe-1` / `transcribe-1-pro`）按音频小时
 计费（$0.36/小时，**不属于免费档**），接进来既多一条出网路径又多一笔成本 —— 暂不采用。

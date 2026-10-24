@@ -48,9 +48,8 @@ user's own cloud account directly, without going through accessibility.
 - **Bring your own model.** Five presets plus custom endpoints. Keys live in a Keystore-wrapped
   vault and are passed to the runtime as environment variables at Node start — never written to
   disk or compiled into the APK.
-- **Voice.** Read-aloud uses Fish Audio's free cloud model (`s2.1-pro-free`): the assistant's text
-  is sent to `api.fish.audio` and the key lives in a Keystore-wrapped vault. The synthesized audio
-  is a temp file deleted after playback. Voice input stays fully on-device — sherpa-onnx with
+- **Voice.** Read-aloud uses Fish Audio's free cloud model (`s2.1-pro-free`); the key lives in a
+  Keystore-wrapped vault. Voice input stays fully on-device — sherpa-onnx with
   Paraformer, segmented by silero VAD, punctuation model installed alongside; the microphone audio
   never leaves the device and is never persisted.
 - **Connectors.** Gmail is read-only: list, search and read. The connector bridge is separate from

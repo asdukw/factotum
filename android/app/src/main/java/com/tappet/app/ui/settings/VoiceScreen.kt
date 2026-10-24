@@ -40,7 +40,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.tappet.app.voice.FISH_MODEL
 
 /**
  * 语音设置页：Fish Audio 的 API key、自动朗读、语速、试听。
@@ -110,12 +109,6 @@ internal fun VoiceScreen(
           onSaveKey = onSaveKey,
         )
       }
-
-      Spacer(Modifier.height(12.dp))
-      InfoBanner(
-        "朗读会把助手回复的正文发给 Fish Audio（$FISH_MODEL，官方免费档）合成语音，" +
-          "这是唯一把正文送出设备的朗读路径。语音输入仍然完全在本机识别。",
-      )
 
       SectionLabel("朗读")
       SettingsGroup {

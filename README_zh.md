@@ -43,10 +43,9 @@ v0.5.0 起它多了**第二条获取信息的通道**：连接器（首版 Gmail
   控件树可读时仍然优先走语义路径。
 - **自带模型**：5 个预选 + 自定义端点。密钥存在 Keystore 封装的 `SecretVault` 里，
   Node 启动时以环境变量传入 —— 不落盘，也不编进 APK。
-- **语音**：朗读走 Fish Audio 的云端免费模型（`s2.1-pro-free`）—— 助手正文会发给
-  `api.fish.audio`，key 存在 Keystore 封装的 vault 里；合成音频只在播放期间落临时文件，播完即删。
-  语音输入仍然完全在本机：sherpa-onnx + Paraformer，silero VAD 切段，标点模型跟着一起装；
-  音频不出设备、不落盘。
+- **语音**：朗读走 Fish Audio 的云端免费模型（`s2.1-pro-free`），key 存在 Keystore 封装的
+  vault 里。语音输入完全在本机：sherpa-onnx + Paraformer，silero VAD 切段，标点模型跟着
+  一起装；音频不出设备、不落盘。
 - **连接器**：Gmail 只读 —— 列邮件 / 检索 / 读正文。连接器桥与无障碍分离，
   无障碍关掉时邮件工具照常可用。
 - **联网搜索**：`web_search` / `web_fetch` 走模型服务商自带的服务器端搜索 ——

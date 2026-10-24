@@ -221,8 +221,12 @@ async function main() {
         `端侧合计 ${fmt(wallMs)}` +
         (thought ? `\n     ${thought.slice(0, 100)}` : ""),
     );
-    // 给界面一点时间落定再截下一帧；否则会连着两次拍到同一屏。
-    await new Promise((r) => setTimeout(r, 1200));
+    // **动作后要等界面落定再截图**。1.2s 实测不够：`LAUNCH_APP` 广播是「发出启动请求」
+    // 就返回（几百毫秒），而 App 冷启动要好几秒 —— 下一帧会拍到启动过程中的过渡画面，
+    // 模型拿着它做决策，看起来像「模型瞎点」。官方 agent 用 `wait` 动作表达同一件事。
+    // 启动类动作给更长的等待。
+    const settleMs = device.unsupported ? 0 : device.action === "LAUNCH_APP" ? 4000 : 1500;
+    await new Promise((r) => setTimeout(r, settleMs));
   }
 
   summarize(steps);

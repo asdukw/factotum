@@ -6,9 +6,10 @@ package com.tappet.app.voice
  * id 是 Fish 上**语音模型**的公开 id，不是 API key；换一条参考音色只是换合成的声音，
  * 调用方式不变。空 id 表示不带 `reference_id`，用 Fish 的默认音色。
  *
- * 这些条目是社区上传的角色音（授权不在我们手里）。挑的是标签里明确写了角色名、且
- * 实测能合成的那几条；同名的模型很多（搜「流萤」有上百条），耳感只有用户能判断，
- * 所以这里放几个候选、由用户在设置页用「试听」挑，而不是替用户定死一条。
+ * 这些条目是社区上传的角色音（授权不在我们手里）。同名的模型很多，选法：
+ * 流萤取用户试听后选定的那条；菲比按公开列表里 `like_count` 最高的那条
+ * （`GET /model?title=菲比`，29 likes，同时也就是用户另一个 App 在用的 id）。
+ * 加进来之前都实测过 `POST /v1/tts` 返回音频。
  *
  * 新增条目的规矩：先在 Fish 上确认 id 存在且 `POST /v1/tts` 返回音频，再加进来；
  * 同一个 id 只出现一次（[FishVoicesTest] 钉住）。
@@ -20,9 +21,8 @@ object FishVoices {
   val ALL: List<TtsVoice> =
     listOf(
       TtsVoice(DEFAULT_ID, "默认音色"),
-      TtsVoice("4ee64e5052834c25b9785b693d3489ab", "流萤（角色音）"),
-      TtsVoice("bcc5fbb281f14f9fbb081b6eb542f9a7", "流萤（叙事）"),
-      TtsVoice("668eb79560fa46449773871d36c594db", "流萤（自然）"),
+      TtsVoice("4ee64e5052834c25b9785b693d3489ab", "流萤"),
+      TtsVoice("8e80c3dcdf894213a10b48e9b08ad8c6", "菲比"),
     )
 
   fun byId(id: String?): TtsVoice? = ALL.firstOrNull { it.id == (id ?: DEFAULT_ID) }

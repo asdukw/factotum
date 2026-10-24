@@ -332,7 +332,6 @@ artifacts in `tools/` or `docs/`, not `tmp/`.
 
 - Conventional commits (`feat(android): ...`, `docs: ...`, `fix(repo): ...`); the body states what
   changed and how it was verified. No secrets or personal data.
-- Develop on a branch; merge back with `git merge --no-ff` or a PR. Don't develop on `master`.
 - Run gates and unit tests before committing; don't commit unverified work.
 - Merging a PR and pushing require explicit user approval.
 

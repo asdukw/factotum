@@ -232,7 +232,9 @@ Tappet 现在没有服务端，没有地方藏。要变成「点一下就连接�
 本地读 `android/local.properties` 的 `tappet.connector.gmailClientId` / `...gmailClientSecret`，
 发布由 `release.yml` 从 GitHub Actions secret 注入（`TAPPET_GMAIL_CLIENT_ID` /
 `TAPPET_GMAIL_CLIENT_SECRET`）。目标是「装完点一下就授权」，用户不必自己去 Google Cloud
-注册应用；留空则退回「要求用户自己填」。
+注册应用；留空则退回「要求用户自己填」。发布包不允许留空：`release.yml` 的「检查连接器凭据」
+读到空值就失败（secret 配在 `release` environment 里，见 `docs/releasing.md`）。本地包照常留空可打 ——
+`local.properties` 不入库，**worktree 里没有这份文件**，从 worktree 打的 debug 包必然要用户自己填。
 
 **为什么不入库**：GitHub 的 push protection 把 Google OAuth 的 client id 与 client secret
 都判成密钥，对管理员一样拦（实测 `GH013 ... Push cannot contain secrets`，连 `master` 直推

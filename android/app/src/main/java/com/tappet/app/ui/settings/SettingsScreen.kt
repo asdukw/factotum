@@ -141,10 +141,22 @@ private fun GeneralSection(
     onPauseOrDispose { }
   }
   SettingsGroup {
+    // 「助手」这一格留给**智能体**（多套人设 + 工具面 + 技能，按会话选）。
+    // 人格切换只是其中「身份与语气」一个切面，占着这个入口会让用户以为智能体已经做了 ——
+    // 所以它单独一行，名字也直说它改的是什么。
+    SettingsRow(
+      glyph = GlyphKind.Box,
+      title = "助手",
+      subtitle = "设置个性化助手（智能体）",
+      enabled = false,
+    ) {
+      StatusBadge("即将推出", BadgeTone.Muted)
+    }
+    SettingsDivider()
     SettingsRow(
       glyph = GlyphKind.Person,
-      title = "助手",
-      subtitle = "人格：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}",
+      title = "人格",
+      subtitle = "说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}",
       onClick = onOpenPersona,
     ) {
       ChevronRight()

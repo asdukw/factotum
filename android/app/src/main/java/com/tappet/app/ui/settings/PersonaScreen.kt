@@ -36,7 +36,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
- * 助手（人格）设置页。
+ * 人格（说话方式）设置页。
+ *
+ * **不是「助手 / 智能体」**：那个能力指多套人设 + 各自的工具面与技能、按会话选；这里只换
+ * 身份与语气，工具面永远是同一套。名字叫「人格」就是为了不占那个入口。
  *
  * 三块，按用户会问的顺序排：**换成谁**（人格）→ **自己想写什么**（自定义）→ **怎么写**
  * （语气契约）。最后一栏是**当前真正发给模型的整份提示词** —— 人格类设置最容易变成「看不见
@@ -76,7 +79,7 @@ internal fun PersonaScreen(
 ) {
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-      SettingsHeader(title = "助手", onBack = onBack)
+      SettingsHeader(title = "人格", onBack = onBack)
       Column(
         modifier =
           Modifier.fillMaxSize()

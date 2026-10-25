@@ -29,6 +29,18 @@ data class WorldEntry(
    * 「粘在这一轮用户消息前」。默认 4 是 ST 的常用值：太浅会被最后一句带跑，太深等于常驻。
    */
   val depth: Int = 4,
+  /**
+   * 次要关键词：主要关键词命中后，还要满足 [secondaryLogic] 才真的插入。
+   *
+   * 这是 ST 里避免「提到学校就把整本校规带上」的主要手段：主词命中只代表话题沾边，
+   * 副词把「沾边」收窄成「确实在问这件事」。
+   */
+  val secondary: List<String> = emptyList(),
+  val secondaryLogic: SecondaryLogic = SecondaryLogic.ANY,
+  /** 排除词：命中任何一条就不插入（优先级最高，先于概率）。 */
+  val exclude: List<String> = emptyList(),
+  /** 命中后的激活概率（百分比）。0 = 永不插入，100 = 必插。 */
+  val probability: Int = 100,
 ) {
   /**
    * 这组关键词是否命中 [text]。
@@ -38,13 +50,26 @@ data class WorldEntry(
    * 永远匹配不上，那条设定就再也不会被检索到。分隔符按卡里真实出现的收，不加 `\s`：
    * 英文关键词自带空格（`night shift`），拆开反而会误命中。
    */
-  fun matches(text: String): Boolean =
-    keys
+  fun matches(text: String): Boolean = keys.any { it.matchesKey(text) }
+
+  /** 单条关键词（可能打包了同义词）是否命中。拆词与过滤规则见类注释。 */
+  internal fun String.matchesKey(text: String): Boolean =
+    split(KEY_SEPARATORS)
       .asSequence()
-      .flatMap { it.split(KEY_SEPARATORS).asSequence() }
       .map { it.trim() }
       .filter { it.isMeaningfulKey() }
       .any { text.contains(it, ignoreCase = true) }
+
+  /** 次要关键词是否满足（[secondary] 为空时视为满足）。 */
+  fun secondarySatisfied(text: String): Boolean =
+    when {
+      secondary.isEmpty() -> true
+      secondaryLogic == SecondaryLogic.ANY -> secondary.any { it.matchesKey(text) }
+      else -> secondary.all { it.matchesKey(text) }
+    }
+
+  /** 排除词命中任何一条就整条不要。 */
+  fun excluded(text: String): Boolean = exclude.any { it.matchesKey(text) }
 
   /**
    * 单个汉字算关键词（「雨」「雪」这种单字触发是卡里常见写法），单个拉丁字母或标点不算 ——
@@ -65,6 +90,25 @@ data class WorldEntry(
 
     /** 基本区汉字。单字 key 只在这个范围内放行。 */
     val CJK_RANGE = 0x4E00..0x9FFF
+  }
+}
+
+/** 次要关键词的判定方式。对齐 ST 的 `selectiveLogic`，但我们只留两种：任一命中 / 全部命中。 */
+@Serializable
+enum class SecondaryLogic {
+  ANY,
+  ALL,
+  ;
+
+  companion object {
+    /**
+     * 从 ST 的 `selectiveLogic` 数字映射。
+     *
+     * ST 有四种：0=AND_ANY、3=AND_ALL，另两种是「非」语义。非语义在真卡里几乎不见，
+     * 而且容易把条目变成「永远不出现」 —— 这里统一退化成 ANY，并在导入提示里说明，
+     * 而不是悄悄丢掉一半行为。
+     */
+    fun fromRaw(raw: Int?): SecondaryLogic = if (raw == 3) ALL else ANY
   }
 }
 

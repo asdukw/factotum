@@ -33,6 +33,8 @@ import com.tappet.app.agent.CharacterCard
 import com.tappet.app.agent.CharacterMemory
 import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
+import com.tappet.app.agent.SecondaryLogic
+import com.tappet.app.agent.WorldEntry
 
 /**
  * 一张角色卡的详情页。
@@ -144,7 +146,7 @@ internal fun CharacterDetailScreen(
                 .sortedByDescending { it.constant }
                 .forEach { entry ->
                   Text(
-                    text = if (entry.constant) "常驻" else entry.keys.joinToString("、").ifBlank { "无关键词" },
+                    text = entryLabel(entry),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
@@ -176,6 +178,26 @@ internal fun CharacterDetailScreen(
       }
     }
   }
+}
+
+/**
+ * 一条世界设定在列表里的一行标签：常驻 / 关键词 · 还需副词 · 排除词 · 概率 · 深度。
+ *
+ * 把编排参数摆出来，是因为「为什么这条设定没出现」只能从这里看出来 ——
+ * 用户至少能自己判断是不是副关键词或概率把它挡掉了。
+ */
+private fun entryLabel(entry: WorldEntry): String {
+  if (entry.constant) return "常驻 · 每轮都在"
+  val parts = ArrayList<String>()
+  parts += entry.keys.joinToString("、").ifBlank { "无关键词" }
+  if (entry.secondary.isNotEmpty()) {
+    val joiner = if (entry.secondaryLogic == SecondaryLogic.ALL) " 且 " else " 或 "
+    parts += "还需$joiner${entry.secondary.joinToString("、")}"
+  }
+  if (entry.exclude.isNotEmpty()) parts += "排除 ${entry.exclude.joinToString("、")}"
+  if (entry.probability < 100) parts += "${entry.probability}% 概率"
+  parts += "深度 ${entry.depth}"
+  return parts.joinToString(" · ")
 }
 
 /**

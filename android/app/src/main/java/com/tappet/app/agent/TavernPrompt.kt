@@ -1,5 +1,7 @@
 package com.tappet.app.agent
 
+import kotlin.random.Random
+
 /**
  * 发出去的一条消息。
  *
@@ -25,11 +27,11 @@ data class TavernMessage(val role: String, val content: String) {
  * 纯函数、不碰 Context：编排规则是这套东西里最容易改错、也最该被单测钉住的部分。
  */
 object TavernPrompt {
-  /** 一次最多带几条命中条目。再多会把设定压在剧情之上，模型开始背书。 */
-  internal const val MAX_ENTRIES = 6
+  /** 一次最多带几条命中条目（预算的实现在 [WorldScan]，这里只做常量转发）。 */
+  internal const val MAX_ENTRIES = WorldScan.MAX_ENTRIES
 
   /** 命中条目合计字符上限（粗算 token：中文约一字一 token）。 */
-  internal const val MAX_CHARS = 1_600
+  internal const val MAX_CHARS = WorldScan.MAX_CHARS
 
   /** 关键词只回看最近几条用户消息 —— 「她呢」这种指代只有连着上文才命中。 */
   internal const val LOOK_BACK = 3
@@ -47,9 +49,11 @@ object TavernPrompt {
     memory: String,
     turns: List<TavernMessage>,
     preset: TavernPreset = TavernPreset.DEFAULT,
+    /** 概率激活用的随机源；单测传固定种子，线上用默认。 */
+    random: Random = Random.Default,
   ): List<TavernMessage> {
     val history = turns.filter { it.content.isNotBlank() }
-    val hits = hits(card, keywordSource(history)).filter { !it.constant }
+    val hits = hits(card, keywordSource(history), random)
     // 第一轮 = 还没有任何助手回复。调用时这一轮的用户消息已经落库并进了 [turns]，
     // 所以不能拿 history.isEmpty() 判断 —— 那会让开场白永远出不来。
     val firstTurn = history.none { it.role == TavernMessage.ASSISTANT }
@@ -82,11 +86,9 @@ object TavernPrompt {
     firstTurn: Boolean,
     hasLore: Boolean,
   ): Map<String, String> {
+    // 常驻先按预算裁一遍（超限会截断并注明），再统一做宏替换
     val constant =
-      card.world
-        .filter { it.constant && it.content.isNotBlank() }
-        .sortedBy { it.order }
-        .joinToString("\n") { "· ${CharacterStore.renderText(it.content, card)}" }
+      WorldScan.constantBlock(card.world.map { it.copy(content = CharacterStore.renderText(it.content, card)) })
     return buildMap {
       put("char", card.name)
       put("user", USER_NAME)
@@ -125,26 +127,6 @@ object TavernPrompt {
    * 与 ST 的差距写在明处：这里只有「关键词包含」+ 条数/字数上限，没有递归扫描、逻辑与或、
    * 概率激活、sticky/cooldown —— 那些要等世界书编辑器做出来再说，先把「能按需插进中间」跑通。
    */
-  internal fun hits(card: CharacterCard, text: String): List<WorldEntry> {
-    if (text.isBlank()) return emptyList()
-    val matched =
-      card.world
-        .sortedBy { it.order }
-        .filter { !it.constant && it.content.isNotBlank() }
-        .filter { entry -> entry.matches(text) }
-
-    // 预算用完就收；单条超预算只跳过它（后面的也许更短），不整体截断。
-    var budget = MAX_CHARS
-    val out = ArrayList<WorldEntry>(MAX_ENTRIES)
-    var index = 0
-    while (index < matched.size && out.size < MAX_ENTRIES) {
-      val entry = matched[index]
-      if (entry.content.length <= budget) {
-        budget -= entry.content.length
-        out += entry
-      }
-      index++
-    }
-    return out
-  }
+  internal fun hits(card: CharacterCard, text: String, random: Random = Random.Default): List<WorldEntry> =
+    WorldScan.select(card.world, text, random)
 }

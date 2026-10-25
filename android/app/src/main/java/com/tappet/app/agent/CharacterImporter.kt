@@ -193,19 +193,37 @@ object CharacterImporter {
       val entry = element.jsonObject
       val content = entry["content"]?.string()?.trim().orEmpty()
       if (content.isEmpty()) return@mapNotNull null
-      val keys =
-        entry["keys"]?.let { (it as? JsonArray)?.mapNotNull { key -> key.string() } }
-          ?: entry["key"]?.let { listOfNotNull(it.string()) }
-          ?: emptyList()
+      val extensions = entry["extensions"]?.jsonObject
       WorldEntry(
-        keys = keys.filter { it.isNotBlank() },
+        keys = readKeys(entry, "keys", "key"),
         content = content,
         order = entry["insertion_order"]?.jsonPrimitive?.intOrNull ?: 0,
         // `constant` 在 v2 规范里是「每轮都注入」；`enabled: false` 的条目直接跳过
         constant = entry["constant"]?.jsonPrimitive?.booleanOrNull == true,
+        // 深度/概率在 v3 卡里放在 extensions 里，v2 卡偶尔放在顶层 —— 两处都认
+        depth = extensions?.get("depth")?.jsonPrimitive?.intOrNull ?: entry["depth"]?.jsonPrimitive?.intOrNull ?: 4,
+        secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
+        secondaryLogic = SecondaryLogic.fromRaw(entry["selectiveLogic"]?.jsonPrimitive?.intOrNull),
+        exclude = readKeys(entry, "exclude_keys", "excludeKeys"),
+        probability =
+          extensions?.get("probability")?.jsonPrimitive?.intOrNull
+            ?: entry["probability"]?.jsonPrimitive?.intOrNull
+            ?: 100,
       ).takeIf { entry["enabled"]?.jsonPrimitive?.booleanOrNull != false }
     }
   }
+
+  /** 读一组关键词：数组取每项，单字符串当一条；空串丢掉（真卡里偶有空元素）。 */
+  private fun readKeys(entry: JsonObject, vararg names: String): List<String> =
+    names.firstNotNullOfOrNull { name ->
+      when (val value = entry[name]) {
+        is JsonArray -> value.mapNotNull { it.string() }
+        null -> null
+        else -> listOfNotNull(value.string())
+      }
+    }
+      ?.filter { it.isNotBlank() }
+      ?: emptyList()
 
   private fun newId(): String =
     "imported-" + java.util.UUID.randomUUID().toString().replace("-", "").take(10)

@@ -229,6 +229,7 @@ fun ChatScreen(
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
     onRegenerate = viewModel.regenerate,
     onDeleteTurn = viewModel.deleteLastTurn,
+    onRetryFrom = viewModel.retryFrom,
     modifier = modifier,
   )
 }
@@ -268,6 +269,7 @@ internal fun ChatScreen(
   onOpenCharacterDetail: (String) -> Unit = {},
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
+  onRetryFrom: (String) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -333,6 +335,7 @@ internal fun ChatScreen(
       onLeaveRoleplay = onLeaveRoleplay,
       onRegenerate = onRegenerate,
       onDeleteTurn = onDeleteTurn,
+      onRetryFrom = onRetryFrom,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
@@ -613,6 +616,7 @@ private fun ChatBody(
   onLeaveRoleplay: () -> Unit = {},
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
+  onRetryFrom: (String) -> Unit = {},
 ) {
   // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
@@ -661,6 +665,7 @@ private fun ChatBody(
         speakingId = voiceState?.messageId,
         onRegenerate = onRegenerate,
         onDeleteTurn = onDeleteTurn,
+        onRetryFrom = onRetryFrom,
       )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
@@ -725,6 +730,7 @@ private fun MessageList(
   speakingId: String?,
   onRegenerate: () -> Unit,
   onDeleteTurn: () -> Unit,
+  onRetryFrom: (String) -> Unit = {},
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
   // 而删中间一轮会让后面的对话悬在半空。
@@ -745,6 +751,7 @@ private fun MessageList(
         tail = message.id == tailId && !state.isStreaming,
         onRegenerate = onRegenerate,
         onDeleteTurn = onDeleteTurn,
+        onRetryFrom = onRetryFrom,
       )
     }
   }
@@ -1419,6 +1426,7 @@ private fun MessageBubble(
   tail: Boolean = false,
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
+  onRetryFrom: (String) -> Unit = {},
 ) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
@@ -1429,6 +1437,7 @@ private fun MessageBubble(
       tail = tail,
       onRegenerate = onRegenerate,
       onDeleteTurn = onDeleteTurn,
+      onRetryFrom = onRetryFrom,
     )
   }
 }
@@ -1460,6 +1469,7 @@ private fun AssistantMessage(
   tail: Boolean = false,
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
+  onRetryFrom: (String) -> Unit = {},
 ) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
@@ -1486,6 +1496,11 @@ private fun AssistantMessage(
           Spacer(Modifier.width(2.dp))
           TextAction(text = "重写", onClick = onRegenerate)
           TextAction(text = "删这轮", onClick = onDeleteTurn)
+        } else {
+          // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，
+          // 删了它会让后面悬空。给的是「从此处重来」—— 连同后面的一起丢掉，回到这句话重新回答。
+          Spacer(Modifier.width(2.dp))
+          TextAction(text = "从此处重来", onClick = { onRetryFrom(message.id) })
         }
       }
     }

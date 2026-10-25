@@ -549,6 +549,41 @@ class ChatViewModel(
     }
   }
 
+  /**
+   * 从某一轮重来：把那条助手回复和它之后的一切丢掉，再把被重答的那句用户话重新发一遍。
+   *
+   * 为什么是「就地截断」而不是「分支树」：现在的消息表是线性 `seq`，同一轮并存多份候选需要
+   * parent / 候选组两列，还要在界面里做左右滑。硬塞进现有结构会变成「删了什么、留了什么」
+   * 说不清 —— 那比没有这个功能更糟。所以这里明说代价：**旧的那条回复真的没了**。
+   *
+   * 复用的是 [send] 那条已经被真机验过的路：先删库、改状态、把话填回输入框、再发。
+   */
+  val retryFrom: (String) -> Unit = lambda@{ messageId ->
+    val snapshot = _state.value
+    if (!snapshot.ready || snapshot.isStreaming || snapshot.switchingRole) return@lambda
+    val index = snapshot.messages.indexOfFirst { it.id == messageId }
+    if (index < 0 || snapshot.messages[index].role != ChatRole.Assistant) return@lambda
+    // 连它回应的那句用户话一起丢掉，重发时才不会出现两份一样的提问
+    val from = if (index > 0 && snapshot.messages[index - 1].role == ChatRole.User) index - 1 else index
+    val dropped = snapshot.messages.subList(from, snapshot.messages.size).toList()
+    // 要重答的是这条回复回应过的那句用户话 —— 它**就在要删的那一段里**，
+    // 所以必须先从原列表取出来（第一轮时 take(from) 是空的，那样什么都不会发生）。
+    val prompt =
+      snapshot.messages.getOrNull(index - 1)?.takeIf { it.role == ChatRole.User }?.content
+        ?: snapshot.messages.take(index).lastOrNull { it.role == ChatRole.User }?.content.orEmpty()
+    if (prompt.isBlank()) return@lambda
+    viewModelScope.launch {
+      runCatching { dropped.forEach { store.deleteMessage(it.id) } }
+        .onFailure { throwable ->
+          reportStorageFailure(throwable)
+          return@launch
+        }
+      _state.update { state -> state.copy(messages = state.messages.dropLast(dropped.size)) }
+      onInputChange(prompt)
+      send()
+    }
+  }
+
   /** 中止本次流式响应，已收到的内容保留（库里记为 Stopped）。 */
   val stop: () -> Unit = { streamJob?.cancel() }
 

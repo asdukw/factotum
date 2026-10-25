@@ -49,6 +49,33 @@ jobs:
           submodules: recursive # 设备工具插件在独立仓库
           persist-credentials: false
 
+      # Secret 缺失必须在下载 SDK / NDK、装配 runtime 之前失败；否则一次拼写错误会浪费整轮构建时间。
+      # 这里只检查是否非空，绝不打印 secret 值。
+      - name: 快速检查发布 secrets
+        env:
+          FACTOTUM_KEYSTORE_BASE64: ${{ secrets.FACTOTUM_KEYSTORE_BASE64 }}
+          FACTOTUM_KEYSTORE_PASSWORD: ${{ secrets.FACTOTUM_KEYSTORE_PASSWORD }}
+          FACTOTUM_KEY_ALIAS: ${{ secrets.FACTOTUM_KEY_ALIAS }}
+          FACTOTUM_KEY_PASSWORD: ${{ secrets.FACTOTUM_KEY_PASSWORD }}
+          FACTOTUM_GMAIL_CLIENT_ID: ${{ secrets.FACTOTUM_GMAIL_CLIENT_ID }}
+          FACTOTUM_GMAIL_CLIENT_SECRET: ${{ secrets.FACTOTUM_GMAIL_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \\
+            FACTOTUM_KEYSTORE_BASE64 \\
+            FACTOTUM_KEYSTORE_PASSWORD \\
+            FACTOTUM_KEY_ALIAS \\
+            FACTOTUM_KEY_PASSWORD \\
+            FACTOTUM_GMAIL_CLIENT_ID \\
+            FACTOTUM_GMAIL_CLIENT_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::缺少 release environment secret $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then exit 1; fi
+
       - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
       # tag 与包内版本号是**两处独立的信息**：versionName 来自 build.gradle.kts，tag 来自你推的那个名字。
       # 忘了改 build.gradle 就会发出「叫 v0.9.0、装上去显示 0.8.0」的包 —— 用户与应用内更新

@@ -5,6 +5,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.tappet.app.ui.chat.ChatScreen
+import com.tappet.app.ui.settings.CharacterScreen
 import com.tappet.app.ui.settings.ConnectorsScreen
 import com.tappet.app.ui.settings.GmailConnectorScreen
 import com.tappet.app.ui.settings.PersonaScreen
@@ -35,6 +36,7 @@ fun MainNavigation() {
             onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
             onOpenVoice = { backStack.add(Voice) },
             onOpenPersona = { backStack.add(Persona) },
+            onOpenCharacters = { backStack.add(Characters) },
           )
         }
         entry<Providers> {
@@ -69,6 +71,13 @@ fun MainNavigation() {
         }
         entry<Persona> {
           PersonaScreen(onBack = { backStack.removeLastOrNull() })
+        }
+        entry<Characters> {
+          CharacterScreen(
+            onBack = { backStack.removeLastOrNull() },
+            // 开始扮演后直接回聊天页：用户点这一下是想马上说话，不是想在设置里看结果。
+            onStartChat = { repeat(backStack.size - 1) { backStack.removeLastOrNull() } },
+          )
         }
       },
   )

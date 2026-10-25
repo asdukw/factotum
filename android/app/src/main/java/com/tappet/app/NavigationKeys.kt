@@ -32,3 +32,6 @@ import kotlinx.serialization.Serializable
 
 /** 助手（人格）设置（设置 → 助手）：换人格、写自定义 soul、语气契约开关。 */
 @Serializable data object Persona : NavKey
+
+/** 角色库（设置 → 角色）：选一张角色卡开始角色扮演。 */
+@Serializable data object Characters : NavKey

@@ -51,6 +51,7 @@ fun SettingsScreen(
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit,
   onOpenPersona: () -> Unit,
+  onOpenCharacters: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -70,6 +71,7 @@ fun SettingsScreen(
     onOpenScheduledTasks = onOpenScheduledTasks,
     onOpenVoice = onOpenVoice,
     onOpenPersona = onOpenPersona,
+    onOpenCharacters = onOpenCharacters,
     modifier = modifier,
   )
 }
@@ -83,6 +85,7 @@ internal fun SettingsScreen(
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit = {},
   onOpenPersona: () -> Unit = {},
+  onOpenCharacters: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -108,6 +111,7 @@ internal fun SettingsScreen(
           autoRead = state.voiceAutoRead,
           onOpenVoice = onOpenVoice,
           onOpenPersona = onOpenPersona,
+          onOpenCharacters = onOpenCharacters,
         )
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
@@ -131,13 +135,16 @@ private fun GeneralSection(
   autoRead: Boolean,
   onOpenVoice: () -> Unit,
   onOpenPersona: () -> Unit,
+  onOpenCharacters: () -> Unit,
 ) {
   val context = LocalContext.current
   // 人格是「选中即生效」的偏好，没有可观察的数据源 —— 从助手页返回时必须重读，
   // 否则这一行还停在上一次的人格名（与上面无障碍开关同一个处理）。
   var persona by remember { mutableStateOf(PersonaStore.selected(context)) }
+  var activeCharacter by remember { mutableStateOf(PersonaStore.selectedCharacter(context)) }
   LifecycleResumeEffect(Unit) {
     persona = PersonaStore.selected(context)
+    activeCharacter = PersonaStore.selectedCharacter(context)
     onPauseOrDispose { }
   }
   SettingsGroup {
@@ -156,8 +163,23 @@ private fun GeneralSection(
     SettingsRow(
       glyph = GlyphKind.Person,
       title = "人格",
-      subtitle = "说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}",
+      // 扮演中的人格不生效：不写清楚，用户会以为人格设置坏了。
+      subtitle =
+        if (activeCharacter != null) {
+          "角色扮演中，人格暂不生效"
+        } else {
+          "说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}"
+        },
       onClick = onOpenPersona,
+    ) {
+      ChevronRight()
+    }
+    SettingsDivider()
+    SettingsRow(
+      glyph = GlyphKind.Sparkles,
+      title = "角色",
+      subtitle = characterSubtitle(activeCharacter),
+      onClick = onOpenCharacters,
     ) {
       ChevronRight()
     }

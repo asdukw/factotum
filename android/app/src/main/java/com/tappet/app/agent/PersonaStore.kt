@@ -55,6 +55,14 @@ object PersonaStore {
   const val DEFAULT_ID = "default"
 
   /**
+   * 角色卡选择的存储前缀。
+   *
+   * 人格与角色共用 `selected` 一个键：两者互斥（选了角色就不再是某个人格），
+   * 分成两个键会长出「两个都非空时听谁的」这种必须靠文档回答的问题。
+   */
+  private const val CHARACTER_PREFIX = "char:"
+
+  /**
    * **操作契约：固定，不随人格变化**。
    *
    * 这段是「手机 agent 怎么干活」的全部规则，与身份无关 —— 换成「温柔的陪伴者」也照样要
@@ -127,6 +135,23 @@ object PersonaStore {
     prefs(context).edit { putString(KEY_SELECTED, id) }
   }
 
+  /** 选中一张角色卡（会覆盖人格选择）。 */
+  fun selectCharacter(context: Context, id: String) {
+    select(context, CHARACTER_PREFIX + id)
+  }
+
+  /** 取消角色扮演，回到默认人格。 */
+  fun clearCharacter(context: Context) {
+    select(context, DEFAULT_ID)
+  }
+
+  /** 当前是否在角色扮演；是则返回那张卡（卡被删了就返回 null，并让 [compose] 回落到人格）。 */
+  fun selectedCharacter(context: Context): CharacterCard? {
+    val id = selectedId(context)
+    if (!id.startsWith(CHARACTER_PREFIX)) return null
+    return CharacterStore.byId(context, id.removePrefix(CHARACTER_PREFIX))
+  }
+
   /** 当前选中的人格；id 失效时用内置默认（而不是第一个 —— 顺序依赖太脆）。 */
   fun selected(context: Context): Soul =
     souls(context).firstOrNull { it.id == selectedId(context) }
@@ -144,10 +169,15 @@ object PersonaStore {
     prefs(context).edit { putBoolean(KEY_TONE, enabled) }
   }
 
-  /** 交给 dsh 的**完整**系统提示（宿主把它塞进 `TAPPET_PERSONA_PREFIX`）。 */
+  /**
+   * 交给 dsh 的**完整**系统提示（宿主把它塞进 `TAPPET_PERSONA_PREFIX`）。
+   *
+   * 角色扮演时的人格正文由 [CharacterStore.renderPrompt] 渲染；操作契约仍然追加在后面 ——
+   * P0 没有独立的纯聊 preset，设备工具还在，所以角色也得知道自己能操作手机（见渲染规则最后一条）。
+   */
   fun compose(context: Context): String =
     compose(
-      soulBody = selected(context).body,
+      soulBody = selectedCharacter(context)?.let { CharacterStore.renderPrompt(it) } ?: selected(context).body,
       operating = OPERATING_CONTRACT,
       tone = if (toneContractEnabled(context)) TONE_CONTRACT else null,
     )

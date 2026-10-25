@@ -339,3 +339,11 @@ internal fun DetailTabBar(selected: DetailTab, onSelect: (DetailTab) -> Unit) {
     }
   }
 }
+
+/** 提供商摘要：设置首页与「模型与服务」页共用，两处不能说出不同的状态。 */
+internal fun providerSubtitle(state: SettingsViewModel.UiState): String {
+  val name = state.providerName ?: return "未启用 —— 选一个提供商并填写 API Key"
+  val keyHint = if (state.configured) "" else " · 缺 API Key"
+  val model = state.providerModel.ifBlank { "未选择模型" }
+  return "$name · $model$keyHint"
+}

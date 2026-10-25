@@ -5,8 +5,11 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.tappet.app.ui.chat.ChatScreen
+import com.tappet.app.ui.settings.AboutScreen
 import com.tappet.app.ui.settings.ConnectorsScreen
+import com.tappet.app.ui.settings.ExecutionSettingsScreen
 import com.tappet.app.ui.settings.GmailConnectorScreen
+import com.tappet.app.ui.settings.ModelServicesScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.ScheduledTasksScreen
@@ -29,11 +32,27 @@ fun MainNavigation() {
         entry<Settings> {
           SettingsScreen(
             onBack = { backStack.removeLastOrNull() },
-            onOpenProviders = { backStack.add(Providers) },
+            onOpenModelServices = { backStack.add(ModelServices) },
+            onOpenExecution = { backStack.add(ExecutionSettings) },
             onOpenConnectors = { backStack.add(Connectors) },
-            onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
             onOpenVoice = { backStack.add(Voice) },
+            onOpenAbout = { backStack.add(About) },
           )
+        }
+        entry<ModelServices> {
+          ModelServicesScreen(
+            onBack = { backStack.removeLastOrNull() },
+            onOpenProviders = { backStack.add(Providers) },
+          )
+        }
+        entry<ExecutionSettings> {
+          ExecutionSettingsScreen(
+            onBack = { backStack.removeLastOrNull() },
+            onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
+          )
+        }
+        entry<About> {
+          AboutScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<Providers> {
           ProvidersScreen(

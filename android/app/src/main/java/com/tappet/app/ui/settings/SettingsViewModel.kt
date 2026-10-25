@@ -3,7 +3,6 @@ package com.tappet.app.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.tappet.app.agent.AgentConfigStore
-import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.connector.ConnectorStore
 import com.tappet.app.connector.GMAIL_CONNECTOR_ID
 import com.tappet.app.voice.VoiceSettings
@@ -23,8 +22,6 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
     val providerModel: String = "",
     /** 当前配置能不能真的发请求（端点 + 模型 + 密钥齐全）。 */
     val configured: Boolean = false,
-    /** 手机上的 Linux 环境（Termux 桥）配好没有。 */
-    val linuxConfigured: Boolean = false,
     /** 连接器是否已授权。只读「有没有凭据」，读不到凭据本体。 */
     val gmailConnected: Boolean = false,
     val gmailAccount: String? = null,
@@ -40,9 +37,8 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
   }
 
   fun reload() {
-    // 这两项与模型提供商互不相干（一个是本机执行环境，一个是云端只读数据源），
-    // 所以它们在**两条返回路径上都要写进去** —— 没有启用任何提供商时同样要显示。
-    val linux = TermuxBridgeStore.state(appContext).enabled
+    // 连接器与语音开关跟模型提供商互不相干，所以两条返回路径都要写进去 ——
+    // 没有启用任何提供商时同样要显示。
     val connector = ConnectorStore.status(appContext, GMAIL_CONNECTOR_ID)
     val voiceAutoRead = VoiceSettings.autoRead(appContext)
     val preset = AgentConfigStore.enabledPreset(appContext)
@@ -51,7 +47,6 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
         UiState(
           providerName = null,
           configured = false,
-          linuxConfigured = linux,
           gmailConnected = connector.connected,
           gmailAccount = connector.account,
           voiceAutoRead = voiceAutoRead,
@@ -64,7 +59,6 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
         providerName = settings.name,
         providerModel = settings.model,
         configured = AgentConfigStore.current(appContext).isConfigured,
-        linuxConfigured = linux,
         gmailConnected = connector.connected,
         gmailAccount = connector.account,
         voiceAutoRead = voiceAutoRead,

@@ -83,14 +83,8 @@ internal fun ConnectorsScreen(
 
 @Composable
 private fun ConnectorRow(entry: ConnectorEntry, onOpenGmail: () -> Unit) {
-  // 未做的连接器不可点：点进去是一个空页面，比一行「即将推出」更让人困惑。
-  val onClick = if (entry.comingSoon) {
-    null
-  } else if (entry.id == GMAIL_CONNECTOR_ID) {
-    onOpenGmail
-  } else {
-    null
-  }
+  // 只有已实现的连接器可点；点进一个空页面比不可点更让人困惑。
+  val onClick = if (entry.id == GMAIL_CONNECTOR_ID) onOpenGmail else null
   SettingsRow(
     glyph = GlyphKind.Mail,
     // 账号放**副标题**：邮箱比连接器名长得多，放标题会被折成两行，
@@ -98,15 +92,10 @@ private fun ConnectorRow(entry: ConnectorEntry, onOpenGmail: () -> Unit) {
     title = entry.title,
     subtitle = entry.account ?: entry.subtitle,
     onClick = onClick,
-    enabled = !entry.comingSoon,
   ) {
-    if (entry.comingSoon) {
-      StatusBadge("即将推出", BadgeTone.Muted)
-    } else {
-      StatusBadge(
-        text = if (entry.connected) "已连接" else "未连接",
-        tone = if (entry.connected) BadgeTone.Enabled else BadgeTone.Muted,
-      )
-    }
+    StatusBadge(
+      text = if (entry.connected) "已连接" else "未连接",
+      tone = if (entry.connected) BadgeTone.Enabled else BadgeTone.Muted,
+    )
   }
 }

@@ -19,8 +19,6 @@ internal data class ConnectorEntry(
   val connected: Boolean,
   /** 已连接时显示在标题上的账号；未连接为 null。 */
   val account: String?,
-  /** true = 还没做，行不可点、右侧显示「即将推出」。 */
-  val comingSoon: Boolean = false,
 )
 
 /**
@@ -50,16 +48,6 @@ internal class ConnectorsViewModel(private val appContext: Context) : ViewModel(
         subtitle = if (gmail.connected) "已连接 · 只读工具" else "列出、检索、读取邮件（只读）",
         connected = gmail.connected,
         account = gmail.account,
-      ),
-      // 还没做。摆在这里而不是等做完再加，是为了让「连接器」这个概念在界面上先立住 ——
-      // 用户看到的是一个可扩展的位置，而不是一个只有 Gmail 的孤例。
-      ConnectorEntry(
-        id = "outlook",
-        title = "Outlook",
-        subtitle = "微软账号的邮件（还没做）",
-        connected = false,
-        account = null,
-        comingSoon = true,
       ),
     )
   }

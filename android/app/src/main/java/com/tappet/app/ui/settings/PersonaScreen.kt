@@ -159,7 +159,9 @@ private fun CustomEditor(saved: String, onSave: (String) -> Unit) {
     minLines = 6,
     maxLines = 14,
     label = { Text("你自己的 soul.md") },
-    placeholder = { Text("可以只写身份与语气，操作规则会自动追加在后面。头部支持 --- / name: / summary: ---") },
+    placeholder = {
+      Text("可以只写身份与语气，操作规则会自动追加在后面。头部支持 --- / name: / summary: ---；正文里不要写 {{...}}，那会被 dsh 当成提示词变量")
+    },
     textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
   )
   Row(

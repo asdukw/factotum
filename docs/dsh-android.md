@@ -28,7 +28,7 @@
 ## 2. 架构
 
 ```
-Tappet APK（单进程）
+Factotum APK（单进程）
 ├─ Kotlin / Compose 前端（现有聊天 UI 或新界面）
 ├─ AccessibilityService + DeviceBridge（现有执行层，四问/8 个桥动作）
 ├─ BridgeServer（127.0.0.1 + token，把 DeviceAction 暴露成 JSON HTTP）
@@ -103,8 +103,8 @@ Tappet APK（单进程）
 
 ```powershell
 adb shell am broadcast --include-stopped-packages `
-  -n com.tappet.app/.node.NodeDebugReceiver `
-  -a com.tappet.app.debug.NODE --es op START
+  -n com.factotum.app/.node.NodeDebugReceiver `
+  -a com.factotum.app.debug.NODE --es op START
 ```
 
 **P0 结论**：Android 上嵌入 Node 24 可用，环境变量与数据目录按 EMBEDDING.md
@@ -199,7 +199,7 @@ adb shell am broadcast --include-stopped-packages `
   `DshStreamer`（dsh 事件 → 聊天流：状态文案 → 助手正文）。聊天页默认走 DshStreamer，
   手写 `LlmClient` 仅保留参考，不再实现 `ChatStreamer`。
 - **模拟器路径**：API 36 `google_apis;x86_64` 镜像 + WHPX；`fetch-libnode.ps1 -Abi x86_64` +
-  `:app:assembleDebug -Ptappet.abis=x86_64`（默认 ABI 仍是真机 arm64）。端到端任务
+  `:app:assembleDebug -Pfactotum.abis=x86_64`（默认 ABI 仍是真机 arm64）。端到端任务
   （「打开设置读主要选项」「读当前屏幕」）均通过；单测通过。
 - **本轮修的两个 bug**：
   1. **会话 id 冲突**：dsh 会话持久化在 `DSH_HOME`，App 进程重启后再用同一 id `session/prompt`
@@ -218,7 +218,7 @@ adb shell am broadcast --include-stopped-packages `
 - **流程**：arm64 `assembleDebug` → `adb install -r` → 重新启用无障碍 → 启动 App。
 - **结果**：内嵌 Node 启动 ~1s、web server 绑定随机端口，WebView 完整渲染 dsh GUI；
   WebView 里发「Read the current screen…」，agent 5 秒完成，经 android-tools 调 `read_ui_tree`
-  正确回答当前是 Tappet（`com.tappet.app`）——WebView → gateway → session → phone preset →
+  正确回答当前是 Factotum（`com.factotum.app`）——WebView → gateway → session → phone preset →
   无障碍桥整条链路在真机打通。
 - **坑（已修）**：
   1. **WebView 白屏**：ColorOS 上 `html/body` 的 `height:100%` 与 `100vh` 都解析成 0px
@@ -265,11 +265,11 @@ adb shell am broadcast --include-stopped-packages `
   在输入框发「Call read_ui_tree once and reply with ONLY the package name.」：
   - 气泡先显示「已提交，等待模型…」+ 光标，发送键变「停止」；
   - **工具卡**按预期出现，收尾成「完成」，点开有「参数 / 结果」两栏；
-  - 助手回答 `com.tappet.app`（实际经无障碍读屏拿到），整条 dsh → 桥 → 无障碍链路在真机跑通；
+  - 助手回答 `com.factotum.app`（实际经无障碍读屏拿到），整条 dsh → 桥 → 无障碍链路在真机跑通；
   - 杀进程重进（force-stop + 重启）后，工具卡仍随消息一起从库里恢复 —— 落库 / 归位正确；
   - 会话抽屉列出会话（标题 + 时间）、新建 / 删按钮与底部 Web / 探针入口都在。
     （2026-10-17：底部那两个入口已删除，只剩「设置」。）
-  - 坑：装完第一次用到无障碍时会弹 ColorOS「检测到 Tappet 获取无障碍权限」倒计时弹窗，
+  - 坑：装完第一次用到无障碍时会弹 ColorOS「检测到 Factotum 获取无障碍权限」倒计时弹窗，
     要点「保持开启」；否则服务会被关掉（AGENTS.md 已记，这里再确认一次）。
   - 未覆盖：抽屉左滑手势、长按选中复制、Web 预览页的新返回栏（这几项靠 Compose 预览 / 后续真机补）。
 - **仍缺**：Web 面板里的会话不进 Room（两套会话各自独立，暂不合并）；工具卡的 `meta`
@@ -299,7 +299,7 @@ adb shell am broadcast --include-stopped-packages `
 
 - **wait 下线**：等待交给模型自身的思考阶段与重复 `read_ui_tree` 轮询；插件面收敛为
   8 个通用原语（纯桥动作）。插件仓库提交 `feat: 下线 wait 工具`（smoke 断言 8 个工具、
-  契约测试去掉 wait 分支），tappet 更新 submodule 指针，phone profile 两处 persona 去掉
+  契约测试去掉 wait 分支），factotum 更新 submodule 指针，phone profile 两处 persona 去掉
   「等待」；`bundle-dsh.ps1` 重打运行时，zip 内确认无 wait 工具、无「等待」文案。
 - **原生思考折叠块（参考 dsh Web 端 `ReasoningRow`）**：`assistant/message` 的
   `message.content` 里 pi-ai adapter 会产出 `{type:'reasoning'}` block；`DshProtocol`
@@ -316,14 +316,14 @@ adb shell am broadcast --include-stopped-packages `
 > 服务器把进程内的 `agent/assistant-stream` 转成 `session.stream` 通知；Kotlin 侧
 > （`DshProtocol` / `DshStreamer` / `ChatViewModel`）逐字上屏、UI 50ms 合并刷新，步进成品
 > （`assistant/message`）到达时**只替换本步**追加的文本（多步回答的前几步不会被吃掉）。
-> 实测：一条 795 字的回复 = 128 个增量帧（`[tappet] assistant stream end: frames=128 textChars=795`）。
+> 实测：一条 795 字的回复 = 128 个增量帧（`[factotum] assistant stream end: frames=128 textChars=795`）。
 - **验证（JVM）**：插件 `npm test`（8 个工具 + bridge contract）；Android
   `:app:testDebugUnitTest`（DshProtocol reasoning block、ChatViewModel reasoning 落库/恢复、
   ReasoningSummary）、`:app:assembleDebug` 全绿。
 - **验证（真机，一加 15T / ColorOS，2026-10-06）**：装包后发
   「Call read_ui_tree once and reply with ONLY the package name.」：界面顺序为
   用户消息 → 思考折叠行（默认折叠，标题「思考」+ 首行摘要 + 展开按钮）→
-  `read_ui_tree` 工具卡（完成）→ 回答 `com.tappet.app`；点行内任意处展开出全文、
+  `read_ui_tree` 工具卡（完成）→ 回答 `com.factotum.app`；点行内任意处展开出全文、
   按钮变「收起」，再点收回。`force-stop` 重启后折叠行、工具卡、回答均从 SQLCipher
   恢复（折叠行回到默认折叠）。旧会话里历史遗留的 wait 卡片不影响新运行时，
   新任务不会再产生 wait。
@@ -336,7 +336,7 @@ adb shell am broadcast --include-stopped-packages `
   一并移除，现在只有 `android-tools`）；清理本机 `.git/modules` 与 `.git/config` 里的
   残留。`bundle-dsh.ps1` 里「从持久缓存删旧包」的逻辑保留——缓存目录是持久的，
   防 `tar *` 把历史残留重新打进运行时 zip。`dsh-plugin-chat-tools` 仓库本身仍在
-  GitHub，只是 tappet 不再引用。
+  GitHub，只是 factotum 不再引用。
 - **验证**：`git submodule status` 仅剩 android-tools；全仓 grep 无活引用（只剩文档
   历史与 bundle 缓存清理）；`:app:testDebugUnitTest` 通过；新克隆的
   `git submodule update --init --recursive` 不再拉 chat-tools。

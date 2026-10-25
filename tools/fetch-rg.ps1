@@ -1,7 +1,7 @@
 param(
   [string]$Version = "15.2.0",
   [string]$Abi = "arm64-v8a",
-  [string]$Repo = "asdukw/tappet",
+  [string]$Repo = "asdukw/factotum",
   # 与 $Version **必须一起改**：改版本而忘了改哈希，脚本会当场报错而不是装一个来路不明的二进制。
   [string]$Sha256 = "1ae03be7fb16989724326d661839a77dfb8d014da18ab9ba9d80fbc1fba387e5",
   # 同 fetch-libnode：代理跟随 HTTPS_PROXY / HTTP_PROXY，没有就直连（CI）。
@@ -27,7 +27,7 @@ param(
 #     安装后多占约 77 MB。
 #   - `build.gradle.kts` 的 `packaging.jniLibs.keepDebugSymbols`：不加的话 AGP 会对
 #     这个非共享库跑 llvm-strip。
-#   - `NodeRuntime` 注入 `TAPPET_RG_PATH` 指向 nativeLibraryDir 下的它；
+#   - `NodeRuntime` 注入 `FACTOTUM_RG_PATH` 指向 nativeLibraryDir 下的它；
 #     `tools/dsh-phone/ripgrep-stub/` 是顶掉 `@vscode/ripgrep` 的桩包，读这个 env。
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -40,7 +40,7 @@ New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
 if (-not (Test-Path -LiteralPath $cachePath)) {
   Write-Host "downloading $url$(if ($Proxy) { " (proxy $Proxy)" })"
-  $req = @{ Uri = $url; OutFile = $cachePath; Headers = @{ "User-Agent" = "tappet" } }
+  $req = @{ Uri = $url; OutFile = $cachePath; Headers = @{ "User-Agent" = "factotum" } }
   if ($Proxy) { $req.Proxy = $Proxy }
   Invoke-WebRequest @req
 } else {

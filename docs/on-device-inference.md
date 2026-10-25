@@ -91,7 +91,7 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
 | 输入图像 | 视觉编码耗时 |
 |---|---|
 | 1216×2640（原生屏幕） | **6385 ms** |
-| 943×2047（**Tappet 现在 `capture_screenshot` 产出的帧**） | **2672 ms** |
+| 943×2047（**Factotum 现在 `capture_screenshot` 产出的帧**） | **2672 ms** |
 | 长边 1024 | 484 ms |
 | 长边 768 | 290 ms |
 | 长边 512 | 146 ms |
@@ -108,7 +108,7 @@ adb shell "cd /data/local/tmp/llama-b11729 && LD_LIBRARY_PATH=lib ./bin/llama-cl
 
 ## 5. 但 grounding 与读字都不合格（**这是最重要的一条**）
 
-真值用 `uiautomator dump` 取（不依赖 Tappet 的无障碍服务），输入是系统设置「关于本机」截图。
+真值用 `uiautomator dump` 取（不依赖 Factotum 的无障碍服务），输入是系统设置「关于本机」截图。
 提示词用 Qwen3-VL 的原生格式：输出归一化到 0-1000 的 `[x1,y1,x2,y2]`。
 
 | 目标 | 真值中心（归一化） | 模型输出中心 | 结果 |
@@ -211,7 +211,7 @@ x 恒定落在 ~490–700（**整行的水平中心**）。按「点中这一行
 
 1. **引擎没坏** —— 另外两个模型都能正确读出中文 UI 文字。问题在 **Qwen3-VL + mtmd** 这个组合。
 2. **GUI 专用微调确实有用** —— UI-TARS 是唯一 4/4 全中的，而且它输出的是**动作**而不是描述，
-   与 Tappet 的工具调用形态天然更近。代价是它只给到**行级**精度（x 恒为行中心）。
+   与 Factotum 的工具调用形态天然更近。代价是它只给到**行级**精度（x 恒为行中心）。
 3. **UI-TARS 目前慢 6–7 倍**，最大嫌疑是它的 mmproj 只有 **f16**（1.33GB，另两个是 Q8）。
    用 `llama-quantize` 把 mmproj 压到 Q8 应该能显著改善 —— **这一步还没做，是下一个最便宜的实验**。
 4. 缩图对三者都有效（全分辨率 → 1024 长边，编码时间降一个数量级），所以「先缩图再推理」
@@ -279,7 +279,7 @@ llama-quantize mmproj-model-f16.gguf mmproj-model-q8_0.gguf Q8_0
 
 ### 适配的实质
 
-UI-TARS 是**动作策略**模型，不是会调工具的对话模型。它输出自己的格式，与 Tappet 的
+UI-TARS 是**动作策略**模型，不是会调工具的对话模型。它输出自己的格式，与 Factotum 的
 `DeviceAction` 没有交集，中间必须有一层翻译：
 
 ```
@@ -427,7 +427,7 @@ adb -s $D shell "uiautomator dump /sdcard/ui.xml"
 adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell cat 会把 \n 翻成 \r\n
 ```
 
-> `uiautomator dump` 会把 Tappet 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
+> `uiautomator dump` 会把 Factotum 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
 > 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
 
 ## 11. 下一步（按性价比排序）

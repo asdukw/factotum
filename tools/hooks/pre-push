@@ -76,7 +76,7 @@ run() {
 }
 
 # ---------- 插件 submodule 的指针推上去了吗 ----------
-# 这是**踩过的**坑：插件仓库里的提交还没推，tappet 这边的指针先推了 —— CI 在 checkout
+# 这是**踩过的**坑：插件仓库里的提交还没推，factotum 这边的指针先推了 —— CI 在 checkout
 # 就失败，而报错看不出是「少推了一个仓库」。
 if [ "$run_all" = 1 ] || has '^tools/dsh-phone/plugins/android-tools$'; then
   plugin=tools/dsh-phone/plugins/android-tools
@@ -97,7 +97,7 @@ if [ "$need_node" = 1 ]; then
   # 没有就现装 —— 装到 **git 公共目录**里，绝不往工作树里放 node_modules。
   modules=android/.dsh-cache/runtime/node_modules
   if [ ! -d "$modules/js-yaml" ]; then
-    deps="$(git rev-parse --git-common-dir)/tappet-hook-deps"
+    deps="$(git rev-parse --git-common-dir)/factotum-hook-deps"
     mkdir -p "$deps"
     if (cd "$deps" && npm install --no-save --no-audit --no-fund 'js-yaml@^4' >/dev/null 2>&1) &&
       [ -d "$deps/node_modules/js-yaml" ]; then

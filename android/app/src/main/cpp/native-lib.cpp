@@ -117,7 +117,7 @@ static jboolean ensure_stdio_redirected() {
 // 提前建好 stdin/stdout/stderr 管道（在 node::Start 之前调用），
 // 这样 Kotlin 在状态变为 Running 后写 stdin 一定不会落空。
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_tappet_app_node_NodeRuntime_prepareStdio(
+Java_com_factotum_app_node_NodeRuntime_prepareStdio(
         JNIEnv *env,
         jobject /* this */) {
     env->GetJavaVM(&java_vm);
@@ -126,7 +126,7 @@ Java_com_tappet_app_node_NodeRuntime_prepareStdio(
 
 // libUV 要求参数在连续内存里。
 extern "C" JNIEXPORT jint JNICALL
-Java_com_tappet_app_node_NodeRuntime_startNodeWithArguments(
+Java_com_factotum_app_node_NodeRuntime_startNodeWithArguments(
         JNIEnv *env,
         jobject /* this */,
         jobjectArray arguments) {
@@ -170,7 +170,7 @@ Java_com_tappet_app_node_NodeRuntime_startNodeWithArguments(
 
 // 注册 stdout 逐行回调（NodeRuntime 单例；在 node::Start 之前调用）。
 extern "C" JNIEXPORT void JNICALL
-Java_com_tappet_app_node_NodeRuntime_setLineListener(
+Java_com_factotum_app_node_NodeRuntime_setLineListener(
         JNIEnv *env,
         jobject /* this */,
         jobject listener) {
@@ -194,7 +194,7 @@ Java_com_tappet_app_node_NodeRuntime_setLineListener(
 
 // 向 Node 的 stdin 写一行 JSON-RPC 请求（Kotlin 侧已带换行）。
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_tappet_app_node_NodeRuntime_writeStdin(
+Java_com_factotum_app_node_NodeRuntime_writeStdin(
         JNIEnv *env,
         jobject /* this */,
         jbyteArray data) {

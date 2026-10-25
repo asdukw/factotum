@@ -158,15 +158,15 @@ assert.equal(failed.metrics.endOk, false)
 // ===========================================================================
 const LOGCAT = [
   '--------- beginning of main',
-  '1750000000.123  1234  1234 I TappetAudit: ev=exploration_request want=true changed=true',
-  '1750000000.400  1234  1234 I TappetProbe: 这是无关的行，不该被收进来',
-  '1750000000.500  1234  1234 D TappetAudit: 没有 ev 字段，跳过',
-  '1750000600.000  1234  1234 I TappetAudit: ev=exploration_observed active=false',
+  '1750000000.123  1234  1234 I FactotumAudit: ev=exploration_request want=true changed=true',
+  '1750000000.400  1234  1234 I FactotumProbe: 这是无关的行，不该被收进来',
+  '1750000000.500  1234  1234 D FactotumAudit: 没有 ev 字段，跳过',
+  '1750000600.000  1234  1234 I FactotumAudit: ev=exploration_observed active=false',
   '',
 ].join('\n')
 
 const markers = parseAuditLog(LOGCAT)
-assert.equal(markers.length, 2, '只应收下带 ev 的 TappetAudit 行')
+assert.equal(markers.length, 2, '只应收下带 ev 的 FactotumAudit 行')
 assert.equal(markers[0].t, 1750000000123, 'epoch.msec 要换算成毫秒')
 assert.equal(markers[0].ev, 'exploration_request')
 assert.equal(markers[0].fields.want, 'true')

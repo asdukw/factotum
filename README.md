@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="android/app/src/main/res/drawable-nodpi/tappet_mascot.jpg" width="120" alt="Tappet mascot">
+  <img src="android/app/src/main/res/drawable-nodpi/factotum_mascot.jpg" width="120" alt="Factotum mascot">
 </p>
 
-<h1 align="center">Tappet</h1>
+<h1 align="center">Factotum</h1>
 
 <p align="center">
   <em>A general-purpose mobile agent for Android. An LLM operates arbitrary apps through tool calls — no per-app integrations.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/asdukw/tappet/actions/workflows/ci.yml"><img src="https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/asdukw/tappet/releases"><img src="https://img.shields.io/github/v/release/asdukw/tappet" alt="Release"></a>
+  <a href="https://github.com/asdukw/factotum/actions/workflows/ci.yml"><img src="https://github.com/asdukw/factotum/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/asdukw/factotum/releases"><img src="https://img.shields.io/github/v/release/asdukw/factotum" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -18,7 +18,7 @@
   <a href="README_zh.md">简体中文</a> · English
 </p>
 
-Tappet hands the phone to the model. It reads the screen, taps, long-presses, types, swipes and
+Factotum hands the phone to the model. It reads the screen, taps, long-presses, types, swipes and
 launches apps — ten general UI primitives that the model composes itself to finish tasks like
 "open the calculator and compute 37×48", instead of a script per app.
 
@@ -64,7 +64,7 @@ user's own cloud account directly, without going through accessibility.
 
 ## Status
 
-Tappet is explicit about what has been verified. "Unit-tested" is not the same as "works on a
+Factotum is explicit about what has been verified. "Unit-tested" is not the same as "works on a
 device".
 
 | Capability | Status |
@@ -86,14 +86,14 @@ device".
 
 ### Install a release
 
-[Releases](https://github.com/asdukw/tappet/releases) contain the signed APK, its `.sha256` and
+[Releases](https://github.com/asdukw/factotum/releases) contain the signed APK, its `.sha256` and
 release notes. Only `arm64-v8a` is shipped.
 
 ```bash
-adb install -r tappet-v0.13.0-arm64-v8a.apk
-sha256sum -c tappet-v0.13.0-arm64-v8a.apk.sha256   # optional
-apksigner verify --print-certs tappet-v0.13.0-arm64-v8a.apk
-gh attestation verify tappet-v0.13.0-arm64-v8a.apk --repo asdukw/tappet
+adb install -r factotum-v0.13.0-arm64-v8a.apk
+sha256sum -c factotum-v0.13.0-arm64-v8a.apk.sha256   # optional
+apksigner verify --print-certs factotum-v0.13.0-arm64-v8a.apk
+gh attestation verify factotum-v0.13.0-arm64-v8a.apk --repo asdukw/factotum
 ```
 
 `adb install -r` removes the enabled accessibility service. Re-enable it after installing.
@@ -126,7 +126,7 @@ cd android
   entries that the device cannot unpack.
 - The assembly scripts fetch pinned runtimes; their outputs are not committed. They honor
   `HTTP_PROXY` / `HTTPS_PROXY`.
-- For an emulator, fetch the x86_64 libnode and build with `"-Ptappet.abis=x86_64"`, then switch
+- For an emulator, fetch the x86_64 libnode and build with `"-Pfactotum.abis=x86_64"`, then switch
   back to arm64.
 - Do not use Gradle's automatic install on ColorOS: it blocks the first install and fails after
   several minutes. Use `adb install -r` and re-enable accessibility.
@@ -196,7 +196,7 @@ Deliberate choices:
   authorization for installed apps, so widening later would force every connected user through
   consent again. The trade-off is documented in
   [docs/email-connector.md](docs/email-connector.md) §1.1.
-- **`tappet.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses it
+- **`factotum.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses it
   permanently.
 - **Pre-release scan.** `tools/check-sensitive.ps1` scans the working tree and full history, and can
   scan the APK too. `-SelfTest` proves the scanner can hit.
@@ -212,7 +212,7 @@ Deliberate choices:
 - Device tests (`androidTest/`, covering Room/SQLCipher and Compose UI): `adb install -r`, re-enable
   accessibility, then `.\gradlew.bat :app:connectedDebugAndroidTest`.
 - The task audit loop: `node tools/audit/run-suite.mjs` runs a fixed suite and collects traces;
-  `tappet-auditor` judges them. Artifacts contain screen text and are treated as sensitive.
+  `factotum-auditor` judges them. Artifacts contain screen text and are treated as sensitive.
 - Changes under `tools/dsh-phone/` require `.\tools\bundle-dsh.ps1` and a reinstall: the runtime is
   packaged into assets. The plugin itself lives in a
   [separate public repo](https://github.com/asdukw/dsh-plugin-android-tools); commit there first,

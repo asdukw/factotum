@@ -34,7 +34,7 @@
 - **`master` 的 Ruleset 管理员确实能直推**（bypass actor 是 `RepositoryRole 5` = Maintain，
   admin 覆盖它，`bypass_mode: always`）。实测输出是 `Bypassed rule violations ...`；
   直推的是**合并后的结果**，不是开发中的半成品。规则名称是 `master protection`
-  （`gh api repos/asdukw/tappet/rulesets` 可见，**不是** classic branch protection），
+  （`gh api repos/asdukw/factotum/rulesets` 可见，**不是** classic branch protection），
   要求 PR、禁止 force push/删除，required checks 是 `ci.yml` 的四个 job（`changes` + 三个重活 job）。
 - 被拒时先看清是哪一道：**PR 规则**还是 **push protection** —— 两者都报
   “repository rule violations”，很容易看错。后者是 GitHub 认为提交里有密钥，
@@ -48,11 +48,11 @@
    不是来自 tag**，漏改会打出「tag 叫 `v0.6.0`、装到设备上却报 `0.5.0`」的包；
 2. 写 `docs/releases/<tag>.md` 并更新 `CHANGELOG.md`，**先提交再打 tag** —— `release.yml`
    只读仓库里已有的那份说明文件，没有就退回 `--generate-notes`；
-3. 打 `v*` tag → 出签名 APK，附 `tappet-<tag>-arm64-v8a.apk` 与 `.sha256`。
+3. 打 `v*` tag → 出签名 APK，附 `factotum-<tag>-arm64-v8a.apk` 与 `.sha256`。
    build job 会停在 `release` environment 等人工批准；批准后才读签名密钥、出包。
 
 - 发布物附带 build provenance（`actions/attest-build-provenance`），验证：
-  `gh attestation verify <apk> --repo asdukw/tappet`。建议在仓库设置里开启 **Immutable
+  `gh attestation verify <apk> --repo asdukw/factotum`。建议在仓库设置里开启 **Immutable
   releases**；开启后资产不可覆盖，重发要先删 release（当前的 `--clobber` 会被拒）。
 - publish job 的 summary 里会写 APK 大小与 SHA-256；`.sha256` 同时作为 release 资产发布。
 
@@ -60,9 +60,9 @@
 
 | 签名材料 | 位置 |
 |---|---|
-| release keystore | `C:\Users\asdukw\keys\tappet-release.jks`（**仓库外**，RSA 4096 / 10000 天） |
-| 本机配置 | `android/local.properties`（不被跟踪）的 `tappet.release.storeFile/storePassword/keyAlias/keyPassword` |
-| CI | **environment secret**（环境 `release`）：`TAPPET_KEYSTORE_BASE64` / `TAPPET_KEYSTORE_PASSWORD` / `TAPPET_KEY_ALIAS` / `TAPPET_KEY_PASSWORD`；Gmail 的两个 OAuth 凭据也在同一环境 |
+| release keystore | `C:\Users\asdukw\keys\factotum-release.jks`（**仓库外**，RSA 4096 / 10000 天） |
+| 本机配置 | `android/local.properties`（不被跟踪）的 `factotum.release.storeFile/storePassword/keyAlias/keyPassword` |
+| CI | **environment secret**（环境 `release`）：`FACTOTUM_KEYSTORE_BASE64` / `FACTOTUM_KEYSTORE_PASSWORD` / `FACTOTUM_KEY_ALIAS` / `FACTOTUM_KEY_PASSWORD`；Gmail 的两个 OAuth 凭据也在同一环境 |
 
 - **keystore 丢了就再也发不出能覆盖安装的更新**（换签名 = 另一个 App，设备上旧包的库读不到）。
   与 SQLCipher 口令同性质：**先备份再折腾**，别只留一份在开发机上。
@@ -72,9 +72,9 @@
   Gmail secret 从仓库级迁到环境级，再删掉仓库级同名项：
 
   ```bash
-  gh secret set --env release TAPPET_KEYSTORE_BASE64
+  gh secret set --env release FACTOTUM_KEYSTORE_BASE64
   # ...其余五个同理
-  gh secret delete TAPPET_KEYSTORE_BASE64
+  gh secret delete FACTOTUM_KEYSTORE_BASE64
   # ...其余五个同理
   ```
 
@@ -95,6 +95,6 @@
 | 现象 | 原因 / 处理 |
 |---|---|
 | 推送被拒 `GH013 Repository rule violations` | 先分清是 PR 规则还是 **push protection**（两者措辞一样）→ 后者是 GitHub 认为提交里有密钥，点它给的 unblock 链接或把值改成构建期注入 |
-| 发布出的包连不上 Gmail | `release` environment 里的 `TAPPET_GMAIL_CLIENT_ID/SECRET` 没配（或还留在仓库级）→ 构建期注入是空的，包里就没有预置值 |
+| 发布出的包连不上 Gmail | `release` environment 里的 `FACTOTUM_GMAIL_CLIENT_ID/SECRET` 没配（或还留在仓库级）→ 构建期注入是空的，包里就没有预置值 |
 | release 包里 `assets/dsh-runtime.zip` 其实是 tar | 打包工具写不了 zip（GNU tar 不支持）→ 用 .NET `ZipFile`；打完必须验头四字节是 `PK` |
 | 想确认发布物里没有密钥 | `tools/check-sensitive.ps1 -ApkPath <包>`（或 `strings` 扫 `classes*.dex`，grep 到空） |

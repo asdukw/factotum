@@ -1,4 +1,4 @@
-// Tappet phone profile 的附件存储：`ctx.attachments` 的纯 JS 实现。
+// Factotum phone profile 的附件存储：`ctx.attachments` 的纯 JS 实现。
 //
 // 为什么不用 dsh 自带的 `@deepseek-ai/dsh-attachment-local`：它依赖 sharp 做
 // 归一化与质量阶梯编码，而 sharp 没有 Android 预编译产物（bundle 用

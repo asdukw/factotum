@@ -2,7 +2,7 @@
   "name": "dsh-android-attachments",
   "version": "0.1.0",
   "private": true,
-  "description": "Pure-JS AttachmentStore for the Tappet phone runtime (no sharp on Android)",
+  "description": "Pure-JS AttachmentStore for the Factotum phone runtime (no sharp on Android)",
   "type": "module",
   "main": "index.mjs",
   "exports": {

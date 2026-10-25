@@ -118,7 +118,7 @@ VoiceSettings    偏好：自动朗读 / 语速（**非密**）
   与「只在用户点的时候联网」同一条原则：不做用户没要求的常驻。
 - **焦点被抢走就停，不自动续读**。从半句话中间接上去比不读更让人困惑，用户再点一次即可。
 - **一次只读一条**。点另一条 = 停掉当前的、开始新的。
-- **正文不进日志**。`TappetVoice` 只记引擎名、段数、HTTP 状态码与失败原因。
+- **正文不进日志**。`FactotumVoice` 只记引擎名、段数、HTTP 状态码与失败原因。
 - **断网就不读**，并说明原因；没有本地兜底（这是 2026-10-24 的明确取舍）。
 
 ## 6. 语音输入：为什么只有本机识别这一条路
@@ -210,7 +210,7 @@ VAD 本身的耗时可以忽略：5.6 秒音频 20~53ms。
 
 **不做成可选**。识别模型之间的取舍（准确率 / 速度 / 语言 / 授权）不该由用户回答：语音输入
 只服务一个场景 —— 把一句话变成发给 agent 的指令 —— 一个设置项只会多一次「选错了却不知道」。
-所以设置页**没有**识别模型的入口，模型随安装自动下载（`TappetApplication`），点麦克风时
+所以设置页**没有**识别模型的入口，模型随安装自动下载（`FactotumApplication`），点麦克风时
 再确认一次（没下完就说「正在下载」，下载失败下次启动或再点麦克风会重试）。
 
 | | 值 |
@@ -249,7 +249,7 @@ whisper tiny 在英文样例上与归档里的参考文本**逐字一致**，中
 `normalizeMarker`。
 
 `sense-voice-int8` 与 `whisper-tiny` 都曾经在目录里，现在**已移除**；旧安装留下的目录由
-`TappetApplication.pruneLegacyModels` 在启动时清掉。
+`FactotumApplication.pruneLegacyModels` 在启动时清掉。
 
 ## 8.1 标点模型（跟着 paraformer 一起装）
 
@@ -303,26 +303,26 @@ paraformer-zh-small 的输出是**没有标点的裸文本**（真机实测：
 
 ```powershell
 # 看识别模型与标点模型的状态（装没装 / 占多大 / 还差多少；没有正文）
-adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op MODELS"
+adb shell "am broadcast -n com.factotum.app/.voice.VoiceDebugReceiver -a com.factotum.app.debug.VOICE --es op MODELS"
 
 # 走和启动时完全相同的那条链路装模型（下载 → 解包 → 原子换目录）
 # 识别模型与标点模型都走这一条，给目录里的 id 即可（标点那条是 punct_ct_transformer_zh_en）
-adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op INSTALL --es model paraformer_zh_small"
+adb shell "am broadcast -n com.factotum.app/.voice.VoiceDebugReceiver -a com.factotum.app.debug.VOICE --es op INSTALL --es model paraformer_zh_small"
 
 # 把一段 WAV 喂给识别引擎；--ez logPayload true 才打印文本
-adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op ASR --es wav <设备上的路径> --ez logPayload true"
+adb shell "am broadcast -n com.factotum.app/.voice.VoiceDebugReceiver -a com.factotum.app.debug.VOICE --es op ASR --es wav <设备上的路径> --ez logPayload true"
 
 # 把一段 WAV 推过 **VAD**，再走一遍「VAD 认过的段 → **逐段**识别 → 拼起来 → 补标点」的真实路径
 # 打的是结构：input / segments / speech_samples / 每段的样本数与它自己的 lang / event；文本同样要 logPayload
-adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op VAD --es wav <设备上的路径> --ez logPayload true"
+adb shell "am broadcast -n com.factotum.app/.voice.VoiceDebugReceiver -a com.factotum.app.debug.VOICE --es op VAD --es wav <设备上的路径> --ez logPayload true"
 
 # 只验标点模型：不经过识别、不经过麦克风，给一段文本看它补出什么
-adb shell "am broadcast -n com.tappet.app/.voice.VoiceDebugReceiver -a com.tappet.app.debug.VOICE --es op PUNCT --es text '对我做了介绍啊那么我想说的是呢' --ez logPayload true"
+adb shell "am broadcast -n com.factotum.app/.voice.VoiceDebugReceiver -a com.factotum.app.debug.VOICE --es op PUNCT --es text '对我做了介绍啊那么我想说的是呢' --ez logPayload true"
 ```
 
 样例音频**就在装好的模型目录里**（`files/asr-models/paraformer_zh_small/test_wavs/`），不必从 PC 推：
 App 读自己的私有目录没有障碍，所以直接给绝对路径即可 ——
-`--es wav /data/user/0/com.tappet.app/files/asr-models/paraformer_zh_small/test_wavs/0.wav`。
+`--es wav /data/user/0/com.factotum.app/files/asr-models/paraformer_zh_small/test_wavs/0.wav`。
 （`adb push` 那条路仍然要按下面第 1 点走，那是**别的进程**的文件读不到。）
 
 `op VAD` 是**换掉手写端点判定之后加的**：那条路原来只能靠人对着手机说话才能验，
@@ -344,14 +344,14 @@ App 读自己的私有目录没有障碍，所以直接给绝对路径即可 —
    下 adb 推的文件，App 都读不到（实测 `File.canRead()=false`，报
    `Failed to read wave file`）—— 前者是 SELinux，后者是 shell 建的文件属主不对。
    可用的写法是先推到 `/data/local/tmp`，再由 shell 侧 pipe 进 run-as：
-   `adb shell "cat /data/local/tmp/x.wav | run-as com.tappet.app sh -c 'cat > files/asr/x.wav'"`
+   `adb shell "cat /data/local/tmp/x.wav | run-as com.factotum.app sh -c 'cat > files/asr/x.wav'"`
    （**别**从宿主侧直接 `cat file | adb shell ...`：会截断成几十字节）。
 2. **先 `monkey` 把 App 拉到前台再广播**：ColorOS 会 defer 后台广播，
    现象是广播回 `result=0` 但日志里什么都没有。
 
 **朗读这条路的验法**（需要真 key 与网络，与识别无关）：设置 → 语音 → 存 Fish Audio 的
 key → 点「试听」；随后在聊天页点某条回复的喇叭。失败会在聊天页顶部出错误条（§3 的文案），
-`logcat -s TappetVoice` 只有段数、HTTP 状态码与失败原因，没有正文。
+`logcat -s FactotumVoice` 只有段数、HTTP 状态码与失败原因，没有正文。
 
 **只能由人验的那一段**：聊天页点麦克风 → 说一句话 → 看电平条动、停顿后自动结束、
 文本出现在输入框。VAD 在真机上的手感（0.8 秒算说完是不是太急、10 秒切段会不会在句中断开）

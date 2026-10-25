@@ -29,7 +29,7 @@ function hostnameOf(input) {
  * 幂等：重复调用只装一次（launcher 在同一进程里可能 reload 多次）。
  *
  * @param {object} [options]
- * @param {string} [options.session] 会话 id；缺省读 `TAPPET_LLM_SESSION`，再缺省 `tappet-mobile`
+ * @param {string} [options.session] 会话 id；缺省读 `FACTOTUM_LLM_SESSION`，再缺省 `factotum-mobile`
  * @param {typeof fetch} [options.target] 要包装的 fetch，默认 `globalThis.fetch`
  * @param {(fetchImpl: typeof fetch) => void} [options.install] 安装器，默认写回 `globalThis`
  */
@@ -40,9 +40,9 @@ export function installZenSessionFetch(options = {}) {
     ((fetchImpl) => {
       globalThis.fetch = fetchImpl
     })
-  if (target?.__tappetZenSession === true) return target
+  if (target?.__factotumZenSession === true) return target
 
-  const session = options.session ?? process.env.TAPPET_LLM_SESSION ?? 'tappet-mobile'
+  const session = options.session ?? process.env.FACTOTUM_LLM_SESSION ?? 'factotum-mobile'
 
   const wrapped = (input, init) => {
     if (!ZEN_HOSTS.has(hostnameOf(input))) return target(input, init)
@@ -50,7 +50,7 @@ export function installZenSessionFetch(options = {}) {
     if (!headers.has('x-opencode-session')) headers.set('x-opencode-session', session)
     return target(input, { ...init, headers })
   }
-  wrapped.__tappetZenSession = true
+  wrapped.__factotumZenSession = true
   install(wrapped)
   return wrapped
 }

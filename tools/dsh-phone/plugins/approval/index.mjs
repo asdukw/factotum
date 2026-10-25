@@ -26,8 +26,8 @@ const BRIDGE_TIMEOUT_MS = 10 * 60 * 1000
 const OUTCOMES = new Set(['allowed-once', 'rejected', 'cancelled', 'unavailable'])
 
 function bridge() {
-  const baseUrl = process.env.TAPPET_APPROVAL_BRIDGE_URL
-  const token = process.env.TAPPET_APPROVAL_BRIDGE_TOKEN
+  const baseUrl = process.env.FACTOTUM_APPROVAL_BRIDGE_URL
+  const token = process.env.FACTOTUM_APPROVAL_BRIDGE_TOKEN
   if (!baseUrl || !token) return undefined
   return { baseUrl, token }
 }

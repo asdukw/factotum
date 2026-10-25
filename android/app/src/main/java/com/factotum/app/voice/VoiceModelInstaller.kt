@@ -1,0 +1,134 @@
+package com.factotum.app.voice
+
+import android.content.Context
+import com.factotum.app.update.UpdateHttp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * 模型下载的**唯一状态源**，进程内单例。**合成与识别共用**（见 [VoiceModel]）。
+ *
+ * 与 `UpdateManager` 同一个理由：如果下载挂在设置页的 ViewModel 上，用户返回上一级就会
+ * 把下载连带取消 —— 而「正在下 80MB」这件事与哪个页面开着没有关系。放在单例里，
+ * 关掉设置页下载照跑，回来还能看到进度。
+ *
+ * 同时只装一个：两个下载并行会抢同一份 staging 目录（[VoiceModelDownloader] 的前提），
+ * 而且合成模型与识别模型用的是同一块磁盘、同一条网络。再点另一个模型 = 取消当前的、开始新的。
+ *
+ * **不落日志正文**：这里只有种类、模型 id、字节数与失败原因。
+ */
+object VoiceModelInstaller {
+  data class State(
+    val kind: String,
+    val modelId: String,
+    val progress: VoiceModelDownloader.Progress? = null,
+    val error: String? = null,
+  ) {
+    val running: Boolean get() = error == null
+  }
+
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+  private val _state = MutableStateFlow<State?>(null)
+
+  /** 正在装哪个模型、到哪一步了；null = 没有在装。 */
+  val state: StateFlow<State?> = _state.asStateFlow()
+
+  private var job: Job? = null
+
+  fun install(
+    context: Context,
+    kind: String,
+    model: VoiceModel,
+  ) {
+    val app = context.applicationContext
+    job?.cancel()
+    _state.value = State(kind, model.id)
+    job =
+      scope.launch {
+        try {
+          // 先装本体、再装伴生模型（[VoiceModel.companions]，目前就是标点那种）：
+          // 中途取消时留下的是「识别能用、标点还差一点」，反过来则是一份没人用得上的标点。
+          // **已经装好的跳过** —— 老用户升级后只拉缺的那一份。
+          for (target in installOrder(model) { VoiceModelStore.isInstalled(app, it.kind, it) }) {
+            VoiceModelDownloader.install(app, target.kind, target) { progress ->
+              _state.value = State(kind, model.id, progress = progress)
+            }
+          }
+          _state.value = null
+        } catch (cancelled: CancellationException) {
+          // 用户取消 / 被下一次安装顶掉：**不留错误**，回到「没在装」。
+          _state.value = null
+          throw cancelled
+        } catch (
+          // 兜底：网络断、磁盘满、归档坏了都从这里出去。
+          @Suppress("TooGenericExceptionCaught") error: Throwable,
+        ) {
+          // 原因翻译成用户能行动的一句话 —— 这条路径上九成是「连不上 GitHub」（VPN 没开），
+          // 而原始异常消息（带 IP、端口、30000ms）对用户没有一句话是可行动的。
+          //
+          // **失败状态留着不自动清**：界面据此把那一行的按钮换成「重试」。用户开好 VPN
+          // 回来还是同一个页面，点一下就从半截文件接着下（[VoiceModelDownloader] 的续传）。
+          // 不做自动重试：这条链路上自动重试会让人以为「已经在下了」，而其实一次都没连上。
+          _state.value = State(kind, model.id, error = UpdateHttp.failReason(error))
+        }
+      }
+  }
+
+  fun cancel() {
+    job?.cancel()
+    job = null
+    _state.value = null
+  }
+
+  /**
+   * 「没装就装」：本体与伴生件都齐了、或者正在装同一个模型时是空操作。
+   *
+   * 识别模型走这一条（[com.factotum.app.FactotumApplication] 启动时、点麦克风时），
+   * 因为用户没有「下载识别模型」这个入口 —— 也不该有。**判据必须包含伴生件**：
+   * 只查本体会漏掉「本体早就在、标点模型还没下」的老安装，而那一档没有别的地方能补。
+   * **失败不自动重试**：下一次启动或下一次点麦克风会再走一遍。
+   */
+  fun ensureInstalled(
+    context: Context,
+    kind: String,
+    model: VoiceModel,
+  ) {
+    val app = context.applicationContext
+    val missing = installOrder(model) { VoiceModelStore.isInstalled(app, it.kind, it) }
+    if (missing.isEmpty()) return
+    if (isRunning(kind, model.id)) return
+    install(app, kind, model)
+  }
+
+  private fun isRunning(
+    kind: String,
+    modelId: String,
+  ): Boolean {
+    val current = _state.value ?: return false
+    if (current.error != null) return false
+    return current.kind == kind && current.modelId == modelId
+  }
+}
+
+/**
+ * 这次安装真正要下的那几份：本体 + 伴生模型（[VoiceModel.companions]），**已经装好的跳过**。
+ *
+ * 抽成纯函数是为了能离开设备验证 —— 它决定了「老用户升级后只补拉缺的那 62MB」。
+ * 写反了（无条件把本体也下一遍）在界面上**看不出来**：进度条照样走，只是流量莫名多花了
+ * 82MB，而且要等第二次下载失败才会有人怀疑。
+ *
+ * 顺序也有意义：**本体在前**。中途取消时留下的是「识别能用、标点还差一点」；
+ * 反过来则是一份没人用得上的标点模型。
+ */
+internal fun installOrder(
+  model: VoiceModel,
+  installed: (VoiceModel) -> Boolean,
+): List<VoiceModel> = (listOf(model) + model.companions).filterNot(installed)

@@ -11,7 +11,7 @@ Thought: ...
 Action: click(start_box='(611,899)')
 ```
 
-而 Tappet 的执行层认的是 `DeviceAction`（`TAP_POINT` / `PRESS` / `TYPE_TEXT` / …）。
+而 Factotum 的执行层认的是 `DeviceAction`（`TAP_POINT` / `PRESS` / `TYPE_TEXT` / …）。
 两者没有交集，必须翻译 —— 这就是适配的实质，也是 `adapt.mjs` 的全部内容。
 
 ## 三个文件

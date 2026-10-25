@@ -3,7 +3,7 @@
 **什么时候读**：改 `tools/fetch-proot.ps1`、`proot/`、`DeviceBridgeServer` 的 `run_command`、
 插件 `run_command`，或要动 rootfs / 依赖布局之前。
 
-agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs，`proot` 在 Tappet 自己的进程
+agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs，`proot` 在 Factotum 自己的进程
 域里把它跑起来，命令经设备桥的 `run_command` 动作进来。**不装 Termux、不要 root、不过无障碍** ——
 它改的是文件，不是屏幕。
 
@@ -50,7 +50,7 @@ agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs�
 
 ## 3. 工具面与失败分类
 
-- `run_command` 由插件注册，条件是宿主注入 `TAPPET_PROOT=1`（`NodeRuntime` 在 Node 启动时设）。
+- `run_command` 由插件注册，条件是宿主注入 `FACTOTUM_PROOT=1`（`NodeRuntime` 在 Node 启动时设）。
   命令走**同一个设备桥**的 `POST /action`（`action=run_command`），不另开端口、不另发 token。
 - 输出由 App 侧排版（`$ cmd` / `exit=… | Nms` / stdout / `[stderr]`），每流最多 16 KiB，
   留头留尾。**退出码非 0 不是工具错误** —— 模型要靠它判断下一步。
@@ -64,9 +64,9 @@ agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs�
 
 ```powershell
 # 冒烟：解 rootfs + 打印 debian 版本 / 架构 / 身份（输出只在 --ez logPayload true 时打印）
-adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
-  -a com.tappet.app.debug.NODE --es op PROOT --ez logPayload true
-# 结果看 logcat：TappetProot / TappetNode
+adb shell am broadcast -n com.factotum.app/.node.NodeDebugReceiver `
+  -a com.factotum.app.debug.NODE --es op PROOT --ez logPayload true
+# 结果看 logcat：FactotumProot / FactotumNode
 ```
 
 2026-10-25 的实测基线：解压 3262 个文件 0.7 s；单条命令 ≈100 ms；`apt-get update` 9.3 MB / 12 s；
@@ -85,4 +85,4 @@ adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver `
 | guest 里 DNS 不解析 | 网络屏蔽了公共 DNS，或需要私有域名 → 加 `ACCESS_NETWORK_STATE` 读 LinkProperties |
 | guest 里 HTTPS 报 `error setting certificate file` | CA bundle 没绑上（`writeCaCerts` 读不到 Android 的 cacerts） |
 | `apt` 装包报链接错误 | `--link2symlink` / `PROOT_L2S_DIR` / `.l2s` 绑定不一致 |
-| `run_command` 不在工具表里 | 宿主没注入 `TAPPET_PROOT=1`（旧插件/旧 App），或插件版本与桥不匹配 |
+| `run_command` 不在工具表里 | 宿主没注入 `FACTOTUM_PROOT=1`（旧插件/旧 App），或插件版本与桥不匹配 |

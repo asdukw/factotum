@@ -5,8 +5,8 @@
 // 桥没配 / 用户关掉 / 桥报错 / 超时，四种情况都必须 `next()`。
 import assert from 'node:assert/strict'
 
-process.env.TAPPET_QUESTION_BRIDGE_URL = 'http://127.0.0.1:1'
-process.env.TAPPET_QUESTION_BRIDGE_TOKEN = 'bridge-token'
+process.env.FACTOTUM_QUESTION_BRIDGE_URL = 'http://127.0.0.1:1'
+process.env.FACTOTUM_QUESTION_BRIDGE_TOKEN = 'bridge-token'
 
 const plugin = await import('../index.mjs')
 
@@ -91,15 +91,15 @@ fetchThrows = true
 fetchThrows = false
 
 // --- 4) 桥没配：压根不发请求，直接让路 ---
-const url = process.env.TAPPET_QUESTION_BRIDGE_URL
-delete process.env.TAPPET_QUESTION_BRIDGE_URL
+const url = process.env.FACTOTUM_QUESTION_BRIDGE_URL
+delete process.env.FACTOTUM_QUESTION_BRIDGE_URL
 calls.length = 0
 {
   const { delegated } = await run()
   assert.equal(delegated, true)
   assert.equal(calls.length, 0, '没配桥时不该发请求')
 }
-process.env.TAPPET_QUESTION_BRIDGE_URL = url
+process.env.FACTOTUM_QUESTION_BRIDGE_URL = url
 
 // --- 5) 空问题数组：让路（宿主那边本来就要求至少一题） ---
 calls.length = 0

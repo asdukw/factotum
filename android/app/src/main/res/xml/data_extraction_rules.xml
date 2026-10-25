@@ -2,7 +2,7 @@
   Android 12+ 的备份 / 迁移规则。
 
   **allowBackup="false" 只关掉云备份，设备间直传（D2D）默认仍然开着** —— 要一并关掉
-  只能靠这里的 device-transfer 排除项。本仓库的红线是「库里的数据不出本机」：tappet.db 由
+  只能靠这里的 device-transfer 排除项。本仓库的红线是「库里的数据不出本机」：factotum.db 由
   SQLCipher 加密、口令经 Keystore 封装，拷到新设备本来也解不开（Keystore 密钥不随备份走），
   所以这里不是「防泄露」，而是别让解不开的密文白跑一趟，顺带把这件事写明。
 

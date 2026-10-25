@@ -51,7 +51,7 @@ Copy-Item -Force (Join-Path $src "zen-session-fetch.mjs") $cache
 node (Join-Path $src "check-profile.mjs") (Join-Path $src "profile/cordis.patch.yml") (Join-Path $cache "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "check-profile.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
-# 模型模态索引：设置页徽章与 TAPPET_LLM_MODELS 的 input 声明共用这一份结论。
+# 模型模态索引：设置页徽章与 FACTOTUM_LLM_MODELS 的 input 声明共用这一份结论。
 # 从同一个缓存运行时抽出来，保证索引与打进 APK 的 pi-ai 是同一版本。
 $dataDir = Join-Path $cache "node_modules/@earendil-works/pi-ai/dist/providers/data"
 $modalityOut = Join-Path $root "android/app/src/main/assets/model-modalities.json"
@@ -81,7 +81,7 @@ if (Test-Path -LiteralPath $removedPlugin) {
   Remove-Item -LiteralPath $resolvedRemoved -Recurse -Force
 }
 # 清理历史包名残留（缓存目录持久存在，旧插件会被一起打进 zip）
-Remove-Item -Recurse -Force (Join-Path $cache "node_modules/@tappet") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $cache "node_modules/@factotum") -ErrorAction SilentlyContinue
 foreach ($plugin in $plugins) {
   $pluginDir = Join-Path $src $plugin.Src
   if (-not (Test-Path -LiteralPath (Join-Path $pluginDir "index.mjs"))) {
@@ -101,7 +101,7 @@ foreach ($plugin in $plugins) {
 # 顶掉真的 @vscode/ripgrep：它**没有 android 平台产物**（12 个 optional dep 只有
 # darwin / win32 / linux），而 dsh-tool-fs-search 靠 `(await import("@vscode/ripgrep")).rgPath`
 # 拿二进制 —— 不换掉的话模型侧的 glob / grep 一调用就炸。桩包只做一件事：把 rgPath 指向
-# 我们交叉编译的那份（tools/fetch-rg.ps1 拉进 jniLibs，NodeRuntime 注入 TAPPET_RG_PATH）。
+# 我们交叉编译的那份（tools/fetch-rg.ps1 拉进 jniLibs，NodeRuntime 注入 FACTOTUM_RG_PATH）。
 $rgStub = Join-Path $cache "node_modules/@vscode/ripgrep"
 if (Test-Path -LiteralPath $rgStub) { Remove-Item -LiteralPath $rgStub -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $rgStub | Out-Null

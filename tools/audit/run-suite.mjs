@@ -59,7 +59,7 @@ function broadcast(pkg, args) {
   // 带空格的参数必须把整条远程命令再包一层引号，否则会被设备 shell 拆词。
   // 显式组件 + **完整类名**：debug 包可能带 applicationIdSuffix（并行 worktree 共存），
   // 这时 `.node.NodeDebugReceiver` 这种相对写法会解析到后缀包里不存在的类。
-  const remote = `am broadcast -n ${pkg}/com.tappet.app.node.NodeDebugReceiver -a com.tappet.app.debug.NODE ${args}`
+  const remote = `am broadcast -n ${pkg}/com.factotum.app.node.NodeDebugReceiver -a com.factotum.app.debug.NODE ${args}`
   return adbText(['shell', remote]).trim()
 }
 
@@ -91,7 +91,7 @@ function resetPackages(task) {
 /** 任务是否已在设备侧结束。logcat 里 receiver 收尾会打 `task done` / `task failed:`。 */
 function taskFinished() {
   try {
-    return /\btask done\b|\btask failed:/.test(adbText(['logcat', '-d', '-s', 'TappetNode:I']))
+    return /\btask done\b|\btask failed:/.test(adbText(['logcat', '-d', '-s', 'FactotumNode:I']))
   } catch {
     return false
   }
@@ -115,9 +115,9 @@ function growLogBuffer(size = '16M') {
  * 格式必须是 `-v epoch`：collect.mjs 按 epoch 毫秒把标记并进 dsh 事件流。
  */
 function startAuditStream(sessionId) {
-  const file = join(tmpdir(), `tappet-audit-${sessionId}.log`)
+  const file = join(tmpdir(), `factotum-audit-${sessionId}.log`)
   const fd = openSync(file, 'w')
-  const child = spawn('adb', ['logcat', '-v', 'epoch', '-s', 'TappetAudit:I'], {
+  const child = spawn('adb', ['logcat', '-v', 'epoch', '-s', 'FactotumAudit:I'], {
     stdio: ['ignore', fd, 'ignore'],
     env: process.env,
   })
@@ -236,7 +236,7 @@ async function main() {
 
   console.log('\n[suite] 汇总')
   for (const c of collected) console.log(`  ${c.ok ? '✓' : '✗'} ${c.id}${c.label ? ' → ' + c.label : ''} ${c.reason ?? ''}`)
-  console.log('\n下一步：把 tools/audit/runs/ 交给 tappet-auditor 审计。')
+  console.log('\n下一步：把 tools/audit/runs/ 交给 factotum-auditor 审计。')
 }
 
 main().catch((e) => {

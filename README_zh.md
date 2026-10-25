@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="android/app/src/main/res/drawable-nodpi/tappet_mascot.jpg" width="120" alt="Tappet 吉祥物">
+  <img src="android/app/src/main/res/drawable-nodpi/factotum_mascot.jpg" width="120" alt="Factotum（执事）吉祥物">
 </p>
 
-<h1 align="center">Tappet</h1>
+<h1 align="center">Factotum（执事）</h1>
 
 <p align="center">
   <em>运行在 Android 上的通用 mobile agent：LLM 通过工具调用操作手机界面完成任务，不做单一 App 的专用适配。</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/asdukw/tappet/actions/workflows/ci.yml"><img src="https://github.com/asdukw/tappet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/asdukw/tappet/releases"><img src="https://img.shields.io/github/v/release/asdukw/tappet" alt="Release"></a>
+  <a href="https://github.com/asdukw/factotum/actions/workflows/ci.yml"><img src="https://github.com/asdukw/factotum/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/asdukw/factotum/releases"><img src="https://img.shields.io/github/v/release/asdukw/factotum" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -18,7 +18,7 @@
   <a href="README.md">English</a> · 简体中文
 </p>
 
-Tappet 把手机交给模型：读屏、点按、长按、输入、滑动、启动应用 —— **10 个通用 UI 原语**，
+Factotum 把手机交给模型：读屏、点按、长按、输入、滑动、启动应用 —— **10 个通用 UI 原语**，
 模型自己组合它们完成「打开计算器算 37×48」这类任务，而不是给每个 App 写一套脚本。
 
 agent 运行时是内嵌在 App 里的 Node 24 + dsh phone profile；执行层走无障碍服务
@@ -57,7 +57,7 @@ v0.5.0 起它多了**第二条获取信息的通道**：连接器（首版 Gmail
 
 ## 状态
 
-Tappet 对「验到什么程度」说得比较直白：**单测通过 ≠ 真机可用**。
+Factotum 对「验到什么程度」说得比较直白：**单测通过 ≠ 真机可用**。
 
 | 能力 | 状态 |
 |---|---|
@@ -78,14 +78,14 @@ Tappet 对「验到什么程度」说得比较直白：**单测通过 ≠ 真机
 
 ### 安装现成包
 
-[Releases](https://github.com/asdukw/tappet/releases) 里有签名 APK、`.sha256` 与发布说明。
+[Releases](https://github.com/asdukw/factotum/releases) 里有签名 APK、`.sha256` 与发布说明。
 目前只出 `arm64-v8a`。
 
 ```bash
-adb install -r tappet-v0.13.0-arm64-v8a.apk
-sha256sum -c tappet-v0.13.0-arm64-v8a.apk.sha256   # 可选：确认包没被换过
-apksigner verify --print-certs tappet-v0.13.0-arm64-v8a.apk
-gh attestation verify tappet-v0.13.0-arm64-v8a.apk --repo asdukw/tappet
+adb install -r factotum-v0.13.0-arm64-v8a.apk
+sha256sum -c factotum-v0.13.0-arm64-v8a.apk.sha256   # 可选：确认包没被换过
+apksigner verify --print-certs factotum-v0.13.0-arm64-v8a.apk
+gh attestation verify factotum-v0.13.0-arm64-v8a.apk --repo asdukw/factotum
 ```
 
 `adb install -r` 会摘掉已启用的无障碍服务，装完重新开一次即可。
@@ -117,7 +117,7 @@ cd android
 - `.ps1` 脚本请用 **`pwsh` 7**，不要用 Windows PowerShell 5.1：5.1 写出的 zip 条目名带反斜杠，
   设备上解不出来。
 - 装配脚本按 pinned 版本现拉运行时，产物不入库；网络走 `HTTP_PROXY` / `HTTPS_PROXY`。
-- 跑模拟器要先取 x86_64 的 libnode，并用 `"-Ptappet.abis=x86_64"` 构建，
+- 跑模拟器要先取 x86_64 的 libnode，并用 `"-Pfactotum.abis=x86_64"` 构建，
   **用完切回 arm64**。
 - **真机安装不要走 Gradle 的自动安装通道**：ColorOS 会拦全新安装，挂几分钟后失败。
   正确流程是产包后手动 `adb install -r`，再重新启用无障碍。
@@ -181,7 +181,7 @@ Compose UI ── Room/SQLCipher 落库
   重走同意页，所以一次要齐。代价说清楚：只读 scope 下「插件被攻破也发不出邮件」这条边界
   是 **Google 兜的**，换成 `gmail.modify` 之后只剩**插件里那个唯一的只读出网函数**在守。
   完整取舍见 [docs/email-connector.md](docs/email-connector.md) §1.1。
-- **会话库** `tappet.db` 用 SQLCipher 加密，口令由 Keystore 封装：
+- **会话库** `factotum.db` 用 SQLCipher 加密，口令由 Keystore 封装：
   **卸载即永久丢失，外部不可解、不可拷**。
 - **发布前自检**：`tools\check-sensitive.ps1`（扫工作树 + 全部 git 历史，
   可选连 APK 一起扫；`-SelfTest` 先证明扫描器确实会命中）。
@@ -197,7 +197,7 @@ Compose UI ── Room/SQLCipher 落库
 - **真机测试**（`androidTest/`，覆盖 Room/SQLCipher 与 Compose UI）：先 `adb install -r`，
   重新启用无障碍服务，再 `.\gradlew.bat :app:connectedDebugAndroidTest`。
 - **任务审计回路**：`node tools/audit/run-suite.mjs` 跑固定任务集并自动采集轨迹，
-  判断交给 `tappet-auditor` 子 agent。产物（含屏幕正文）按敏感数据对待，不入库。
+  判断交给 `factotum-auditor` 子 agent。产物（含屏幕正文）按敏感数据对待，不入库。
 - 改了 `tools/dsh-phone/` 下的 launcher / profile / 插件，必须重跑 `.\tools\bundle-dsh.ps1`
   并重装 APK 才生效（运行时打包在 assets 里）；插件本身在
   [独立公开仓库](https://github.com/asdukw/dsh-plugin-android-tools)，

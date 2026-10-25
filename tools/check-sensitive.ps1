@@ -76,7 +76,7 @@ $IdentifierPatterns = @(
 function Get-LiveApiKey {
   if (-not (Test-Path -LiteralPath $localProperties)) { return $null }
   foreach ($line in Get-Content -LiteralPath $localProperties) {
-    if ($line -match '^\s*tappet\.agent\.apiKey\s*=') {
+    if ($line -match '^\s*factotum\.agent\.apiKey\s*=') {
       $value = $line.Substring($line.IndexOf('=') + 1).Trim()
       if ($value.Length -gt 0) { return $value }
     }
@@ -196,11 +196,11 @@ $liveKey = Get-LiveApiKey
 $failed = $false
 $warned = $false
 
-Write-Host '== Tappet 发布前敏感信息自检 ==' -ForegroundColor Cyan
+Write-Host '== Factotum 发布前敏感信息自检 ==' -ForegroundColor Cyan
 if ($liveKey) {
   Write-Host "已读到本机 API key（$($liveKey.Length) 字符，不打印）" -ForegroundColor DarkGray
 } else {
-  Write-Host '本机没有 API key（local.properties 无 tappet.agent.apiKey），只按模式扫' -ForegroundColor DarkGray
+  Write-Host '本机没有 API key（local.properties 无 factotum.agent.apiKey），只按模式扫' -ForegroundColor DarkGray
 }
 
 # 1) .gitignore 健康检查 —— 这条失效的后果最大

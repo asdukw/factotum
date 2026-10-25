@@ -8,8 +8,8 @@ import { register } from 'node:module'
 
 register('./stub-loader.mjs', import.meta.url)
 
-process.env.TAPPET_CONNECTOR_BRIDGE_URL = 'http://127.0.0.1:1'
-process.env.TAPPET_CONNECTOR_BRIDGE_TOKEN = 'bridge-token'
+process.env.FACTOTUM_CONNECTOR_BRIDGE_URL = 'http://127.0.0.1:1'
+process.env.FACTOTUM_CONNECTOR_BRIDGE_TOKEN = 'bridge-token'
 
 const ACCESS_TOKEN = 'access-token-must-never-be-echoed'
 const LONG_BODY = 'x'.repeat(9000)
@@ -20,7 +20,7 @@ let gmailStatus = 200
 let listReply = { messages: [] }
 let labelsReply = { labels: [] }
 let writeReply = {}
-let saveReply = { ok: true, path: 'Download/Tappet/attachment', bytes: 0 }
+let saveReply = { ok: true, path: 'Download/Factotum/attachment', bytes: 0 }
 const messages = new Map()
 const threads = new Map()
 const attachments = new Map()
@@ -468,10 +468,10 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
     }),
   )
   attachments.set('m-att-save/att-1', { data: base64url('PDF-CONTENT'), size: 11 })
-  saveReply = { ok: true, path: 'Download/Tappet/报价单.pdf', bytes: 11 }
+  saveReply = { ok: true, path: 'Download/Factotum/报价单.pdf', bytes: 11 }
 
   const result = await tools.get('mail_save_attachment').execute({ message_id: 'm-att-save', index: 1 })
-  assert.match(result, /附件已保存到 Download\/Tappet\/报价单\.pdf/)
+  assert.match(result, /附件已保存到 Download\/Factotum\/报价单\.pdf/)
   assert.ok(!result.includes('att-1'), 'attachmentId 不该出现在工具结果里')
 
   const saveCall = calls

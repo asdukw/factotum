@@ -123,10 +123,10 @@ launcher 里，上游升级不会冲突。
 
 - 基址**不含** `/messages` —— dsh 的 provider 自己追加。写成带 `/messages` 的会得到
   `.../messages/messages`，报出来是个 404，看不出是配置问题（有单测钉住）。
-- 端点与模型按当前提供商由 `NodeRuntime` 注入 `TAPPET_WEB_SEARCH_BASE_URL` /
-  `TAPPET_WEB_SEARCH_MODEL` / `TAPPET_WEB_SEARCH_KEY_ENV`。**不能从 `TAPPET_LLM_API` 推**：
+- 端点与模型按当前提供商由 `NodeRuntime` 注入 `FACTOTUM_WEB_SEARCH_BASE_URL` /
+  `FACTOTUM_WEB_SEARCH_MODEL` / `FACTOTUM_WEB_SEARCH_KEY_ENV`。**不能从 `FACTOTUM_LLM_API` 推**：
   zen 聊天走 `openai-completions`，搜索走 Anthropic 兼容的 `/messages`，是两套协议。
-- `search == null` 的提供商（OpenRouter / 自定义）把 `TAPPET_WEB_SEARCH_KEY_ENV` 指到一个
+- `search == null` 的提供商（OpenRouter / 自定义）把 `FACTOTUM_WEB_SEARCH_KEY_ENV` 指到一个
   **解析不到的变量名** —— seam 判断提供方可用性的办法就是「密钥在不在」，于是 `web_search`
   回 `WEB_PROVIDER_UNAVAILABLE`，而不是拿聊天那把 key 去打一个不存在的搜索端点（那会报 401，
   看着像密钥填错了）。这与连接器「没配就回 `NOT_CONNECTED`」是同一条路数。
@@ -148,10 +148,10 @@ launcher 里，上游升级不会冲突。
 
 ```powershell
 adb install -r android\app\build\outputs\apk\debug\app-debug.apk
-adb shell settings put secure enabled_accessibility_services com.tappet.app/.accessibility.TappetAccessibilityService
-adb shell am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op START
-adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op TASK --es task '用 web_search 查一条今天的科技新闻，给出标题和链接。' --ez logPayload true"
-adb logcat -s TappetNode        # 看 "task done ... tools=N" 与助手正文
+adb shell settings put secure enabled_accessibility_services com.factotum.app/.accessibility.FactotumAccessibilityService
+adb shell am broadcast -n com.factotum.app/.node.NodeDebugReceiver -a com.factotum.app.debug.NODE --es op START
+adb shell "am broadcast -n com.factotum.app/.node.NodeDebugReceiver -a com.factotum.app.debug.NODE --es op TASK --es task '用 web_search 查一条今天的科技新闻，给出标题和链接。' --ez logPayload true"
+adb logcat -s FactotumNode        # 看 "task done ... tools=N" 与助手正文
 ```
 
 判据：`tools` ≥ 1，且正文里有**带 URL 的来源**。只有「答案看起来对」不算 ——

@@ -77,7 +77,7 @@ policy: !!js "(process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger
 - **全部允许是 App 侧的开关，不是 dsh 的 policy**：设置 → 执行层 → 写操作审批（默认「每次
   询问」）。打开后 `ApprovalBridgeServer` 收到请求直接回 `allowed-once`，面板不出现；请求仍
   走 `@deepseek-ai/dsh-user-approval` 与审计，变的只是谁来回答。策略存在
-  `ApprovalSettings`（prefs `tappet_approval_settings`），每次请求现读，改完立即生效，
+  `ApprovalSettings`（prefs `factotum_approval_settings`），每次请求现读，改完立即生效，
   不需要重启 Node。
 - **关闭 = 取消**：用户下滑关掉面板 → `cancelled`，不是 `rejected`；两者都不授权。
 - **同时只允许一个待审批**：`ApprovalHub` 对第二个请求直接回 `CANCEL`（fail closed）。
@@ -147,8 +147,8 @@ PC 侧（已跑过）：
 ```powershell
 node tools/dsh-phone/plugins/approval/test/smoke.mjs     # 注册在 approval/request，prepend
 node tools/dsh-phone/plugins/approval/test/answerer.mjs  # 映射 / fail closed / 取消
-.\gradlew.bat :app:testDebugUnitTest --tests "com.tappet.app.agent.ApprovalHubTest"
-.\gradlew.bat :app:testDebugUnitTest --tests "com.tappet.app.node.NodeRuntimeProfileTest"
+.\gradlew.bat :app:testDebugUnitTest --tests "com.factotum.app.agent.ApprovalHubTest"
+.\gradlew.bat :app:testDebugUnitTest --tests "com.factotum.app.node.NodeRuntimeProfileTest"
 ```
 
 装配：
@@ -163,7 +163,7 @@ node tools/dsh-phone/plugins/approval/test/answerer.mjs  # 映射 / fail closed 
 1. 装 APK，确认运行时 mount 成功（新增一行 profile 写坏会让整棵 cordis 根 mount 失败，
    而 Node 与宿主同进程 —— 表现是整个 App 起不来）。
 2. 第一个写工具落地后跑一次真实任务，确认面板出现、允许 → 动作执行、拒绝 → 模型收到未允许。
-3. `adb logcat -s TappetApproval` 只应出现工具名与结果，不应出现 `reason` / `displayReason`。
+3. `adb logcat -s FactotumApproval` 只应出现工具名与结果，不应出现 `reason` / `displayReason`。
 
 ## 6. 已知限制
 

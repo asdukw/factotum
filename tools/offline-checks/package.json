@@ -1,5 +1,5 @@
 {
-  "name": "tappet-offline-checks",
+  "name": "factotum-offline-checks",
   "private": true,
   "description": "CI-only dependency for the dsh profile YAML parser; not shipped.",
   "dependencies": {

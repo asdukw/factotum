@@ -10,7 +10,7 @@
 // 3. dsh-client-ui-settings-models：见下方注释。
 //
 // **幂等判定一律看「补丁效果」，不看标记串。** 踩过的坑：标记串里带过项目名，
-// 项目改名（Memex → Tappet）后旧标记对不上，脚本误判成「还没打过补丁」，
+// 项目改名（Memex → Factotum）后旧标记对不上，脚本误判成「还没打过补丁」，
 // 于是 flock 被重复插入、jsonl / welcome 因为锚点已被替换而直接抛错。
 // 标记串现在只用于人工 grep，不参与任何判断。
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -22,7 +22,7 @@ if (!modulesDir) {
   process.exit(2)
 }
 
-const flockMarker = 'Tappet patch: Android 单进程无需跨进程 flock'
+const flockMarker = 'Factotum patch: Android 单进程无需跨进程 flock'
 const flockPath = join(modulesDir, '@deepseek-ai/node-addon-system/lib/flock.js')
 const flockSource = readFileSync(flockPath, 'utf8')
 const flockAnchor = 'export async function tryLockExclusive(fd) {'
@@ -47,7 +47,7 @@ if (flockPatched === flockSource) {
 
 // 补丁 2：jsonl 会话持久化用硬链接发布文件；Android 沙箱对 app data 的 link() 返回
 // EACCES。内嵌单进程下用 rename（原子发布、同目录）替代，语义足够。
-const linkMarker = 'Tappet patch: Android 用 rename 发布'
+const linkMarker = 'Factotum patch: Android 用 rename 发布'
 const jsonlPath = join(modulesDir, '@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js')
 const jsonl = readFileSync(jsonlPath, 'utf8')
 const linkAnchor = 'await link(tmp, finalPath);'
@@ -83,7 +83,7 @@ if (jsonl.includes(renameCall)) {
 // 这里补一段同样的 ctx.on(...) → transport.notify("session.stream", ...)。
 //
 // 诊断只打**结构**（帧数与字符数），不打正文 —— 与「屏幕与聊天正文不落日志」那条红线一致。
-const streamMarker = 'Tappet patch: forward assistant stream'
+const streamMarker = 'Factotum patch: forward assistant stream'
 const streamPath = join(modulesDir, '@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js')
 const streamSrc = readFileSync(streamPath, 'utf8')
 const streamAnchor = '\t\tthis.disposers.push(ctx.on("session/created", (session) => {'
@@ -95,15 +95,15 @@ if (streamSrc.includes(streamMarker)) {
   }
   const injected = [
     '\t\t// ' + streamMarker,
-    '\t\tconst tappetStreamStats = new Map();',
+    '\t\tconst factotumStreamStats = new Map();',
     '\t\tthis.disposers.push(ctx.on("agent/assistant-stream", ({ agent, frame }) => {',
     '\t\t\tif (!frame || frame.type !== "chunk" || !agent) return;',
     '\t\t\tconst sid = String(agent.session.id);',
-    '\t\t\tconst stats = tappetStreamStats.get(sid) ?? { frames: 0, text: 0 };',
+    '\t\t\tconst stats = factotumStreamStats.get(sid) ?? { frames: 0, text: 0 };',
     '\t\t\tstats.frames += 1;',
     '\t\t\tconst chunk = frame.chunk ?? {};',
     '\t\t\tif (chunk.type === "text-delta") stats.text += String(chunk.text ?? "").length;',
-    '\t\t\ttappetStreamStats.set(sid, stats);',
+    '\t\t\tfactotumStreamStats.set(sid, stats);',
     '\t\t\tthis.transport.notify("session.stream", {',
     '\t\t\t\tsessionId: sid,',
     '\t\t\t\tattemptId: String(frame.attemptId),',
@@ -115,9 +115,9 @@ if (streamSrc.includes(streamMarker)) {
     '\t\tthis.disposers.push(ctx.on("agent/assistant-stream", ({ agent, frame }) => {',
     '\t\t\tif (!frame || frame.type !== "end" || !agent) return;',
     '\t\t\tconst sid = String(agent.session.id);',
-    '\t\t\tconst stats = tappetStreamStats.get(sid) ?? { frames: 0, text: 0 };',
-    '\t\t\ttappetStreamStats.delete(sid);',
-    '\t\t\tconsole.error(`[tappet] assistant stream end: frames=${stats.frames} textChars=${stats.text}`);',
+    '\t\t\tconst stats = factotumStreamStats.get(sid) ?? { frames: 0, text: 0 };',
+    '\t\t\tfactotumStreamStats.delete(sid);',
+    '\t\t\tconsole.error(`[factotum] assistant stream end: frames=${stats.frames} textChars=${stats.text}`);',
     '\t\t}));',
     '',
   ].join('\n')
@@ -130,7 +130,7 @@ if (streamSrc.includes(streamMarker)) {
 // file-backed include 树里的 config-editor 条目（我们目前把 rows 直接挂在 loader.root，
 // 没有 include 层）→ 保存必然失败且弹窗无法关闭、阻断首次使用。
 // 该弹窗只是预览告知，不影响功能；等 launcher 改用 file-backed include 后再去掉本补丁。
-const welcomeMarker = 'Tappet patch: hide preview notice'
+const welcomeMarker = 'Factotum patch: hide preview notice'
 const welcomePath = join(modulesDir, '@deepseek-ai/dsh-client-ui-settings-models/lib/client.js')
 const welcome = readFileSync(welcomePath, 'utf8')
 const welcomeAnchor =

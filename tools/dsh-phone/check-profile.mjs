@@ -85,29 +85,29 @@ const scenarios = [
   {
     name: 'Anthropic',
     env: {
-      TAPPET_LLM_API: 'anthropic-messages',
-      TAPPET_LLM_BASE_URL: 'https://api.anthropic.com',
-      TAPPET_LLM_MODEL: 'claude-sonnet-5',
-      TAPPET_LLM_THINKING_FORMAT: '',
-      TAPPET_LLM_ZEN: '',
+      FACTOTUM_LLM_API: 'anthropic-messages',
+      FACTOTUM_LLM_BASE_URL: 'https://api.anthropic.com',
+      FACTOTUM_LLM_MODEL: 'claude-sonnet-5',
+      FACTOTUM_LLM_THINKING_FORMAT: '',
+      FACTOTUM_LLM_ZEN: '',
     },
   },
   {
     name: 'opencode zen',
     env: {
-      TAPPET_LLM_API: 'openai-completions',
-      TAPPET_LLM_BASE_URL: 'https://opencode.ai/zen/go/v1',
-      TAPPET_LLM_MODEL: 'deepseek-v4.1-flash',
-      TAPPET_LLM_THINKING_FORMAT: 'deepseek',
-      TAPPET_LLM_ZEN: '1',
-      TAPPET_LLM_SESSION: 'check-profile',
+      FACTOTUM_LLM_API: 'openai-completions',
+      FACTOTUM_LLM_BASE_URL: 'https://opencode.ai/zen/go/v1',
+      FACTOTUM_LLM_MODEL: 'deepseek-v4.1-flash',
+      FACTOTUM_LLM_THINKING_FORMAT: 'deepseek',
+      FACTOTUM_LLM_ZEN: '1',
+      FACTOTUM_LLM_SESSION: 'check-profile',
     },
   },
   {
     // 宿主（NodeRuntime）按当前选中的模型注入的动态清单，见 ProviderConfig.llmModelsJson。
     // 自定义提供商 / 目录外模型全靠它；空环境下的 fallback 只是一条可用的默认。
     name: '动态模型清单',
-    env: { TAPPET_LLM_MODELS: '[{"id":"gateway/model-x","input":["text"]}]' },
+    env: { FACTOTUM_LLM_MODELS: '[{"id":"gateway/model-x","input":["text"]}]' },
   },
 ]
 const validatedModels = []

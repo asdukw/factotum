@@ -1,7 +1,7 @@
-# Tappet 技术路线畅想
+# Factotum 技术路线畅想
 
 > 这份文档是方向性设想，不是排期承诺。每一条都尽量写清「为什么值得做 / 怎么做 / 代价」，
-> 回答的是「下一步能把 Tappet 推到什么程度」，而不是「还缺哪些功能」。
+> 回答的是「下一步能把 Factotum 推到什么程度」，而不是「还缺哪些功能」。
 > 与 `AGENTS.md` 的关系：AGENTS 记录**已经实测过的硬规则**，本文记录**还没验证的假设**——
 > 引用本文任何一条时，先按 AGENTS 的规矩在真机上验一遍。
 
@@ -193,7 +193,7 @@ Can We Trust Large Multimodal Model Powered GUI Agents?*），而且这类攻击
 ### 4.1 会话 resume
 
 `AGENTS.md` 已记录：dsh SDK 只有 create 无 resume，现在靠进程级 `runtimeTag` 后缀绕开
-`session already exists`。长期要么在上游补 resume，要么在 Tappet 侧做会话重放——
+`session already exists`。长期要么在上游补 resume，要么在 Factotum 侧做会话重放——
 后者需要「动作序列可重放」，与 §3.3 是同一份基础设施。
 
 ### 4.2 分层模型

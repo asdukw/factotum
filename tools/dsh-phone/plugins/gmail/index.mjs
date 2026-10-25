@@ -4,7 +4,7 @@
 // （mail_modify / mail_draft / mail_send / mail_save_attachment）**必须**经 dsh 官方审批 seam：
 // `tools/pre-execute` 返回 `ask` → `@deepseek-ai/dsh-user-approval` → App 确认面板，
 // 只有 `allowed-once` 才会真的发出请求（见 docs/approvals.md）。**不要绕过这个 gate。**
-// 附件下载只写手机的公共「下载/Tappet」目录，App 私有目录不保留副本（见 docs §1.3）。
+// 附件下载只写手机的公共「下载/Factotum」目录，App 私有目录不保留副本（见 docs §1.3）。
 //
 // 令牌不在这里：Kotlin 宿主经本地连接器桥发一个短命的 access token（ConnectorBridgeServer）。
 // refresh token 从不离开宿主，这个插件也从不打印令牌（连前缀都不打）。
@@ -80,10 +80,10 @@ const BODY_CLOSE = '--- 邮件正文结束 ---'
 
 /** 向宿主换一个 access token。**失败时把宿主的 code 一起抛出去**，模型据此能给用户一句准话。 */
 async function accessToken() {
-  const baseUrl = process.env.TAPPET_CONNECTOR_BRIDGE_URL
-  const token = process.env.TAPPET_CONNECTOR_BRIDGE_TOKEN
+  const baseUrl = process.env.FACTOTUM_CONNECTOR_BRIDGE_URL
+  const token = process.env.FACTOTUM_CONNECTOR_BRIDGE_TOKEN
   if (!baseUrl || !token) {
-    throw new Error('连接器桥不可用（TAPPET_CONNECTOR_BRIDGE_URL/TOKEN 未设置）：这个运行时没有连接器支持')
+    throw new Error('连接器桥不可用（FACTOTUM_CONNECTOR_BRIDGE_URL/TOKEN 未设置）：这个运行时没有连接器支持')
   }
   const response = await fetch(`${baseUrl}/action`, {
     method: 'POST',
@@ -555,14 +555,14 @@ async function mailSend(args = {}) {
 }
 
 /**
- * 把附件字节交给宿主写进公共「下载/Tappet」。
+ * 把附件字节交给宿主写进公共「下载/Factotum」。
  *
  * 走二进制 body（不是 JSON）：附件最大 20MB，再套一层 base64/JSON 会多出一倍内存。
  * 文件名 / MIME 放百分号编码的头里（头必须是 ASCII）。
  */
 async function saveAttachmentOnHost({ filename, mimeType, data }) {
-  const baseUrl = process.env.TAPPET_CONNECTOR_BRIDGE_URL
-  const token = process.env.TAPPET_CONNECTOR_BRIDGE_TOKEN
+  const baseUrl = process.env.FACTOTUM_CONNECTOR_BRIDGE_URL
+  const token = process.env.FACTOTUM_CONNECTOR_BRIDGE_TOKEN
   if (!baseUrl || !token) throw new Error('连接器桥不可用：这个运行时不能保存附件')
   const bytes = Buffer.from(String(data ?? ''), 'base64url')
   if (bytes.length === 0) throw new Error('附件内容为空')
@@ -621,7 +621,7 @@ async function mailSaveAttachment(args = {}) {
     mimeType: attachment.mimeType,
     data: payload.data,
   })
-  return `附件已保存到 ${saved.path}（${formatBytes(saved.bytes)}）。\n在系统「文件」App 的「下载/Tappet」里可以找到它。`
+  return `附件已保存到 ${saved.path}（${formatBytes(saved.bytes)}）。\n在系统「文件」App 的「下载/Factotum」里可以找到它。`
 }
 
 /**
@@ -932,7 +932,7 @@ export function apply(ctx) {
     mailTool({
       name: 'mail_save_attachment',
       description:
-        '把一封邮件的附件保存到手机的公共下载目录（下载/Tappet）。'
+        '把一封邮件的附件保存到手机的公共下载目录（下载/Factotum）。'
         + 'index 从 1 开始，按 mail_read 结果里附件的顺序。'
         + '**执行前会请求用户确认**（一次性授权）；只支持 Android 10+，单附件上限 20 MB。'
         + 'App 不保留副本；保存后文件在系统「文件」App 里能看到。',

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22.1)
 # libnode.so 依赖 libc++_shared.so；必须在 project() 前设置，NDK toolchain 才会用共享 STL
 set(ANDROID_STL c++_shared)
 
-project(tappet-node CXX)
+project(factotum-node CXX)
 
 # Node 24 的头文件（cppgc）要求 C++20
 set(CMAKE_CXX_STANDARD 20)

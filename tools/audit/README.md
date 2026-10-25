@@ -1,7 +1,7 @@
 # tools/audit —— 任务审计回路
 
 替代「人工跑一遍、翻日志、凭印象说哪里不对」的取证层。
-**这一层是确定性的脚本，判断留给 `tappet-auditor` agent。**
+**这一层是确定性的脚本，判断留给 `factotum-auditor` agent。**
 
 ## 为什么要结构化
 
@@ -11,7 +11,7 @@
 
 - `events.jsonl` —— 每步一行（任务 / 助手回合 / 工具结果 / 收尾 / **设备标记**）
 - `metrics.json` —— 步数、工具调用分布、错误、空转、载荷字符、图像、设备标记数、墙钟
-- `device-log.txt` —— App 侧审计标记原文（logcat，tag `TappetAudit`）
+- `device-log.txt` —— App 侧审计标记原文（logcat，tag `FactotumAudit`）
 - `runs/index.json` —— 所有历史运行的指标索引，**跨运行的模式只在这里看得出来**
 
 ## 设备标记（为什么还要抓 logcat）
@@ -32,8 +32,8 @@
 `exploration_observed` 在**动作前**读，不是在切换后回读 —— `serviceInfo` 由系统异步生效，
 刚写完那一瞬读到的可能是旧值。
 
-App 侧用固定 tag `TappetAudit` 打 `ev=<名> <k>=<v>` 一行；`collect.mjs` 抓这段 logcat
-（`adb logcat -d -v epoch -s TappetAudit:I`），按 **epoch 毫秒**并进 `events.jsonl`
+App 侧用固定 tag `FactotumAudit` 打 `ev=<名> <k>=<v>` 一行；`collect.mjs` 抓这段 logcat
+（`adb logcat -d -v epoch -s FactotumAudit:I`），按 **epoch 毫秒**并进 `events.jsonl`
 （dsh 记录的 `time` 也是 `Date.now()`，同一时基）。窗口外的标记会被丢掉并在
 `metrics.deviceMarkers.dropped` 里如实计数——logcat 缓冲区常留着上一次任务的标记。
 
@@ -59,28 +59,28 @@ node tools/audit/collect.mjs --session <目录名> --label baseline
 多步表单与跨 App 发送。后三条会留下可见痕迹（闹钟 / 备忘 / 给自己发消息），
 **重复跑之前先清理上一轮**，否则「列表里最后一条」这类判据会失效。
 
-每个任务开始前 `run-suite` 会：回桌面 → 把 Tappet 拉到前台 → 执行任务的可选
+每个任务开始前 `run-suite` 会：回桌面 → 把 Factotum 拉到前台 → 执行任务的可选
 `resetPackages`（`pm clear`，例如计算器会把上次的算式留在界面上；ColorOS 会拒绝这条，
 失败只记一行）→ 用唯一 session 广播任务。
 结束判据是设备侧真的打出 `task done` **且**会话文件不再增长；超时会明确警告「下一条可能重叠」，
 不再把「文件暂时没长」当成跑完。
 
-**审计标记用流式 logcat 采集**：任务开始前起一个 `adb logcat -v epoch -s TappetAudit:I`
+**审计标记用流式 logcat 采集**：任务开始前起一个 `adb logcat -v epoch -s FactotumAudit:I`
 写文件，任务结束再停，`collect.mjs --logcat <file>` 直接用。以前是任务结束后 `logcat -d`，
 而 token 流逐帧打日志会把环形缓冲区冲掉 —— 五条任务全部报「一条标记都没抓到」。
 套件启动时还会尝试 `logcat -G 16M` 调大缓冲区作为兜底（ColorOS 可能拒绝，忽略即可）。
 
 设备必须在线；离线时脚本会直说，不会假装有数据。
 
-然后把 `tools/audit/runs/` 交给 **`tappet-auditor`** 子 agent 出报告。
+然后把 `tools/audit/runs/` 交给 **`factotum-auditor`** 子 agent 出报告。
 
 ## 三个刻意的设计
 
 **1. 包名不硬编码。** 唯一的来源是 `android/app/build.gradle.kts` 的 `applicationId`，
-每次现读；debug 包若在 `android/local.properties` 里配了 `tappet.debugSuffix`（并行 worktree
+每次现读；debug 包若在 `android/local.properties` 里配了 `factotum.debugSuffix`（并行 worktree
 共存用），后缀一起拼上 —— 否则审计会去找一个没装的身份。上一轮改名时有一批手工脚本因为
 硬编码旧包名一起失效 —— 而且是**静默**失效：路径不存在，报出来像"没有 session 目录"，
-看着像设备问题。这类脚本一律现读。需要覆盖时用环境变量 `TAPPET_PACKAGE`。
+看着像设备问题。这类脚本一律现读。需要覆盖时用环境变量 `FACTOTUM_PACKAGE`。
 
 **2. 会话容器目录也不硬编码。** dsh 的 `sessions/--data-user-0-<包名>-files-dsh-home--`
 是派生的，改名就变。这里直接列目录找。

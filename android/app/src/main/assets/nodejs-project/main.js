@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 
-const statusFile = process.env.TAPPET_STATUS_FILE;
+const statusFile = process.env.FACTOTUM_STATUS_FILE;
 const info = {
   version: process.version,
   mobile: process.versions.mobile || null,
@@ -23,12 +23,12 @@ const info = {
 try {
   if (statusFile) fs.writeFileSync(statusFile, JSON.stringify(info, null, 2));
 } catch (error) {
-  console.error('[tappet-node] write status failed: ' + error.message);
+  console.error('[factotum-node] write status failed: ' + error.message);
 }
-console.log('[tappet-node] ' + JSON.stringify(info));
+console.log('[factotum-node] ' + JSON.stringify(info));
 
 // 存活 5 秒再退出：P0 只验证生命周期；P1 会换成常驻的 dsh 进程。
 setTimeout(() => {
-  console.log('[tappet-node] alive 5s, exiting');
+  console.log('[factotum-node] alive 5s, exiting');
   process.exit(0);
 }, 5000);

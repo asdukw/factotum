@@ -7,7 +7,7 @@
 -->
 <lint>
   <!-- 只发 arm64 是有意的：APK 里 160MB 主要是内嵌 Node 运行时，多一个 ABI 就翻倍。
-       ChromeOS 的 x86_64 不在目标内（模拟器调试另有 -Ptappet.abis=x86_64）。 -->
+       ChromeOS 的 x86_64 不在目标内（模拟器调试另有 -Pfactotum.abis=x86_64）。 -->
   <issue id="ChromeOsAbiSupport" severity="ignore" />
 
   <!-- debug-only 的广播入口靠 `adb shell am broadcast`（uid 2000）触发，必须 exported；
@@ -19,7 +19,7 @@
   <!-- ChatGlyphs 的 modifier 默认值就是该字形自己的尺寸（Modifier.size(22.dp)），
        这是刻意的 API 形状：调用方不传也能得到正确大小。 -->
   <issue id="ModifierParameter">
-    <ignore path="src/main/java/com/tappet/app/ui/chat/ChatGlyphs.kt" />
+    <ignore path="src/main/java/com/factotum/app/ui/chat/ChatGlyphs.kt" />
   </issue>
 
   <!-- 这条规则按英文判断「拼接处少了个空格」，而中文拼接本来就不加空格。

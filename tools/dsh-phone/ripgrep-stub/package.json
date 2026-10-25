@@ -1,8 +1,8 @@
 {
   "name": "@vscode/ripgrep",
-  "version": "0.0.0-tappet-stub",
+  "version": "0.0.0-factotum-stub",
   "private": true,
-  "description": "Tappet stub replacing the real @vscode/ripgrep: points rgPath at the ripgrep we cross-compiled for Android (the real package has no android binary)",
+  "description": "Factotum stub replacing the real @vscode/ripgrep: points rgPath at the ripgrep we cross-compiled for Android (the real package has no android binary)",
   "type": "module",
   "main": "index.js",
   "exports": {

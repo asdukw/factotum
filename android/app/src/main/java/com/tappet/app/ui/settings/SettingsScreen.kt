@@ -51,6 +51,7 @@ fun SettingsScreen(
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit,
   onOpenCharacters: () -> Unit,
+  onOpenTavernPresets: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -70,6 +71,7 @@ fun SettingsScreen(
     onOpenScheduledTasks = onOpenScheduledTasks,
     onOpenVoice = onOpenVoice,
     onOpenCharacters = onOpenCharacters,
+    onOpenTavernPresets = onOpenTavernPresets,
     modifier = modifier,
   )
 }
@@ -83,6 +85,7 @@ internal fun SettingsScreen(
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit = {},
   onOpenCharacters: () -> Unit = {},
+  onOpenTavernPresets: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -108,7 +111,10 @@ internal fun SettingsScreen(
         // 娱乐跟「干活」分开：人格与角色卡只在酒馆会话里决定谁在说话，日常会话不受影响。
         // 放在同一组里，用户会以为改人格就是改助手本身。
         SectionLabel("娱乐")
-        EntertainmentSection(onOpenCharacters = onOpenCharacters)
+        EntertainmentSection(
+          onOpenCharacters = onOpenCharacters,
+          onOpenTavernPresets = onOpenTavernPresets,
+        )
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
         SectionLabel("执行层")
@@ -133,7 +139,10 @@ internal fun SettingsScreen(
  * 「助手本人 + 当前人格」。所以它们既不属于模型/服务，也不该跟执行层混在一起。
  */
 @Composable
-private fun EntertainmentSection(onOpenCharacters: () -> Unit) {
+private fun EntertainmentSection(
+  onOpenCharacters: () -> Unit,
+  onOpenTavernPresets: () -> Unit,
+) {
   val context = LocalContext.current
   // 选中即生效、没有可观察的数据源 —— 从子页返回时必须重读，否则停在旧值
   // （与无障碍开关同一个处理）。
@@ -150,6 +159,15 @@ private fun EntertainmentSection(onOpenCharacters: () -> Unit) {
       title = "角色卡",
       subtitle = characterSubtitle(activeCharacter),
       onClick = onOpenCharacters,
+    ) {
+      ChevronRight()
+    }
+    SettingsDivider()
+    SettingsRow(
+      glyph = GlyphKind.Sparkles,
+      title = "酒馆预设",
+      subtitle = "系统模板与后置指令 · 决定模型怎么演",
+      onClick = onOpenTavernPresets,
     ) {
       ChevronRight()
     }

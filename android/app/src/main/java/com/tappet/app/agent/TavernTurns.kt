@@ -15,6 +15,8 @@ class TavernTurns(
   /** 每次现取：用户在设置里换了提供商（比如换成 Anthropic 原生协议），这一条就该换通道。 */
   private val channel: () -> TavernChannel? = { null },
   private val memory: (String) -> String = { "" },
+  /** 每次现取：用户在预设页里换了那套，下一条消息就该用新的。 */
+  private val preset: () -> TavernPreset = { TavernPreset.DEFAULT },
 ) {
   val enabled: Boolean get() = channel() != null
 
@@ -35,7 +37,7 @@ class TavernTurns(
         .map { TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content) }
         .toList()
     if (history.isEmpty()) return null
-    val messages = TavernPrompt.build(card, memory(card.id), history)
+    val messages = TavernPrompt.build(card, memory(card.id), history, preset())
     return channel.stream(TavernRequest(sessionId, messages))
   }
 }

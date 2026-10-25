@@ -113,6 +113,7 @@ import com.tappet.app.agent.PersonaStore
 import com.tappet.app.agent.RoleplayBinding
 import com.tappet.app.agent.RoleplayGroup
 import com.tappet.app.agent.SessionHandoff
+import com.tappet.app.agent.TavernPresetStore
 import com.tappet.app.agent.TavernTurns
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
@@ -182,6 +183,7 @@ fun ChatScreen(
                 }
               },
               memory = { id -> CharacterMemory.notes(appContext, id) },
+              preset = { TavernPresetStore.selected(appContext) },
             ),
           // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
           // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。

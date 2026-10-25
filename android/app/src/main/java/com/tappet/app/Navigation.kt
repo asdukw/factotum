@@ -14,6 +14,7 @@ import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.ScheduledTasksScreen
 import com.tappet.app.ui.settings.SettingsScreen
+import com.tappet.app.ui.settings.TavernPresetScreen
 import com.tappet.app.ui.settings.TermuxBridgeScreen
 import com.tappet.app.ui.settings.VoiceScreen
 
@@ -42,7 +43,11 @@ fun MainNavigation() {
             onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
             onOpenVoice = { backStack.add(Voice) },
             onOpenCharacters = { backStack.add(Characters) },
+            onOpenTavernPresets = { backStack.add(TavernPresets) },
           )
+        }
+        entry<TavernPresets> {
+          TavernPresetScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<Providers> {
           ProvidersScreen(

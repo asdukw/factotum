@@ -9,6 +9,7 @@ import android.util.Log
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.device.DeviceAction
+import com.tappet.app.device.DeviceNotices
 import com.tappet.app.device.PressKey
 import com.tappet.app.device.SwipeDirection
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
  * adb shell ... --es action TAP_TARGET --es screenshot_id f1 --ei x1 .. --ei y1 .. --ei x2 .. --ei y2 ..
  * adb shell ... --es action TEXT_CHANNEL
  * adb shell ... --es action IME_TEXT --es text "hello"   # 绕过控件树，只验文本注入通道
+ * adb shell ... --es action NOTICE --es title "已创建日程" --es detail "测试 · 19:00"
  * ```
  *
  * `TEXT_CHANNEL` 不驱动动作，只把无障碍文本注入通道的状态打到 logcat（系统版本 / 配置是否
@@ -92,6 +94,18 @@ class DeviceActionReceiver : BroadcastReceiver() {
           pending.finish()
         }
       }
+      return
+    }
+    if (actionName == "NOTICE") {
+      // 只发一条设备动作回执 —— 用来独立验证通知的重要性 / 提示音 / 流体云，
+      // 不必真的跑一轮 agent 任务去写日历。标题与正文由调用方给（默认是测试文案）。
+      DeviceNotices.created(
+        context,
+        intent.getStringExtra(EXTRA_TITLE) ?: "测试回执",
+        intent.getStringExtra(EXTRA_DETAIL) ?: "tappet 设备动作回执测试",
+      )
+      // 只打动作，不打标题 / 正文（隐私红线：真实回执里带日程标题）。
+      Log.i(TAG, "action=NOTICE posted")
       return
     }
     val action = parse(actionName, intent)
@@ -214,6 +228,8 @@ class DeviceActionReceiver : BroadcastReceiver() {
     const val EXTRA_X2 = "x2"
     const val EXTRA_Y2 = "y2"
     const val EXTRA_ON = "on"
+    const val EXTRA_TITLE = "title"
+    const val EXTRA_DETAIL = "detail"
 
     /** 超过这个长度的 payload 不落日志（截图是 base64 大块）。 */
     private const val MAX_LOGGED_PAYLOAD_CHARS = 4000

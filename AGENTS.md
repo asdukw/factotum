@@ -140,7 +140,9 @@ push, not later.
 - **Write operations require the official dsh approval seam.** `tools/pre-execute` returns
   `ask` for a declared write tool → `@deepseek-ai/dsh-user-approval` → phone answerer →
   confirmation sheet; only `allowed-once` executes, and a missing answerer fails closed.
-  `reason` is persisted in the session audit log (keep user content out of it);
+  Settings → 执行层 → 写操作审批 (default: ask) can switch the answerer to auto-answer
+  `allowed-once`; the seam and its audit stay, and `policy: never` is still a denial, not a
+  grant. `reason` is persisted in the session audit log (keep user content out of it);
   `displayReason` is UI-only and not persisted. See `docs/approvals.md`.
 - **Do not enable touch exploration during tasks**: it swallows injected `dispatchGesture` events
   and cannot rescue a running app. Keep the `touchExplorationActive`
@@ -328,6 +330,8 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a 
 # Visual path: capture, then tap image pixels
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action CAPTURE_FRAME
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action TAP_TARGET --es screenshot_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
+# Receipt notification (importance / sound / promotion), without running a task
+adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action NOTICE
 ```
 
 Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, `TERMUX`, voice `ASR`/`VAD`) are in

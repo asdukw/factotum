@@ -1,9 +1,12 @@
 package com.tappet.app.bridge
 
+import android.content.Context
 import android.util.Log
 import com.tappet.app.agent.ApprovalDecision
 import com.tappet.app.agent.ApprovalHub
+import com.tappet.app.agent.ApprovalSettings
 import com.tappet.app.agent.PendingApproval
+import com.tappet.app.agent.autoApprovalOutcome
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -44,8 +47,15 @@ object ApprovalBridgeServer {
 
   @Volatile private var port: Int = -1
 
+  /**
+   * 审批策略存在用户偏好里，每次请求现读 —— 改设置不需要重启 Node。
+   * 只在 [start] 时赋值，之后只读。
+   */
+  private lateinit var appContext: Context
+
   /** 启动（幂等），返回给 Node 的 base URL；token 通过 [authToken] 读取。 */
-  fun start(): String {
+  fun start(context: Context): String {
+    appContext = context.applicationContext
     if (started.compareAndSet(false, true)) {
       val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
       port = socket.localPort
@@ -116,6 +126,11 @@ object ApprovalBridgeServer {
   private fun approve(body: JsonObject): String {
     val toolName = body.string("toolName")?.trim().orEmpty()
     if (toolName.isEmpty()) return errorJson("BAD_REQUEST", "缺少 toolName")
+    // 「全部允许」：不登记 UI、不挂起，直接回 allowed-once。策略每次现读，改设置立即生效。
+    autoApprovalOutcome(ApprovalSettings.policy(appContext))?.let { auto ->
+      Log.i(TAG, "approve tool=$toolName decision=${auto.name.lowercase()} auto=true")
+      return approvalJson(auto)
+    }
     val request =
       PendingApproval(
         toolName = toolName,
@@ -125,7 +140,12 @@ object ApprovalBridgeServer {
       )
     val decision = runBlocking { ApprovalHub.request(request) }
     Log.i(TAG, "approve tool=$toolName decision=${decision.name.lowercase()}")
-    return buildJsonObject {
+    return approvalJson(decision)
+  }
+
+  /** 封闭词汇的响应体：插件只认 dsh 的三个结果。 */
+  private fun approvalJson(decision: ApprovalDecision): String =
+    buildJsonObject {
       put("ok", true)
       put(
         "outcome",
@@ -137,7 +157,6 @@ object ApprovalBridgeServer {
       )
     }
       .toString()
-  }
 
   /** 只接受字符串值；形状不对的本地化文案直接丢掉，不影响审批本身。 */
   private fun parseDisplayReason(element: JsonElement?): Map<String, String> {

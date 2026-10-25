@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.tappet.app.R
@@ -26,13 +28,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * **必须用 `IMPORTANCE_HIGH`**：静默写入的代价是屏幕上什么都没发生，回执要是再不出声、不抬头，
  * 用户根本不会注意到「它替我改了日历」。低优先级通道既不会抬头也不会被 promote。
  *
- * 通道 id 带 `_v2`：Android 不允许改已存在通道的重要性，`device_receipts` 那版在真机上已经建过，
- * 沿用旧 id 的话这次改动不会生效。旧通道留在系统里无害。
+ * 通道 id 带 `_v3`：Android 不允许改已存在通道的重要性 / 提示音，`device_receipts` 与
+ * `device_receipts_v2` 在真机上已经建过，沿用旧 id 的话这次改动不会生效。旧通道留在系统里无
+ * 害。v3 显式写入系统默认提示音 —— v2 的提示音来自系统默认值，用户改过或通道被降级时无法
+ * 保证出声，而回执「不出声」等于没有回执。
  *
  * promotion 要求通知是 ongoing 的 —— 所以卡片带一个「关闭」动作，否则用户划不掉。
  */
 object DeviceNotices {
-  private const val CHANNEL_ID = "device_receipts_v2"
+  private const val CHANNEL_ID = "device_receipts_v3"
   private const val CHANNEL_NAME = "设备动作回执"
   const val ACTION_DISMISS = "com.tappet.app.action.DISMISS_NOTICE"
   const val EXTRA_ID = "notification_id"
@@ -47,7 +51,18 @@ object DeviceNotices {
   private fun post(context: Context, title: String, detail: String) {
     val manager = context.getSystemService(NotificationManager::class.java) ?: return
     manager.createNotificationChannel(
-      NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH),
+      NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+        setSound(
+          RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build(),
+        )
+        // 用户选的是「声音 + 悬浮横幅」：震动需要新增 VIBRATE 权限，不做。
+        enableVibration(false)
+        lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+      },
     )
     val id = nextId.getAndIncrement()
     val open =
@@ -120,7 +135,10 @@ object DeviceNotices {
         .setContentTitle(title)
         .setContentText(detail)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
+        // 通道已经有提示音；这里再声明一次是为了「通道被系统降级」时仍按有声通知参与排序。
+        .setDefaults(NotificationCompat.DEFAULT_SOUND)
         .setCategory(NotificationCompat.CATEGORY_STATUS)
+        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         .setAutoCancel(true)
     open?.let { builder.setContentIntent(it) }
     return builder.build()

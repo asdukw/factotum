@@ -73,7 +73,12 @@ policy: !!js "(process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger
 
 ## 2. 语义（都是 dsh 的，不要自创）
 
-- **一次性授权**：`allowed-once` 只对这一次调用有效。没有「总是允许」、没有记住的规则、没有撤销存储。
+- **一次性授权**：`allowed-once` 只对这一次调用有效。dsh 的词汇里没有「记住这条规则」。
+- **全部允许是 App 侧的开关，不是 dsh 的 policy**：设置 → 执行层 → 写操作审批（默认「每次
+  询问」）。打开后 `ApprovalBridgeServer` 收到请求直接回 `allowed-once`，面板不出现；请求仍
+  走 `@deepseek-ai/dsh-user-approval` 与审计，变的只是谁来回答。策略存在
+  `ApprovalSettings`（prefs `tappet_approval_settings`），每次请求现读，改完立即生效，
+  不需要重启 Node。
 - **关闭 = 取消**：用户下滑关掉面板 → `cancelled`，不是 `rejected`；两者都不授权。
 - **同时只允许一个待审批**：`ApprovalHub` 对第二个请求直接回 `CANCEL`（fail closed）。
   并行工具调用同时要权限时，不会出现「一次点击批准了两件事」。
@@ -159,6 +164,7 @@ node tools/dsh-phone/plugins/approval/test/answerer.mjs  # 映射 / fail closed 
 
 - 请求**不携带工具参数**：answerer 只看到 `toolName` / `reason` / `displayReason` / `callId`。
   要展示什么由发起方在 `displayReason` 里写好。
-- **只有一次性授权**：没有「总是允许」，每次写都要点一次。这是 dsh 当前的词汇，不是我们没做。
+- **没有「记住这条规则」**：dsh 只有一次性授权，「全部允许」是 App 侧的全局开关（见 §2），
+  粒度只有开 / 关，不能按工具或按收件人放行。
 - **没有设备验证**：面板只能在真机上确认；PC 侧只覆盖了插件与 Hub 的逻辑。
 - 审批策略 `never` 仍然可用（无人值守 / CI 场景）：把 profile 的 `policy: ask` 去掉即可。

@@ -102,7 +102,7 @@ rmSync(readyFile, { force: true })
 /**
  * 重载前宿主把**非密配置**写进 runtime-config.json（env 名 → 值）。
  * 同一个 Node 进程里改不了 process.env，所以每次 mount 前在这里覆盖一遍。
- * 密钥不走这个文件：宿主启动时把每个提供商的 key 预置成 FACTOTUM_LLM_KEY_<ID>，
+ * 密钥不走这个文件：宿主启动和每次 reload 都把每个提供商的 key 预置成 FACTOTUM_LLM_KEY_<ID>，
  * 配置里的 FACTOTUM_LLM_KEY_FROM 指向其中一个 env 名，这里只做一次拷贝。
  */
 function applyRuntimeConfig() {

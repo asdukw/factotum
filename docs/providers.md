@@ -49,10 +49,8 @@
   立即生效。
 - **重载会换 dsh 会话命名空间**：界面历史保留，但模型上下文从下一条消息重新开始
   （dsh SDK 只有 create、无 resume）。
-- 清密钥 / 停用：密钥 env 只在 Node 启动时读入，**改 key 需要重启 App**；模型 / 提供商切换
-  会 reload，不需要重启。
-- 设置页 / 端点预选的改动**下次启动 App 才生效**（内嵌 Node 的 env 与 profile 只在启动时
-  读一次）。
+- 清密钥 / 停用：保存后会通过 `runtime.reload` 在当前 Node 进程内重新挂载并立即生效，不需要重启 App；重载会换 dsh 会话命名空间，界面聊天历史保留，但模型上下文从下一条消息重新开始。
+- 设置页 / 端点预选的改动：保存后对正在运行的 runtime 应用；如果 runtime 尚未启动，下次正常启动读取最新配置。
 
 ## 4. 排障
 
@@ -64,10 +62,10 @@
 | 模型不读图 / 被声明成纯文本 | `assets/model-modalities.json` 缺失或没有该 id → 跑 `bundle-dsh.ps1`；索引里没有的 id 按 text 声明（安全方向），不要手改生成物 |
 | 端点模型列表拉取报 HTTP 4xx | 密钥与端点不匹配 / 该端点不提供 `/models` → 手填模型 id；列表只是辅助，不影响手填 |
 | dsh 报 `provider "factotum" has an empty baseURL`，App 崩 | 启用的自定义提供商端点被清空 → `toAgentConfig` 会回落目录默认并清空 key；若仍出现，检查 `current()` 的 `canEnable` 分支 |
-| 设置里清掉 key / 停用后，当前进程仍能发请求 | 密钥 env 只在 Node 启动时读入；换 key 需重启 App。模型 / 提供商切换走 reload，立即生效 |
+| 设置里清掉 key / 停用后，当前进程仍能发请求 | 保存后会通过 runtime.reload 重新读取 Keystore 并覆盖旧 key；如果运行时正在执行任务，等任务结束后再应用。 |
 | 切换模型后模型看不到之前的对话 | 设计如此：reload 换 dsh 会话命名空间，界面历史保留但模型上下文重新开始（SDK 只有 create 无 resume） |
 | 重载超时 / 重载后 initialize 失败 | 看 `NODEJS-MOBILE` 的 `[launcher] reload ...` 与 `runtime.ready`；超时 60s 后 `FactotumNode` 会报重载失败 |
 | 提供商列表显示「缺 Key」 | 该提供商没有密钥；启用 / 选中模型都要求先保存 key（否则会把正在用的那家停掉、App 变成未配置） |
 | 装完包跑任务报缺 API key | 密钥由使用者自填：聊天页抽屉 → 设置（构建期不带密钥，设计如此） |
-| 设置页保存了却没生效 | 提供商 / 模型在聊天页切换时重载生效；端点、密钥等改动在下次启动或下次切换重载后生效 |
+| 设置页保存了却没生效 | active provider 保存后会触发 runtime.reload；未启动 runtime 会在下一次启动时读取，inactive provider 会在启用/切换时应用 |
 | 设置页显示「已配置」但请求 401 | 那把 key 与所选服务商不匹配 → 换预选或重填 key |

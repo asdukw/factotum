@@ -69,6 +69,7 @@ data class ChatUiState(
  *
  * 工具调用（tool_call 表）与消息分开落库：它只影响界面上那几张卡，写失败不该挡住回答。
  */
+@Suppress("TooManyFunctions")
 class ChatViewModel(
   // 故意不是 `private val`：这里只在构造时取摘要与 configured，之后不再持有 AgentConfig。
   // 它不是 val 就不会生成字段，明文密钥也不会随 Activity 作用域的 ViewModel 常驻内存。
@@ -115,6 +116,18 @@ class ChatViewModel(
       store.observeSessions().catch { /* 列表读不到不影响聊天本身 */ }.collect { sessions ->
         _state.update { it.copy(sessions = sessions) }
       }
+    }
+  }
+
+  fun refreshConfiguration(config: AgentConfig) {
+    _state.update {
+      it.copy(
+        configSummary = config.shortSummary(),
+        configured = config.isConfigured,
+        providerId = config.preset.id,
+        providerName = config.preset.label,
+        model = config.model,
+      )
     }
   }
 

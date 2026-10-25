@@ -84,6 +84,7 @@ object NodeRuntime : NodeLineListener {
   private const val INITIALIZE_TIMEOUT_MS = 180_000L
   private const val PROMPT_TIMEOUT_MS = 30_000L
   private const val RELOAD_TIMEOUT_MS = 60_000L
+  private const val EMPTY_KEY_ENV = "FACTOTUM_LLM_KEY_EMPTY"
 
   sealed interface Status {
     data object Idle : Status
@@ -235,7 +236,7 @@ object NodeRuntime : NodeLineListener {
    * 宿主把**非密配置**写进 `dsh-home/runtime-config.json`，再写 `runtime.reload` 信号；
    * launcher 卸载整棵 cordis 根后重新 mount，并在 mount 前把配置覆盖进 `process.env`。
    * 密钥不落盘：启动时每个提供商各自的 key 已预置成 `FACTOTUM_LLM_KEY_<ID>`，
-   * 配置里的 `FACTOTUM_LLM_KEY_FROM` 只做一次 env 拷贝。
+   * reload 前会从 Keystore 重新读取并覆盖这些 env，配置里的 `FACTOTUM_LLM_KEY_FROM` 只做一次 env 拷贝。
    *
    * 重载后必须重新 initialize（SDK 服务是新建的），并换 session 命名空间，
    * 否则会撞上磁盘上已有的同名 dsh 会话。
@@ -248,6 +249,7 @@ object NodeRuntime : NodeLineListener {
         return@withLock initialize(app)
       }
       val config = AgentConfigStore.current(app)
+      refreshKeyEnvironment(app, config)
       writeRuntimeConfig(app, config)
       val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
       val ready = File(home, "runtime.ready")
@@ -277,6 +279,16 @@ object NodeRuntime : NodeLineListener {
       Log.i(TAG, "runtime reloaded")
       initialize(app)
     }
+
+  /**
+   * 应用设置页改动，但不因保存设置而冷启动 Node。返回 false 表示运行时尚未启动，
+   * 下一次正常启动会直接读取最新的 Keystore 配置。
+   */
+  suspend fun reloadIfRunning(context: Context): Boolean {
+    if (!started.get() || status.value !is Status.Ready) return false
+    reload(context)
+    return true
+  }
 
   /** 提交一条用户任务（同一 sessionId 复用会话）；返回入队消息 id。 */
   suspend fun prompt(sessionId: String, text: String): String {
@@ -490,7 +502,7 @@ object NodeRuntime : NodeLineListener {
           if (config.api == "openai-completions") config.preset.thinkingFormat.orEmpty() else "",
         )
         put("FACTOTUM_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "")
-        put("FACTOTUM_LLM_KEY_FROM", keyEnvName(config.preset))
+        put("FACTOTUM_LLM_KEY_FROM", if (config.apiKey.isBlank()) EMPTY_KEY_ENV else keyEnvName(config.preset))
         put("FACTOTUM_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
         put("FACTOTUM_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
         put("FACTOTUM_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))
@@ -498,10 +510,19 @@ object NodeRuntime : NodeLineListener {
     File(home, "runtime-config.json").writeText(payload.toString())
   }
 
+  /** 同步所有 provider 的密钥槽；空值也必须覆盖旧环境，确保清除/停用立即生效。 */
+  private fun refreshKeyEnvironment(app: Context, config: AgentConfig) {
+    LlmPreset.entries.forEach { preset ->
+      Os.setenv(keyEnvName(preset), requestApiKey(app, preset), true)
+    }
+    Os.setenv(EMPTY_KEY_ENV, "", true)
+    Os.setenv("FACTOTUM_LLM_KEY", config.apiKey, true)
+  }
+
   /**
    * dsh 专用 env：DSH_HOME、LLM 端点与设备桥（密钥不落日志）。
    *
-   * 这些 env 只在 Node 进程启动时设一遍。之后的配置切换用 [reload]：launcher 会重新 mount，
+   * 这些 env 在启动和 reload 前都从 Keystore 刷新。之后的配置切换用 [reload]：launcher 会重新 mount，
    * 并在 mount 前用 `runtime-config.json` 覆盖 process.env（非密配置）。密钥不落盘 ——
    * 每个提供商的 key 在这里预置成 `FACTOTUM_LLM_KEY_<ID>`，重载时只换引用。
    */
@@ -510,12 +531,8 @@ object NodeRuntime : NodeLineListener {
     val config = AgentConfigStore.current(app)
     Os.setenv("DSH_HOME", home.absolutePath, true)
     Os.setenv("FACTOTUM_WORKDIR", home.absolutePath, true)
-    // 预置每个提供商的 key：重载切换 provider 时 launcher 只换一个 env 引用，
-    // 不必重新读 Keystore / 重启 Node。日志里绝不打印它们。
-    LlmPreset.entries.forEach { preset ->
-      Os.setenv(keyEnvName(preset), requestApiKey(app, preset), true)
-    }
-    Os.setenv("FACTOTUM_LLM_KEY", config.apiKey, true)
+    // 预置每个提供商的 key：启动和 reload 都会从 Keystore 重新读取，避免旧值残留。
+    refreshKeyEnvironment(app, config)
     // 端点、调用风格、模型三者必须成套送过去：profile 那边的 provider 就是按这三个字段
     // 组出来的（见 tools/dsh-phone/profile/cordis.patch.yml）。缺一个就会拿 zen 的端点配
     // OpenAI 的模型，报出来的错还像是网络问题。

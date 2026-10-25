@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.factotum.app.agent.LlmPreset
+import com.factotum.app.ui.components.AppBanner
 import com.factotum.app.ui.components.ProviderModelIcon
 
 /**
@@ -258,24 +259,7 @@ internal fun BigTitle(title: String, subtitle: String? = null) {
 
 @Composable
 internal fun InfoBanner(text: String, modifier: Modifier = Modifier) {
-  Surface(
-    modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(14.dp),
-    color = MaterialTheme.colorScheme.primary.copy(alpha = if (isSystemInDarkTheme()) 0.16f else 0.08f),
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Glyph(GlyphKind.Info, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
-      Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
-  }
+  AppBanner(text = text, tone = AppBanner.Tone.Info, modifier = modifier)
 }
 
 /** 提供商详情页的三个页签。 */

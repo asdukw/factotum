@@ -11,6 +11,7 @@ import com.factotum.app.agent.requestApiKey
 import com.factotum.app.agent.saveRemoteModels
 import com.factotum.app.agent.saveSelectedModels
 import com.factotum.app.agent.setModel
+import com.factotum.app.node.NodeRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,9 @@ internal class ProviderDetailViewModel(
   private val appContext: Context,
   providerId: String,
   private val fetcher: ModelListFetcher = HttpModelListFetcher(),
+  private val runtimeApply: suspend (Context) -> Boolean = { context ->
+    NodeRuntime.reloadIfRunning(context)
+  },
 ) : ViewModel() {
   private val preset: LlmPreset = LlmPreset.byId(providerId) ?: LlmPreset.Custom
 
@@ -44,6 +48,8 @@ internal class ProviderDetailViewModel(
     val keyInput: String = "",
     val revealKey: Boolean = false,
     val keySaved: Boolean = false,
+    val runtimeApplying: Boolean = false,
+    val runtimeApplied: Boolean = false,
     /** 模型页里「其它模型 id」的草稿，点「使用」才落盘。 */
     val modelDraft: String = "",
     /** 从端点 `GET /models` 拉回来并落盘的清单（可能很长）。 */
@@ -160,7 +166,17 @@ internal class ProviderDetailViewModel(
       _state.update { it.copy(error = "写入失败：本地存储不可用") }
       return
     }
-    _state.update { it.copy(keyInput = "", keySaved = true, hasKey = true, error = null) }
+    _state.update {
+      it.copy(
+        keyInput = "",
+        keySaved = true,
+        hasKey = true,
+        runtimeApplying = false,
+        runtimeApplied = false,
+        error = null,
+      )
+    }
+    applyRuntimeIfActive()
   }
 
   fun clearKey() {
@@ -168,7 +184,16 @@ internal class ProviderDetailViewModel(
       _state.update { it.copy(error = "清除失败：本地存储不可用") }
       return
     }
-    _state.update { it.copy(hasKey = false, keySaved = false, error = null) }
+    _state.update {
+      it.copy(
+        hasKey = false,
+        keySaved = false,
+        runtimeApplying = false,
+        runtimeApplied = false,
+        error = null,
+      )
+    }
+    applyRuntimeIfActive()
   }
 
   /**
@@ -185,11 +210,13 @@ internal class ProviderDetailViewModel(
       _state.update { it.copy(error = "先保存 API Key，再启用") }
       return
     }
+    val wasActive = AgentConfigStore.enabledPreset(appContext) == preset
     if (!AgentConfigStore.setEnabled(appContext, preset, enabled)) {
       _state.update { it.copy(error = "写入失败：本地存储不可用") }
       return
     }
     reload()
+    if (wasActive || enabled) applyRuntimeIfActive(force = true)
   }
 
   /** Response API 开关只改调用风格，不动端点 / 模型。 */
@@ -258,6 +285,7 @@ internal class ProviderDetailViewModel(
   }
 
   fun resetProvider() {
+    val wasActive = AgentConfigStore.enabledPreset(appContext) == preset
     if (!AgentConfigStore.resetProvider(appContext, preset)) {
       _state.update { it.copy(error = "重置失败：本地存储不可用") }
       return
@@ -271,6 +299,34 @@ internal class ProviderDetailViewModel(
         revealKey = false,
         error = null,
       )
+    }
+    applyRuntimeIfActive(force = wasActive)
+  }
+
+  private fun applyRuntimeIfActive(force: Boolean = false) {
+    if (!force && AgentConfigStore.enabledPreset(appContext) != preset) return
+    _state.update { it.copy(runtimeApplying = true, runtimeApplied = false, error = null) }
+    viewModelScope.launch {
+      try {
+        val applied = withContext(Dispatchers.IO) { runtimeApply(appContext) }
+        _state.update {
+          it.copy(
+            runtimeApplying = false,
+            runtimeApplied = applied,
+            error = if (applied) null else null,
+          )
+        }
+      } catch (
+        @Suppress("TooGenericExceptionCaught") error: Throwable,
+      ) {
+        _state.update {
+          it.copy(
+            runtimeApplying = false,
+            runtimeApplied = false,
+            error = "密钥已保存，但运行时应用失败，请重试",
+          )
+        }
+      }
     }
   }
 

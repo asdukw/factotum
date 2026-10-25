@@ -141,7 +141,7 @@ internal fun ProviderDetailScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 16.dp),
       ) {
-        InfoBanner("改动会保存；运行时在聊天页切换模型时重载，或下次启动生效")
+        InfoBanner("改动会在保存后应用到运行时；运行中任务完成后再保存，模型上下文会重置但聊天记录保留")
         Spacer(Modifier.height(12.dp))
         if (state.error != null) {
           Text(
@@ -266,7 +266,7 @@ private fun ProviderConfigTab(
     }
     if (state.enabled && !state.hasKey) {
       Text(
-        text = "已启用但没有 API Key：下次启动后无法发请求。请先保存密钥。",
+        text = "已启用但没有 API Key：当前运行时不会发送请求。请先保存密钥。",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.error,
         modifier = Modifier.padding(start = 4.dp),
@@ -329,9 +329,23 @@ private fun ApiKeyField(
       }
     }
     when {
+      state.runtimeApplying ->
+        Text(
+          text = "密钥已保存，正在应用到运行时…",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.primary,
+        )
+
+      state.runtimeApplied ->
+        Text(
+          text = "密钥已保存并生效，无需重启 App。",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.primary,
+        )
+
       state.keySaved ->
         Text(
-          text = "已保存。下次启动 App 生效。",
+          text = "已保存；启用此提供商或启动运行时时使用。",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.primary,
         )
@@ -712,7 +726,7 @@ private fun ProviderAdvancedTab(
           if (action == ConfirmAction.Reset) {
             "会清掉名称、API Base Url、模型与已保存的密钥，端点回到运行时目录里的默认值。"
           } else {
-            "已存的密文会一并删除；正在运行的进程要到下次启动 App 才会真正停用旧密钥（环境变量只在启动时读一次）。"
+            "已存的密文会一并删除；如果这是当前提供商，运行时会立即重载并停用旧密钥。"
           },
           style = MaterialTheme.typography.bodySmall,
         )

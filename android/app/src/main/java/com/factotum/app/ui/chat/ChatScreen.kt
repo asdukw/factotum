@@ -151,6 +151,10 @@ fun ChatScreen(
     )
   }
   val state by viewModel.state.collectAsStateWithLifecycle()
+  LifecycleResumeEffect(Unit) {
+    viewModel.refreshConfiguration(AgentConfigStore.current(appContext))
+    onPauseOrDispose { }
+  }
   ChatScreen(
     state = state,
     onInputChange = viewModel::onInputChange,

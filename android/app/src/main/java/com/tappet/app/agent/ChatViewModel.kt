@@ -77,6 +77,13 @@ data class RoleplayBinding(
   val switcher: RoleSwitcher? = null,
   /** 收藏（置顶）的卡 id，最近收藏在前；侧栏按它把收藏的排到最前。 */
   val pins: () -> List<String> = { emptyList() },
+  /**
+   * 酒馆直连通道（自己拼 messages 数组、直请 /chat/completions）。
+   *
+   * 为 null 表示这家提供商不支持直连（例如 Anthropic 协议），酒馆会话退回 dsh 通道 ——
+   * 退回去仍然能演，只是世界书回到「粘在消息前」、重写回到「删了重问」。
+   */
+  val tavern: TavernTurns? = null,
 )
 
 data class ChatUiState(
@@ -248,7 +255,10 @@ class ChatViewModel(
     val sessionId = snapshot.sessionId ?: return
     val prompt = snapshot.input.trim()
     // 真正发出去的文本可能比用户打的多一段世界书资料；界面与库里存的仍是 `prompt`。
+    // 酒馆会话走直连通道时这句话用不上（设定由 TavernPrompt 排进 messages），但 fallback 到
+    // dsh 的那条路要用它 —— 所以照算，不在这里分叉。
     val wire = withLore(snapshot, prompt)
+    val tavern = roleplay.tavern?.enabled == true && snapshot.activeCharacterId != null
 
     _state.update { it.copy(input = "") }
 
@@ -290,7 +300,7 @@ class ChatViewModel(
           )
         }
 
-        streamInto(sessionId, draft.id, wire)
+        streamInto(sessionId, draft.id, wire, tavern)
       }
   }
 
@@ -302,10 +312,12 @@ class ChatViewModel(
    *
    * [wire] 是**真正发出去**的文本（可能带着世界书资料），界面与库里存的是调用方给的那份。
    */
-  private suspend fun streamInto(sessionId: String, draftId: String, wire: String) {
+  private suspend fun streamInto(sessionId: String, draftId: String, wire: String, tavern: Boolean = false) {
     val turn = TurnRun(sessionId, draftId)
+    // 酒馆通道自己拿整段历史（含刚落库的这一问）；拼不出来（卡被删、没配提供商）就退回 dsh。
+    val direct = if (tavern) roleplay.tavern?.stream(sessionId, _state.value.activeCharacterId, _state.value.messages) else null
     try {
-      streamer.stream(sessionId, wire).collect { event -> turn.handle(event) }
+      (direct ?: streamer.stream(sessionId, wire)).collect { event -> turn.handle(event) }
     } catch (cancellation: CancellationException) {
       turn.stopped = true
       throw cancellation
@@ -468,14 +480,16 @@ class ChatViewModel(
   /**
    * 重写最后一条回复。
    *
-   * 做法是删掉那条，然后让模型把这一轮再说一遍 —— 不是「回滚到上一拍再重发」。
-   * 区别是实在的：dsh 的会话上下文里那一轮已经发生了，删库删不掉它那边的记忆，
-   * 所以新回复会建立在「我上一条说过了」之上。这不是完美实现，但它是唯一不需要
-   * SDK 提供回滚 API 的实现；界面上也写明了这一点。
+   * **酒馆通道**下是真重写：上一轮回复先从历史里剔掉，模型看到的上下文里这句话还没被回答。
+   * **dsh 通道**下只能删了再让它说一遍 —— 那边的上下文删不掉，新回复会建立在「我上一条说过了」
+   * 之上；这不是完美实现，但它是唯一不需要 SDK 提供回滚 API 的做法。
+   *
+   * 这里刻意**不用 `canSend`**：它要求输入框非空，于是「清空输入框后点重写」会静默什么都不做
+   * （真机上就是这么卡了半天）。能不能重写，取决于有没有可重写的上一轮，跟输入框无关。
    */
   val regenerate: () -> Unit = lambda@{
     val snapshot = _state.value
-    if (!snapshot.canSend) return@lambda
+    if (!snapshot.ready || snapshot.isStreaming || snapshot.switchingRole) return@lambda
     val sessionId = snapshot.sessionId ?: return@lambda
     val last = snapshot.messages.lastOrNull() ?: return@lambda
     if (last.role != ChatRole.Assistant || last.streaming || last.content.isBlank()) return@lambda
@@ -497,7 +511,14 @@ class ChatViewModel(
             messages = it.messages.dropLast(1) + ChatMessage(id = draft.id, role = ChatRole.Assistant, streaming = true),
           )
         }
-        streamInto(sessionId, draft.id, withLore(snapshot, REGENERATE_PROMPT))
+        // 直连通道下的重写是**真重写**：上一轮回复已经从历史里剔掉，模型看到的是「这句话还没回答」。
+        // dsh 通道下仍得靠一句「再说一遍」的提示词，因为它那边的上下文删不掉。
+        streamInto(
+          sessionId = sessionId,
+          draftId = draft.id,
+          wire = withLore(snapshot, REGENERATE_PROMPT),
+          tavern = roleplay.tavern?.enabled == true && snapshot.activeCharacterId != null,
+        )
       }
   }
 

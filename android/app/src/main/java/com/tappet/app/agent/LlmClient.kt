@@ -158,6 +158,65 @@ class LlmClient(
     }
   }
 
+  // 酒馆通道的唯一入口：messages 由 [TavernPrompt] 排好，这里只负责发出去、把 SSE 拆成事件。
+  // 与 stream(history) 的区别只有一处：system 消息不再是写死的那段，而是调用方给的第一条。
+  fun streamMessages(messages: List<TavernMessage>): Flow<AgentStreamEvent> =
+    callbackFlow {
+      if (!config.isConfigured) {
+        close(AgentException("Agent 未配置：缺少 API key（聊天页抽屉 → 设置，填自己的 key）"))
+        return@callbackFlow
+      }
+
+      val call = client.newCall(messagesRequest(messages))
+      Log.d(TAG, "tavern stream start model=${config.model} messages=${messages.size}")
+
+      call.enqueue(
+        object : Callback {
+          override fun onFailure(call: Call, e: IOException) {
+            Log.d(TAG, "tavern stream failed: ${e.javaClass.simpleName}")
+            close(AgentException("连接失败：${e.message ?: e.javaClass.simpleName}", e))
+          }
+
+          override fun onResponse(call: Call, response: Response) {
+            Log.d(TAG, "tavern response code=${response.code}")
+            readStream(call, response)
+          }
+        },
+      )
+
+      awaitClose { call.cancel() }
+    }
+      .buffer(Channel.UNLIMITED)
+
+  private fun messagesRequest(messages: List<TavernMessage>): Request {
+    val body =
+      buildJsonObject {
+        put("model", config.model)
+        put("stream", true)
+        config.reasoningEffort?.let { put("reasoning_effort", it) }
+        put(
+          "messages",
+          buildJsonArray {
+            messages.forEach { message ->
+              addJsonObject {
+                put("role", message.role)
+                put("content", message.content)
+              }
+            }
+          },
+        )
+      }
+        .toString()
+
+    return Request.Builder()
+      .url(config.chatCompletionsUrl)
+      .header("Authorization", "Bearer ${config.apiKey}")
+      .header("x-opencode-session", sessionId)
+      .header("Accept", "text/event-stream")
+      .post(body.toRequestBody(JSON_MEDIA_TYPE))
+      .build()
+  }
+
   private fun buildRequest(history: List<ChatMessage>): Request {
     val body =
       buildJsonObject {

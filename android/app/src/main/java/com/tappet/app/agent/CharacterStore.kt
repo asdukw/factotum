@@ -22,7 +22,51 @@ data class WorldEntry(
   val content: String = "",
   val order: Int = 0,
   val constant: Boolean = false,
-)
+  /**
+   * 酒馆通道专用的插入深度：命中时插在「距离最后一条消息 [depth] 条之前」。
+   *
+   * 只对走 [TavernPrompt] 的会话有效 —— dsh 通道的上下文由运行时定，深度只能退化成
+   * 「粘在这一轮用户消息前」。默认 4 是 ST 的常用值：太浅会被最后一句带跑，太深等于常驻。
+   */
+  val depth: Int = 4,
+) {
+  /**
+   * 这组关键词是否命中 [text]。
+   *
+   * 先把每个 keyword 拆开再比：真卡（cardbuilder 上的 v3 卡就是）常把一组同义词塞进**同一个**
+   * 字符串 —— `"第一学府 · 学府 · 纠察队 · 校规"` 是一个数组元素，不是四个。整串拿去 contains
+   * 永远匹配不上，那条设定就再也不会被检索到。分隔符按卡里真实出现的收，不加 `\s`：
+   * 英文关键词自带空格（`night shift`），拆开反而会误命中。
+   */
+  fun matches(text: String): Boolean =
+    keys
+      .asSequence()
+      .flatMap { it.split(KEY_SEPARATORS).asSequence() }
+      .map { it.trim() }
+      .filter { it.isMeaningfulKey() }
+      .any { text.contains(it, ignoreCase = true) }
+
+  /**
+   * 单个汉字算关键词（「雨」「雪」这种单字触发是卡里常见写法），单个拉丁字母或标点不算 ——
+   * 那种 key 会把每一句话都命中。
+   */
+  private fun String.isMeaningfulKey(): Boolean {
+    if (isEmpty()) return false
+    if (length >= MIN_KEY_LENGTH) return true
+    return this[0].code in CJK_RANGE
+  }
+
+  private companion object {
+    /** 卡里见过的分隔写法：`·` 用来分组同义词，其余是列表标点。 */
+    val KEY_SEPARATORS = Regex("[,，、·/|｜；;]+")
+
+    /** 两个字符以上一律认；单字符只认汉字（见 [isMeaningfulKey]）。 */
+    const val MIN_KEY_LENGTH = 2
+
+    /** 基本区汉字。单字 key 只在这个范围内放行。 */
+    val CJK_RANGE = 0x4E00..0x9FFF
+  }
+}
 
 /**
  * 一张角色卡。字段刻意与 SillyTavern 的 `chara_card_v2` 对齐（`first_mes` / `character_book`
@@ -216,7 +260,7 @@ object CharacterStore {
   internal fun activeWorld(card: CharacterCard): List<String> {
     val text = "${card.scenario} ${card.firstMes}"
     return card.world
-      .filter { entry -> entry.content.isNotBlank() && (entry.constant || entry.keys.any { it.isNotBlank() && text.contains(it) }) }
+      .filter { entry -> entry.content.isNotBlank() && (entry.constant || entry.matches(text)) }
       .sortedBy { it.order }
       .map { entry ->
         val body = renderText(entry.content, card)

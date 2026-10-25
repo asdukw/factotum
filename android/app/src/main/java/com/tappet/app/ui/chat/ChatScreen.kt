@@ -98,6 +98,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.AgentModelSwitcher
 import com.tappet.app.agent.ApprovalHub
+import com.tappet.app.agent.CharacterMemory
 import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.ChatMessage
@@ -105,12 +106,14 @@ import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
 import com.tappet.app.agent.ChatViewModel
 import com.tappet.app.agent.DshStreamer
+import com.tappet.app.agent.HttpTavernChannel
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
 import com.tappet.app.agent.PersonaStore
 import com.tappet.app.agent.RoleplayBinding
 import com.tappet.app.agent.RoleplayGroup
 import com.tappet.app.agent.SessionHandoff
+import com.tappet.app.agent.TavernTurns
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
 import com.tappet.app.agent.UserQuestionHub
@@ -165,6 +168,21 @@ fun ChatScreen(
         RoleplayBinding(
           characters = { CharacterStore.cards(appContext) },
           pins = { CharacterPins.pinned(appContext) },
+          // 酒馆直连通道：只有 OpenAI 兼容端点能这样发（Anthropic 原生协议的消息体不一样），
+          // 不是就返回 null，酒馆会话退回 dsh —— 退回去仍能演，只是少了深度注入与真重写。
+          tavern =
+            TavernTurns(
+              cards = { CharacterStore.cards(appContext) },
+              channel = {
+                val current = AgentConfigStore.current(appContext)
+                if (current.api == "openai-completions" && current.isConfigured) {
+                  HttpTavernChannel { AgentConfigStore.current(appContext) }
+                } else {
+                  null
+                }
+              },
+              memory = { id -> CharacterMemory.notes(appContext, id) },
+            ),
           // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
           // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。
           switcher = { characterId ->

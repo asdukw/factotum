@@ -27,11 +27,7 @@ object LoreInject {
   internal fun matched(card: CharacterCard, haystack: String): List<WorldEntry> {
     if (haystack.isBlank()) return emptyList()
     return card.world
-      .filter { entry ->
-        entry.content.isNotBlank() &&
-          !entry.constant &&
-          entry.keys.any { key -> key.isNotBlank() && haystack.contains(key, ignoreCase = true) }
-      }
+      .filter { entry -> entry.content.isNotBlank() && !entry.constant && entry.matches(haystack) }
       .sortedBy { it.order }
       .take(MAX_ENTRIES)
   }

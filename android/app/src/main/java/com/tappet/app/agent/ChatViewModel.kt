@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.data.db.MessageRole
 import com.tappet.app.data.db.MessageStatus
+import com.tappet.app.data.db.SessionKind
 import com.tappet.app.data.db.ToolCallStatus
 import com.tappet.app.data.db.Uuids
 import com.tappet.app.data.session.ChatSession
@@ -29,6 +30,51 @@ fun interface ChatStreamer {
   fun stream(sessionId: String, prompt: String): Flow<AgentStreamEvent>
 }
 
+/**
+ * 切会话时要连带切换「谁在说话」：日常会话用当前人格，酒馆会话用那张卡。
+ *
+ * 抽成接口而不是直接调 PersonaStore：ViewModel 在纯 JVM 单测里跑，没有 Context，
+ * 也不该知道偏好文件和运行时重载这两件事。
+ */
+fun interface RoleSwitcher {
+  /** characterId 为 null 表示回到日常（人格接管）。失败时抛异常，由界面显示原因。 */
+  suspend fun activate(characterId: String?)
+}
+
+/** 酒馆侧栏的一行：一张角色卡 + 它名下的会话（最近的在前，可能为空）。 */
+data class RoleplayGroup(
+  val characterId: String,
+  val name: String,
+  val tagline: String,
+  val sessions: List<ChatSession>,
+) {
+  val latest: ChatSession? get() = sessions.firstOrNull()
+  val isEmpty: Boolean get() = sessions.isEmpty()
+}
+
+/**
+ * 时钟 / 落库节流 / IO 调度。
+ *
+ * 抽成一个值对象不是为了好看：这三个参数只在测试里被替换，而构造签名已经顶到
+ * detekt 的 8 参数阈值。合并后新增能力就不会再撑破阈值、逼人去加抑制注释。
+ */
+data class ChatTiming(
+  val clock: () -> Long = System::currentTimeMillis,
+  val flushIntervalMs: Long = 200L,
+  val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+)
+
+/**
+ * 酒馆依赖。
+ *
+ * [characters] 读的是 assets 与导入目录；[switcher] 决定切会话时要换成谁的系统提示。
+ * 两个都给了默认值：纯聊天的单测与场景不需要它们，酒馆功能自然退化成「只读历史」。
+ */
+data class RoleplayBinding(
+  val characters: () -> List<CharacterCard> = { emptyList() },
+  val switcher: RoleSwitcher? = null,
+)
+
 data class ChatUiState(
   val sessionId: String? = null,
   /** 全部会话，最近更新在前，供侧栏列表使用。 */
@@ -49,20 +95,31 @@ data class ChatUiState(
   val ready: Boolean = false,
   /** 本地库打不开时的原因；不为空说明这次启动读不了也写不了。 */
   val storageError: String? = null,
+  /** 酒馆分区：每张角色卡一行，带它名下的会话。 */
+  val roleplayGroups: List<RoleplayGroup> = emptyList(),
+  /** 当前会话绑定的角色（日常会话为 null）。 */
+  val activeCharacterId: String? = null,
+  val activeCharacterName: String? = null,
+  /** 正在切角色（要重载运行时，1–2 秒）。 */
+  val switchingRole: Boolean = false,
 ) {
   val canSend: Boolean
     get() = ready && input.isNotBlank() && !isStreaming
 
   /** 任务进行中不允许切会话：事件流只认当前会话，切走会把半截回复写错地方。 */
   val canSwitchSession: Boolean
-    get() = ready && !isStreaming
+    get() = ready && !isStreaming && !switchingRole
+
+  /** 是否在酒馆会话里（顶栏据此显示角色名与「退出」）。 */
+  val inRoleplay: Boolean
+    get() = activeCharacterId != null
 }
 
 /**
  * 聊天状态机 + 持久化。
  *
  * 落库时机有两处刻意设计：
- * 1. **发起时就插入助手消息**（status = Streaming），正文按 flushIntervalMs 节流更新 ——
+ * 1. **发起时就插入助手消息**（status = Streaming），正文按 timing.flushIntervalMs 节流更新 ——
  *    否则进程被系统杀掉时整段回复都会丢
  * 2. **收尾写在 NonCancellable 里** —— 用户点“停止”会取消协程，普通挂起调用会立刻
  *    抛 CancellationException，最终状态就写不进去了
@@ -75,11 +132,12 @@ class ChatViewModel(
   config: AgentConfig = AgentConfig.fromBuildConfig(),
   private val streamer: ChatStreamer,
   private val store: SessionStore,
-  private val clock: () -> Long = System::currentTimeMillis,
-  private val flushIntervalMs: Long = FLUSH_INTERVAL_MS,
+  /** 时钟、落库节流、IO 调度：只有测试需要替换，打包成一个参数（构造参数已经压到 detekt 阈值边上了）。 */
+  private val timing: ChatTiming = ChatTiming(),
   /** 聊天页的提供商 / 模型切换（保存 + 重载运行时）；null 时界面不显示切换入口。 */
   private val switcher: ModelSwitcher? = null,
-  private val switchDispatcher: CoroutineDispatcher = Dispatchers.IO,
+  /** 酒馆相关的两个依赖（角色卡来源 + 载体切换），打包成一个参数免得构造签名无限变长。 */
+  private val roleplay: RoleplayBinding = RoleplayBinding(),
 ) : ViewModel() {
   private val reasoningLabel = config.reasoningEffort ?: "默认"
 
@@ -103,17 +161,43 @@ class ChatViewModel(
       reasoningLabel = reasoningLabel,
       snapshot = { _state.value },
       update = { transform -> _state.update(transform) },
-      ioDispatcher = switchDispatcher,
+      ioDispatcher = timing.dispatcher,
+    )
+
+  /** 酒馆分区的会话操作（新开 / 回到 / 退出）。 */
+  val roleplayActions =
+    RoleplaySessions(
+      scope = viewModelScope,
+      store = store,
+      groups = { _state.value.roleplayGroups },
+      open = { session -> viewModelScope.launch { switchTo(session) } },
+      reportFailure = ::reportStorageFailure,
     )
 
   private var streamJob: Job? = null
+
+  /** 当前已生效的载体（null = 日常人格）。 */
+  private var activatedCharacterId: String? = null
+
+  /** 是否已经跟运行时同步过一次 —— 冷启动时偏好里的角色可能和当前会话不一致，必须先对一次。 */
+  private var roleActivated = false
 
   init {
     viewModelScope.launch { restore() }
     // 会话列表跟着库走：发消息改标题、删会话都会自动反映到侧栏。
     viewModelScope.launch {
       store.observeSessions().catch { /* 列表读不到不影响聊天本身 */ }.collect { sessions ->
-        _state.update { it.copy(sessions = sessions) }
+        // 读卡要走文件与 assets，别在主线程做；分组本身是纯计算。
+        val cards = withContext(timing.dispatcher) { runCatching { roleplay.characters() }.getOrDefault(emptyList()) }
+        val groups = groupRoleplaySessions(sessions, cards)
+        _state.update { state ->
+          val name = groups.firstOrNull { group -> group.characterId == state.activeCharacterId }?.name
+          state.copy(
+            sessions = sessions,
+            roleplayGroups = groups,
+            activeCharacterName = name ?: state.activeCharacterName,
+          )
+        }
       }
     }
   }
@@ -173,10 +257,10 @@ class ChatViewModel(
         var failure: Throwable? = null
         var stopped = false
         var statusOnly = false
-        var lastFlush = clock()
+        var lastFlush = timing.clock()
         // 增量合并：UI 最多每 UI_FLUSH_INTERVAL_MS 刷一次 —— token 级帧很多，
-        // 逐帧重算 Markdown 太贵；DB 那边另有 flushIntervalMs 的节流。
-        var lastUiFlush = clock()
+        // 逐帧重算 Markdown 太贵；DB 那边另有 timing.flushIntervalMs 的节流。
+        var lastUiFlush = timing.clock()
         // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
         var stepStart = 0
         var reasoningStepStart = 0
@@ -186,7 +270,7 @@ class ChatViewModel(
         fun settleThinking() {
           val started = thinkingStartedAt ?: return
           thinkingStartedAt = null
-          markThinkingMs(draft.id, (clock() - started).coerceAtLeast(0))
+          markThinkingMs(draft.id, (timing.clock() - started).coerceAtLeast(0))
         }
 
         try {
@@ -194,19 +278,19 @@ class ChatViewModel(
             when (event) {
               is AgentStreamEvent.ReasoningDelta -> {
                 if (thinkingStartedAt == null) {
-                  val started = clock()
+                  val started = timing.clock()
                   thinkingStartedAt = started
                   // 界面据此把「思考中 1.2 秒」实时往上走；结算时换成 thinkingMs。
                   markThinkingStarted(draft.id, started)
                 }
                 if (event.startsStep) reasoningStepStart = reasoning.length
                 reasoning.append(event.text)
-                val now = clock()
+                val now = timing.clock()
                 if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
                   lastUiFlush = now
                   markReasoning(draft.id, reasoning.toString())
                 }
-                if (now - lastFlush >= flushIntervalMs) {
+                if (now - lastFlush >= timing.flushIntervalMs) {
                   lastFlush = now
                   // 节流落库：增量可能每帧都来，200ms 一次已足够「进程被杀也不丢太多」
                   flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
@@ -233,13 +317,13 @@ class ChatViewModel(
                 }
                 if (event.startsStep) stepStart = content.length
                 content.append(event.text)
-                val now = clock()
+                val now = timing.clock()
                 if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
                   lastUiFlush = now
                   // UI 镜像直接取缓冲快照：坐标与缓冲永远一致，不必推理增量拼接的边界。
                   appendText(draft.id, content.toString(), replace = true)
                 }
-                if (now - lastFlush >= flushIntervalMs) {
+                if (now - lastFlush >= timing.flushIntervalMs) {
                   lastFlush = now
                   flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
                 }
@@ -258,7 +342,7 @@ class ChatViewModel(
                   content.append(full)
                   appendText(draft.id, content.toString(), replace = true)
                 }
-                lastUiFlush = clock()
+                lastUiFlush = timing.clock()
                 lastFlush = lastUiFlush
                 flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
               }
@@ -304,17 +388,50 @@ class ChatViewModel(
 
   /** 切到指定会话；任务进行中忽略（UI 已置灰）。 */
   fun openSession(id: String) {
-    if (!_state.value.canSwitchSession || id == _state.value.sessionId) return
-    viewModelScope.launch { loadSession(id) }
+    val snapshot = _state.value
+    if (!snapshot.canSwitchSession || id == snapshot.sessionId) return
+    val known = snapshot.sessions.firstOrNull { it.id == id }
+    viewModelScope.launch {
+      // 列表里没有就查库：交接可能比列表刷新先到（刚建好的那段会话就是这样）。
+      val session = known ?: runCatching { store.session(id) }.getOrNull() ?: return@launch
+      switchTo(session)
+    }
   }
 
-  /** 新建并切到一个空会话。 */
+  /** 新建并切到一个空的日常会话。 */
   fun newSession() {
     if (!_state.value.canSwitchSession) return
     viewModelScope.launch {
-      runCatching { store.createSession(title = null).id }
-        .onSuccess { id -> loadSession(id) }
+      runCatching { store.createSession(title = null) }
+        .onSuccess { session -> switchTo(session) }
         .onFailure { throwable -> reportStorageFailure(throwable) }
+    }
+  }
+
+  /**
+   * 切会话 = 切「谁在说话」+ 换历史。
+   *
+   * 载体不同才重载运行时：同一张卡的多段会话之间来回切不该付 1–2 秒的重载代价。
+   * 重载失败**不拦住**进会话 —— 读历史不需要运行时，进去看到内容比卡在灰色界面有用。
+   */
+  private suspend fun switchTo(session: ChatSession) {
+    val target = session.characterId
+    val switcher = roleplay.switcher
+    if (switcher != null && (!roleActivated || target != activatedCharacterId)) {
+      _state.update { it.copy(switchingRole = true, switchError = null) }
+      val result = runCatching { switcher.activate(target) }
+      _state.update { it.copy(switchingRole = false) }
+      result.exceptionOrNull()?.let { error ->
+        _state.update {
+          it.copy(switchError = "切换角色失败：${error.message ?: error.javaClass.simpleName}")
+        }
+      }
+      activatedCharacterId = target
+      roleActivated = true
+    }
+    loadSession(session.id)
+    _state.update {
+      it.copy(activeCharacterId = target, activeCharacterName = session.title ?: it.activeCharacterName)
     }
   }
 
@@ -325,21 +442,36 @@ class ChatViewModel(
       val deleted = runCatching { store.deleteSession(id) }
       if (deleted.isFailure) {
         // 删不掉就只报错：不把 ready 置灰，否则一次误删失败会连消息都发不出去。
-        reportError(deleted.exceptionOrNull() ?: return@launch)
+        val reason = deleted.exceptionOrNull() ?: return@launch
+        _state.update { it.copy(storageError = reason.message ?: reason.javaClass.simpleName) }
         return@launch
       }
       if (id == _state.value.sessionId) {
-        runCatching { store.currentSession().id }
-          .onSuccess { next -> loadSession(next) }
-          .onFailure { throwable -> reportStorageFailure(throwable) }
+        // 先在同角色剩下的会话里找一段，再退回日常 —— 删一段不该把人踢出这个角色。
+        val deleted = _state.value.sessions.firstOrNull { it.id == id }
+        val sibling =
+          deleted?.characterId?.let { cardId ->
+            _state.value.roleplayGroups
+              .firstOrNull { it.characterId == cardId }
+              ?.sessions
+              ?.firstOrNull { it.id != id }
+          }
+        if (sibling != null) {
+          switchTo(sibling)
+        } else {
+          runCatching { store.currentSession() }
+            .onSuccess { next -> switchTo(next) }
+            .onFailure { throwable -> reportStorageFailure(throwable) }
+        }
       }
     }
   }
 
   private suspend fun restore() {
-    val restored = runCatching { store.currentSession().id }
+    // 先看「上次在说话的地方」（可能是酒馆），没有才退回日常会话。
+    val restored = runCatching { store.latestSession() ?: store.currentSession() }
     restored
-      .onSuccess { sessionId -> loadSession(sessionId) }
+      .onSuccess { session -> switchTo(session) }
       .onFailure { throwable ->
         // 打不开库时故意不放行发送：否则消息看起来发出去了，其实一条都没存下。
         _state.update {
@@ -381,11 +513,6 @@ class ChatViewModel(
         storageError = throwable.message ?: throwable.javaClass.simpleName,
       )
     }
-  }
-
-  /** 非致命失败：只把原因显示出来，不拦着用户继续用。 */
-  private fun reportError(throwable: Throwable) {
-    _state.update { it.copy(storageError = throwable.message ?: throwable.javaClass.simpleName) }
   }
 
   /** 记下工具调用开始：先上屏，再落库（落库失败只影响重启后的卡片）。 */
@@ -484,7 +611,7 @@ class ChatViewModel(
       reasoning = reasoning.toString().ifBlank { null },
       status = status,
       error = error,
-      finishedAt = if (status == MessageStatus.Streaming) null else clock(),
+      finishedAt = if (status == MessageStatus.Streaming) null else timing.clock(),
     )
   }
 
@@ -563,8 +690,6 @@ class ChatViewModel(
   }
 
   private companion object {
-    const val FLUSH_INTERVAL_MS = 200L
-
     /** 增量刷新界面的最小间隔：token 级帧可能每秒几十条，逐帧重算 Markdown 不划算。 */
     const val UI_FLUSH_INTERVAL_MS = 50L
 

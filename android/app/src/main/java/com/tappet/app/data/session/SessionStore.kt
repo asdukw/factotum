@@ -13,7 +13,12 @@ data class ChatSession(
   val kind: SessionKind,
   val createdAt: Long,
   val updatedAt: Long,
-)
+  /** 酒馆会话绑定的角色卡；日常会话为 null。 */
+  val characterId: String? = null,
+) {
+  /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
+  val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
+}
 
 /** 一条已落库的消息。 */
 data class StoredMessage(
@@ -53,6 +58,34 @@ interface SessionStore {
   suspend fun currentSession(): ChatSession
 
   suspend fun createSession(title: String?): ChatSession
+
+  /**
+   * 最近一段会话（日常或酒馆，不含后台任务），用于冷启动回到「上次在说话的地方」。
+   *
+   * 与 [currentSession] 的区别：那个只看日常会话。分区之后，如果用户上次停在酒馆里，
+   * 重新打开 App 应该回到那段扮演，而不是被扔进一段日常对话。
+   */
+  suspend fun latestSession(): ChatSession? = null
+
+  /**
+   * 按 id 取一段会话；不存在返回 null。
+   *
+   * 需要它是因为「刚建好的会话」可能还没被 [observeSessions] 推上来 —— 交接发生在建库
+   * 之后、列表刷新之前，只从列表里找会找不到，表现成「点了没反应」。
+   */
+  suspend fun session(id: String): ChatSession? = null
+
+  /**
+   * 建一个指定分区/角色的会话。
+   *
+   * 给了默认实现（退化成日常会话），是为了让只关心日常会话的测试替身不用跟着改；
+   * 真实现必须覆盖它，否则酒馆会话会被记成日常会话、分到错的分区里。
+   */
+  suspend fun createSession(
+    title: String?,
+    kind: SessionKind,
+    characterId: String?,
+  ): ChatSession = createSession(title)
 
   /** 全部会话，最近更新在前；用于原生会话列表。 */
   fun observeSessions(): Flow<List<ChatSession>>

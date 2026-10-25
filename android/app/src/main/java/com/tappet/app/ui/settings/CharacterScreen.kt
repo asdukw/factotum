@@ -51,10 +51,8 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
   CharacterScreen(
     state = state,
     onBack = onBack,
-    onStart = { id ->
-      viewModel.start(id)
-      onStartChat()
-    },
+    // 建完会话再回聊天页：交接先落地，聊天页才会打开它。
+    onStart = { id -> viewModel.start(id) { onStartChat() } },
     onStop = viewModel::stop,
     onImport = {
       // 有的网盘/文件管理器把 png 报成 octet-stream，所以给一组，别只写 image/png

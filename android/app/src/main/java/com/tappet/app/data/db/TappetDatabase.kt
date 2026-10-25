@@ -12,7 +12,8 @@ import androidx.room.RoomDatabase
   ],
   // v2：加定时任务表（见 TappetDatabaseProvider 的 MIGRATION_1_2 —— 不做破坏性迁移，
   // 那会把用户已有的会话清空）。
-  version = 2,
+  // v3：会话加 character_id（酒馆会话绑定角色卡），见 TappetDatabaseProvider 的 MIGRATION_2_3。
+  version = 3,
   exportSchema = true,
 )
 abstract class TappetDatabase : RoomDatabase() {

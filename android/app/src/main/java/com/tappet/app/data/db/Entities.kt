@@ -6,10 +6,20 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** 会话类型：聊天会话，或后台 agent 任务留下的记录。 */
+/**
+ * 会话类型。
+ *
+ * - [Chat] 日常：干活、问问题，人格是助手本人
+ * - [Background] 后台任务留下的记录
+ * - [Roleplay] 酒馆：绑一张角色卡，开场白、世界设定、卡的人设都只在会话里生效
+ *
+ * 分区不只是界面分组：`kind` 决定这个会话由哪套系统提示驱动，也决定「日常」列表里
+ * 看不到它 —— 聊天记录不该混在待办里。
+ */
 enum class SessionKind {
   Chat,
   Background,
+  Roleplay,
 }
 
 /** 消息角色。比聊天用到的多两种，为后面的工具调用与系统提示留位。 */
@@ -51,7 +61,7 @@ enum class ToolCallStatus {
  */
 @Entity(
   tableName = "session",
-  indices = [Index("updated_at"), Index("kind")],
+  indices = [Index("updated_at"), Index("kind"), Index("character_id")],
 )
 data class SessionEntity(
   @PrimaryKey @ColumnInfo(name = "id") val id: String,
@@ -64,6 +74,13 @@ data class SessionEntity(
   @ColumnInfo(name = "summary_upto") val summaryUpto: String? = null,
   @ColumnInfo(name = "model") val model: String? = null,
   @ColumnInfo(name = "reasoning_effort") val reasoningEffort: String? = null,
+  /**
+   * 酒馆会话绑定的角色卡 id；日常会话为 null。
+   *
+   * 存 id 而不是把卡正文抄进会话：卡是可替换的数据，改卡后旧会话应该跟着新卡走；
+   * 卡被删了则退化成「已删除的角色」，历史记录仍然读得出来。
+   */
+  @ColumnInfo(name = "character_id") val characterId: String? = null,
 )
 
 /**

@@ -107,12 +107,11 @@ internal fun SettingsScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 24.dp),
       ) {
-        GeneralSection(
-          autoRead = state.voiceAutoRead,
-          onOpenVoice = onOpenVoice,
-          onOpenPersona = onOpenPersona,
-          onOpenCharacters = onOpenCharacters,
-        )
+        GeneralSection(autoRead = state.voiceAutoRead, onOpenVoice = onOpenVoice)
+        // 娱乐跟「干活」分开：人格与角色卡只在酒馆会话里决定谁在说话，日常会话不受影响。
+        // 放在同一组里，用户会以为改人格就是改助手本身。
+        SectionLabel("娱乐")
+        EntertainmentSection(onOpenPersona = onOpenPersona, onOpenCharacters = onOpenCharacters)
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
         SectionLabel("执行层")
@@ -130,16 +129,20 @@ internal fun SettingsScreen(
   }
 }
 
+/**
+ * 娱乐分区：人格与角色卡。
+ *
+ * 两者的共同点是**都只决定「谁在说话」**，并且只在酒馆会话里生效 —— 日常会话永远是
+ * 「助手本人 + 当前人格」。所以它们既不属于模型/服务，也不该跟执行层混在一起。
+ */
 @Composable
-private fun GeneralSection(
-  autoRead: Boolean,
-  onOpenVoice: () -> Unit,
+private fun EntertainmentSection(
   onOpenPersona: () -> Unit,
   onOpenCharacters: () -> Unit,
 ) {
   val context = LocalContext.current
-  // 人格是「选中即生效」的偏好，没有可观察的数据源 —— 从助手页返回时必须重读，
-  // 否则这一行还停在上一次的人格名（与上面无障碍开关同一个处理）。
+  // 选中即生效、没有可观察的数据源 —— 从子页返回时必须重读，否则停在旧值
+  // （与无障碍开关同一个处理）。
   var persona by remember { mutableStateOf(PersonaStore.selected(context)) }
   var activeCharacter by remember { mutableStateOf(PersonaStore.selectedCharacter(context)) }
   LifecycleResumeEffect(Unit) {
@@ -147,6 +150,44 @@ private fun GeneralSection(
     activeCharacter = PersonaStore.selectedCharacter(context)
     onPauseOrDispose { }
   }
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Person,
+      title = "人格",
+      // 扮演中的人格不生效：不写清楚，用户会以为人格设置坏了。
+      subtitle =
+        if (activeCharacter != null) {
+          "角色扮演中，人格暂不生效"
+        } else {
+          "日常会话的说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}"
+        },
+      onClick = onOpenPersona,
+    ) {
+      ChevronRight()
+    }
+    SettingsDivider()
+    SettingsRow(
+      glyph = GlyphKind.Sparkles,
+      title = "角色卡",
+      subtitle = characterSubtitle(activeCharacter),
+      onClick = onOpenCharacters,
+    ) {
+      ChevronRight()
+    }
+  }
+  Text(
+    text = "只有酒馆会话（会话菜单 → 酒馆）会用角色卡；日常会话不带开场白与扮演规则。",
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(start = 12.dp, top = 8.dp),
+  )
+}
+
+@Composable
+private fun GeneralSection(
+  autoRead: Boolean,
+  onOpenVoice: () -> Unit,
+) {
   SettingsGroup {
     // 「助手」这一格留给**智能体**（多套人设 + 工具面 + 技能，按会话选）。
     // 人格切换只是其中「身份与语气」一个切面，占着这个入口会让用户以为智能体已经做了 ——
@@ -158,30 +199,6 @@ private fun GeneralSection(
       enabled = false,
     ) {
       StatusBadge("即将推出", BadgeTone.Muted)
-    }
-    SettingsDivider()
-    SettingsRow(
-      glyph = GlyphKind.Person,
-      title = "人格",
-      // 扮演中的人格不生效：不写清楚，用户会以为人格设置坏了。
-      subtitle =
-        if (activeCharacter != null) {
-          "角色扮演中，人格暂不生效"
-        } else {
-          "说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}"
-        },
-      onClick = onOpenPersona,
-    ) {
-      ChevronRight()
-    }
-    SettingsDivider()
-    SettingsRow(
-      glyph = GlyphKind.Sparkles,
-      title = "角色",
-      subtitle = characterSubtitle(activeCharacter),
-      onClick = onOpenCharacters,
-    ) {
-      ChevronRight()
     }
     SettingsDivider()
     SettingsRow(

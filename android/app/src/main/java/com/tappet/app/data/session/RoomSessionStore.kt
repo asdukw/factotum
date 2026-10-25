@@ -27,17 +27,33 @@ class RoomSessionStore(
       dao.latestSession(SessionKind.Chat)?.toDomain() ?: newSessionLocked(title = null)
     }
 
-  override suspend fun createSession(title: String?): ChatSession = bootstrap.withLock { newSessionLocked(title) }
+  override suspend fun latestSession(): ChatSession? = dao.latestAnySession()?.toDomain()
 
-  private suspend fun newSessionLocked(title: String?): ChatSession {
+  override suspend fun session(id: String): ChatSession? = dao.session(id)?.toDomain()
+
+  override suspend fun createSession(title: String?): ChatSession =
+    createSession(title, SessionKind.Chat, characterId = null)
+
+  override suspend fun createSession(
+    title: String?,
+    kind: SessionKind,
+    characterId: String?,
+  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId) }
+
+  private suspend fun newSessionLocked(
+    title: String?,
+    kind: SessionKind = SessionKind.Chat,
+    characterId: String? = null,
+  ): ChatSession {
     val now = clock()
     val entity =
       SessionEntity(
         id = Uuids.v7(now),
         title = title,
-        kind = SessionKind.Chat,
+        kind = kind,
         createdAt = now,
         updatedAt = now,
+        characterId = characterId,
       )
     dao.insertSession(entity)
     return entity.toDomain()
@@ -138,6 +154,7 @@ private fun SessionEntity.toDomain() =
     kind = kind,
     createdAt = createdAt,
     updatedAt = updatedAt,
+    characterId = characterId,
   )
 
 private fun MessageEntity.toDomain() =

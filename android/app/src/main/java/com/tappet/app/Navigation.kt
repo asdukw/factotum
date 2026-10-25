@@ -26,7 +26,12 @@ fun MainNavigation() {
     entryProvider =
       entryProvider {
         entry<Main> {
-          ChatScreen(onOpenSettings = { backStack.add(Settings) })
+          ChatScreen(
+            onOpenSettings = { backStack.add(Settings) },
+            // 酒馆侧栏的两个入口：直接进角色库 / 人格页，不必绕设置。
+            onOpenCharacters = { backStack.add(Characters) },
+            onOpenPersona = { backStack.add(Persona) },
+          )
         }
         entry<Settings> {
           SettingsScreen(

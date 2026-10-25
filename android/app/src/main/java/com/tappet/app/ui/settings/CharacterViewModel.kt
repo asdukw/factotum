@@ -8,6 +8,9 @@ import com.tappet.app.agent.CharacterCard
 import com.tappet.app.agent.CharacterImporter
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.PersonaStore
+import com.tappet.app.agent.SessionHandoff
+import com.tappet.app.data.db.SessionKind
+import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.node.NodeRuntime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,20 +54,48 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     }
   }
 
-  /** 开始扮演：选中这张卡并重载运行时。 */
-  fun start(id: String) {
-    if (_state.value.activeId == id) return
-    PersonaStore.selectCharacter(appContext, id)
-    refresh()
-    apply("已进入角色，下一句起生效")
+  /**
+   * 开始对话：**给这张卡新开一段酒馆会话**，然后把「去哪」交给聊天页。
+   *
+   * 这里不写偏好、也不重载运行时：卡的生效属于「会话」而不是「全局设置」——
+   * 同一张卡可以有好几段对话，谁在说话由当前打开的那段决定。重载交给聊天页
+   * 切会话时做，一次，而不是这里一次、那边再一次。
+   */
+  fun start(id: String, onReady: () -> Unit = {}) {
+    val card = _state.value.cards.firstOrNull { it.id == id } ?: return
+    if (_state.value.applying) return
+    _state.update { it.copy(applying = true) }
+    viewModelScope.launch {
+      val created =
+        runCatching {
+          appContext.tappetSessionStore().createSession(
+            title = card.name,
+            kind = SessionKind.Roleplay,
+            characterId = card.id,
+          )
+        }
+      created.onSuccess { session -> SessionHandoff.open(session.id) }
+      // 建完（含失败）再回聊天页：早一步返回会让聊天页在交接还没写下时就去取，
+      // 结果停在原来那段会话上 —— 看起来像「点了没反应」。
+      onReady()
+      refresh()
+      _state.update {
+        it.copy(
+          applying = false,
+          message =
+            created.fold(
+              onSuccess = { "已开一段新对话，回去就能说话" },
+              onFailure = { error -> "开不了会话：${error.message ?: error.javaClass.simpleName}" },
+            ),
+        )
+      }
+    }
   }
 
-  /** 退出角色扮演，回到默认人格。 */
+  /** 退出扮演：回最近一段日常会话（人格在那里生效）。 */
   fun stop() {
-    if (_state.value.activeId == null) return
-    PersonaStore.clearCharacter(appContext)
-    refresh()
-    apply("已退出角色")
+    SessionHandoff.openNormal()
+    _state.update { it.copy(message = "回到日常会话后，人格才会生效") }
   }
 
   fun consumeMessage() {

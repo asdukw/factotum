@@ -47,13 +47,28 @@ object TappetDatabaseProvider {
       }
     }
 
+  /**
+   * v2 → v3：会话表加 `character_id`。
+   *
+   * 只加列、不回填：老会话一律是日常会话（`kind = Chat`），character_id 天然为 null，
+   * 这正是它们该有的样子。索引名要跟 Room 生成的一致（`index_session_character_id`），
+   * 否则 Room 的表结构校验会认为 schema 不匹配而拒绝启动。
+   */
+  private val MIGRATION_2_3 =
+    object : Migration(2, 3) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `character_id` TEXT")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_character_id` ON `session` (`character_id`)")
+      }
+    }
+
   fun open(context: Context): TappetDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, TappetDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

@@ -47,6 +47,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -95,6 +96,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.AgentModelSwitcher
 import com.tappet.app.agent.ApprovalHub
+import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.ChatMessage
 import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
@@ -102,6 +104,10 @@ import com.tappet.app.agent.ChatViewModel
 import com.tappet.app.agent.DshStreamer
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
+import com.tappet.app.agent.PersonaStore
+import com.tappet.app.agent.RoleplayBinding
+import com.tappet.app.agent.RoleplayGroup
+import com.tappet.app.agent.SessionHandoff
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
 import com.tappet.app.agent.UserQuestionHub
@@ -110,11 +116,13 @@ import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
+import com.tappet.app.node.NodeRuntime
 import com.tappet.app.ui.components.ProviderModelIcon
 import com.tappet.app.voice.RecognizedText
 import com.tappet.app.voice.VoiceInput
 import com.tappet.app.voice.VoiceReader
 import com.tappet.app.voice.VoiceSettings
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -134,6 +142,8 @@ import java.time.temporal.ChronoUnit
 fun ChatScreen(
   onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
+  onOpenCharacters: () -> Unit = {},
+  onOpenPersona: () -> Unit = {},
   store: SessionStore = LocalContext.current.tappetSessionStore(),
 ) {
   val appContext = LocalContext.current.applicationContext
@@ -145,9 +155,30 @@ fun ChatScreen(
       streamer = DshStreamer(appContext),
       store = store,
       switcher = AgentModelSwitcher(appContext),
+      roleplay =
+        RoleplayBinding(
+          characters = { CharacterStore.cards(appContext) },
+          // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
+          // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。
+          switcher = { characterId ->
+            val current = PersonaStore.selectedCharacter(appContext)?.id
+            if (current != characterId) {
+              if (characterId == null) {
+                PersonaStore.clearCharacter(appContext)
+              } else {
+                PersonaStore.selectCharacter(appContext, characterId)
+              }
+              NodeRuntime.reload(appContext)
+            }
+          },
+        ),
     )
   }
   val state by viewModel.state.collectAsStateWithLifecycle()
+  SessionHandoffEffect(
+    onSession = viewModel::openSession,
+    onNormal = viewModel.roleplayActions::leave,
+  )
   ChatScreen(
     state = state,
     onInputChange = viewModel::onInputChange,
@@ -156,11 +187,34 @@ fun ChatScreen(
     onNewSession = viewModel::newSession,
     onOpenSession = viewModel::openSession,
     onDeleteSession = viewModel::deleteSession,
+    onNewRoleplaySession = viewModel.roleplayActions::new,
+    onOpenRoleplay = viewModel.roleplayActions::openGroup,
+    onLeaveRoleplay = viewModel.roleplayActions::leave,
     onOpenSettings = onOpenSettings,
+    onOpenCharacters = onOpenCharacters,
+    onOpenPersona = onOpenPersona,
     onSwitchModel = viewModel.modelSwitch::switch,
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
     modifier = modifier,
   )
+}
+
+/**
+ * 消费「去哪个会话」的交接意图。
+ *
+ * 用 LifecycleResumeEffect 而不是 LaunchedEffect：设置页/角色页是压栈进来又弹栈回去的，
+ * **回到聊天页这一刻**才是会话真正该切的时候；LaunchedEffect 只在首次组合时跑一次。
+ */
+@Composable
+private fun SessionHandoffEffect(onSession: (String) -> Unit, onNormal: () -> Unit) {
+  LifecycleResumeEffect(Unit) {
+    when (val target = SessionHandoff.take()) {
+      is SessionHandoff.Target.Session -> onSession(target.id)
+      SessionHandoff.Target.Normal -> onNormal()
+      null -> Unit
+    }
+    onPauseOrDispose { }
+  }
 }
 
 @Composable
@@ -172,7 +226,12 @@ internal fun ChatScreen(
   onNewSession: () -> Unit = {},
   onOpenSession: (String) -> Unit = {},
   onDeleteSession: (String) -> Unit = {},
+  onNewRoleplaySession: (String) -> Unit = {},
+  onOpenRoleplay: (String) -> Unit = {},
+  onLeaveRoleplay: () -> Unit = {},
   onOpenSettings: () -> Unit = {},
+  onOpenCharacters: () -> Unit = {},
+  onOpenPersona: () -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -222,22 +281,20 @@ internal fun ChatScreen(
     drawerContent = {
       SessionDrawer(
         sessions = state.sessions,
+        roleplayGroups = state.roleplayGroups,
         currentId = state.sessionId,
+        activeCharacterId = state.activeCharacterId,
+        switchingRole = state.switchingRole,
         enabled = state.canSwitchSession,
         configSummary = state.configSummary,
-        onNewSession = {
-          onNewSession()
-          scope.launch { drawerState.close() }
-        },
-        onOpenSession = { id ->
-          onOpenSession(id)
-          scope.launch { drawerState.close() }
-        },
+        onNewSession = closeThen(scope, drawerState, onNewSession),
+        onOpenSession = closeThen(scope, drawerState) { id -> onOpenSession(id) },
         onDeleteSession = onDeleteSession,
-        onOpenSettings = {
-          onOpenSettings()
-          scope.launch { drawerState.close() }
-        },
+        onNewRoleplaySession = closeThen(scope, drawerState) { id -> onNewRoleplaySession(id) },
+        onOpenRoleplay = closeThen(scope, drawerState) { id -> onOpenRoleplay(id) },
+        onOpenCharacters = closeThen(scope, drawerState, onOpenCharacters),
+        onOpenPersona = closeThen(scope, drawerState, onOpenPersona),
+        onOpenSettings = closeThen(scope, drawerState, onOpenSettings),
       )
     },
   ) {
@@ -249,6 +306,7 @@ internal fun ChatScreen(
       onSend = onSend,
       onStop = onStop,
       onNewSession = onNewSession,
+      onLeaveRoleplay = onLeaveRoleplay,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         modelChoices = onPrepareModelSwitch()
@@ -506,9 +564,13 @@ private fun ChatBody(
   onNewSession: () -> Unit,
   onOpenSessions: () -> Unit,
   onModelSwitchClick: () -> Unit,
+  onLeaveRoleplay: () -> Unit = {},
 ) {
+  // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
-    state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "Tappet"
+    state.activeCharacterName?.takeIf { it.isNotBlank() }
+      ?: state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() }
+      ?: "Tappet"
 
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
@@ -536,18 +598,13 @@ private fun ChatBody(
       listOf(state.providerName, state.model).filter { it.isNotBlank() }.joinToString(" · ")
     ChatTopBar(
       title = sessionTitle,
-      subtitle = modelSubtitle,
+      subtitle = if (state.inRoleplay) "角色扮演 · $modelSubtitle" else modelSubtitle,
       onOpenSessions = onOpenSessions,
       onNewSession = onNewSession,
+      onLeaveRoleplay = if (state.inRoleplay) onLeaveRoleplay else null,
     )
     AccessibilityPrompt()
-    if (!state.configured) {
-      // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
-      BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
-    }
-    state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
-    voiceError?.let { reason -> BannerText("朗读失败：$reason") }
-    (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
+    StatusBanners(state = state, voiceError = voiceError, dictation = dictation)
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
       LazyColumn(
@@ -701,6 +758,7 @@ private fun ChatTopBar(
   subtitle: String,
   onOpenSessions: () -> Unit,
   onNewSession: () -> Unit,
+  onLeaveRoleplay: (() -> Unit)? = null,
 ) {
   Row(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -723,6 +781,17 @@ private fun ChatTopBar(
           overflow = TextOverflow.Ellipsis,
         )
       }
+    }
+    if (onLeaveRoleplay != null) {
+      Text(
+        text = "退出扮演",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier =
+          Modifier.clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onLeaveRoleplay)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+      )
     }
     IconButton(onClick = onNewSession) { PlusGlyph(tint = MaterialTheme.colorScheme.onSurface) }
   }
@@ -773,6 +842,18 @@ private fun AccessibilityPrompt() {
   )
 }
 
+/** 页头下面那一摞黄条/红条：缺 key、存不了盘、朗读失败、语音输入失败。 */
+@Composable
+private fun StatusBanners(state: ChatUiState, voiceError: String?, dictation: VoiceInput.State) {
+  if (!state.configured) {
+    // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
+    BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
+  }
+  state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
+  voiceError?.let { reason -> BannerText("朗读失败：$reason") }
+  (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
+}
+
 @Composable
 private fun BannerText(text: String) {
   Text(
@@ -783,55 +864,253 @@ private fun BannerText(text: String) {
   )
 }
 
+/** 点一下：先做事，再收抽屉。抽出来是因为六个入口都要这一下，写在行内会把版面撑散。 */
+private fun closeThen(scope: CoroutineScope, drawer: DrawerState, action: () -> Unit): () -> Unit =
+  {
+    action()
+    scope.launch { drawer.close() }
+  }
+
+/** 带参数的版本（会话/角色 id），规则同上。 */
+private fun closeThen(
+  scope: CoroutineScope,
+  drawer: DrawerState,
+  action: (String) -> Unit,
+): (String) -> Unit = { id ->
+  action(id)
+  scope.launch { drawer.close() }
+}
+
+/** 抽屉标题行。右侧的「+」随分区变义：日常里是新会话，酒馆里是去挑一张卡。 */
+@Composable
+private fun DrawerHeader(enabled: Boolean, onPlus: () -> Unit) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      text = "会话",
+      style = MaterialTheme.typography.titleMedium,
+      modifier = Modifier.weight(1f).padding(start = 12.dp),
+    )
+    IconButton(onClick = onPlus, enabled = enabled) {
+      PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+  }
+}
+
+/** 侧栏的两个分区：日常（干活）与酒馆（角色扮演）。 */
+private enum class DrawerTab(val label: String) {
+  Normal("日常"),
+  Roleplay("酒馆"),
+}
+
+@Composable
+private fun DrawerTabs(tab: DrawerTab, onSelect: (DrawerTab) -> Unit) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+  ) {
+    DrawerTab.entries.forEach { entry ->
+      val selected = entry == tab
+      Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.weight(1f).clickable { onSelect(entry) },
+      ) {
+        Text(
+          text = entry.label,
+          textAlign = TextAlign.Center,
+          style = MaterialTheme.typography.labelLarge,
+          color =
+            if (selected) {
+              MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            },
+          modifier = Modifier.padding(vertical = 8.dp),
+        )
+      }
+    }
+  }
+}
+
+/**
+ * 酒馆分区：一行一张角色卡，行下面挂它名下的会话。
+ *
+ * 与日常分区的差别不只是分组：这里的每一行都对应一套系统提示（卡的人设 + 世界设定），
+ * 点进去会换掉「谁在说话」。所以每张卡都显示，没有会话的卡也能点 —— 那正是开第一段对话的入口。
+ */
+@Composable
+private fun RoleplayList(
+  modifier: Modifier = Modifier,
+  groups: List<RoleplayGroup>,
+  currentId: String?,
+  activeCharacterId: String?,
+  switchingRole: Boolean,
+  enabled: Boolean,
+  onOpenRoleplay: (String) -> Unit,
+  onNewRoleplaySession: (String) -> Unit,
+  onOpenSession: (String) -> Unit,
+  onRequestDelete: (ChatSession) -> Unit,
+  onOpenCharacters: () -> Unit,
+) {
+  if (groups.isEmpty()) {
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+      Text("酒馆里还没有角色", style = MaterialTheme.typography.bodyMedium)
+      Text(
+        text = "导入一张角色卡（PNG 或 JSON），它的开场白、人设和世界设定只在酒馆会话里生效，不影响日常。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+      )
+      TextButton(onClick = onOpenCharacters, modifier = Modifier.padding(top = 4.dp)) { Text("去导入角色卡") }
+    }
+    return
+  }
+  LazyColumn(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    if (switchingRole) {
+      item(key = "switching") {
+        Text(
+          text = "正在切换角色…",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 4.dp),
+        )
+      }
+    }
+    groups.forEach { group ->
+      item(key = "card-${group.characterId}") {
+        RoleplayHeader(
+          group = group,
+          active = group.characterId == activeCharacterId,
+          enabled = enabled,
+          onOpen = { onOpenRoleplay(group.characterId) },
+          onNew = { onNewRoleplaySession(group.characterId) },
+        )
+      }
+      items(items = group.sessions, key = { it.id }) { session ->
+        SessionRow(
+          session = session,
+          selected = session.id == currentId,
+          enabled = enabled,
+          onOpen = { onOpenSession(session.id) },
+          onDelete = { onRequestDelete(session) },
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun RoleplayHeader(
+  group: RoleplayGroup,
+  active: Boolean,
+  enabled: Boolean,
+  onOpen: () -> Unit,
+  onNew: () -> Unit,
+) {
+  val subtitle =
+    when {
+      group.isEmpty -> "还没有对话"
+      else -> "${group.sessions.size} 段对话 · ${group.latest?.title?.takeIf { it.isNotBlank() } ?: "新会话"}"
+    }
+  Surface(
+    color = if (active) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+    shape = RoundedCornerShape(12.dp),
+    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = enabled, onClick = onOpen),
+  ) {
+    Row(
+      modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(Modifier.weight(1f)) {
+        Text(
+          text = group.name,
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      IconButton(onClick = onNew, enabled = enabled) {
+        PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+      }
+    }
+  }
+}
+
 @Composable
 private fun SessionDrawer(
   sessions: List<ChatSession>,
+  roleplayGroups: List<RoleplayGroup>,
   currentId: String?,
+  activeCharacterId: String?,
+  switchingRole: Boolean,
   enabled: Boolean,
   configSummary: String,
   onNewSession: () -> Unit,
   onOpenSession: (String) -> Unit,
   onDeleteSession: (String) -> Unit,
+  onNewRoleplaySession: (String) -> Unit,
+  onOpenRoleplay: (String) -> Unit,
+  onOpenCharacters: () -> Unit,
+  onOpenPersona: () -> Unit,
   onOpenSettings: () -> Unit,
 ) {
   var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
-  val grouped = groupSessions(sessions, System.currentTimeMillis())
+  // 在酒馆会话里打开侧栏时直接落在酒馆分区：不然用户要自己找自己在哪。
+  var tab by remember(activeCharacterId) {
+    mutableStateOf(if (activeCharacterId != null) DrawerTab.Roleplay else DrawerTab.Normal)
+  }
+  val normalSessions = sessions.filter { !it.isRoleplay }
+  val grouped = groupSessions(normalSessions, System.currentTimeMillis())
 
   ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
     Column(Modifier.fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          text = "会话",
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.weight(1f).padding(start = 12.dp),
-        )
-        IconButton(onClick = onNewSession, enabled = enabled) {
-          PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-
-      SessionList(
-        // weight 只有 ColumnScope 里能用，所以从调用点传进去
-        modifier = Modifier.weight(1f),
-        grouped = grouped,
-        currentId = currentId,
+      DrawerHeader(
         enabled = enabled,
-        onOpenSession = onOpenSession,
-        onRequestDelete = { pendingDelete = it },
+        onPlus = { if (tab == DrawerTab.Normal) onNewSession() else onOpenCharacters() },
       )
+      DrawerTabs(tab = tab, onSelect = { tab = it })
 
-      HorizontalDivider(Modifier.padding(vertical = 8.dp))
-      DrawerNavRow(label = "设置", onClick = onOpenSettings) {
-        CogGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      when (tab) {
+        DrawerTab.Normal ->
+          SessionList(
+            modifier = Modifier.weight(1f),
+            grouped = grouped,
+            currentId = currentId,
+            enabled = enabled,
+            onOpenSession = onOpenSession,
+            onRequestDelete = { pendingDelete = it },
+          )
+
+        DrawerTab.Roleplay ->
+          RoleplayList(
+            modifier = Modifier.weight(1f),
+            groups = roleplayGroups,
+            currentId = currentId,
+            activeCharacterId = activeCharacterId,
+            switchingRole = switchingRole,
+            enabled = enabled,
+            onOpenRoleplay = onOpenRoleplay,
+            onNewRoleplaySession = onNewRoleplaySession,
+            onOpenSession = onOpenSession,
+            onRequestDelete = { pendingDelete = it },
+            onOpenCharacters = onOpenCharacters,
+          )
       }
-      if (configSummary.isNotBlank()) {
-        Text(
-          text = configSummary,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-        )
-      }
+
+      DrawerFooter(
+        roleplayEntries = tab == DrawerTab.Roleplay,
+        configSummary = configSummary,
+        onOpenCharacters = onOpenCharacters,
+        onOpenPersona = onOpenPersona,
+        onOpenSettings = onOpenSettings,
+      )
     }
   }
 
@@ -856,6 +1135,37 @@ private fun SessionDrawer(
         }
       },
       dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+    )
+  }
+}
+
+/** 抽屉底部：酒馆里多两个入口（角色卡 / 人格），再加上设置与当前模型摘要。 */
+@Composable
+private fun DrawerFooter(
+  roleplayEntries: Boolean,
+  configSummary: String,
+  onOpenCharacters: () -> Unit,
+  onOpenPersona: () -> Unit,
+  onOpenSettings: () -> Unit,
+) {
+  HorizontalDivider(Modifier.padding(vertical = 8.dp))
+  if (roleplayEntries) {
+    DrawerNavRow(label = "管理角色卡", onClick = onOpenCharacters) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    DrawerNavRow(label = "人格设置", onClick = onOpenPersona) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+  }
+  DrawerNavRow(label = "设置", onClick = onOpenSettings) {
+    CogGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+  if (configSummary.isNotBlank()) {
+    Text(
+      text = configSummary,
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
     )
   }
 }

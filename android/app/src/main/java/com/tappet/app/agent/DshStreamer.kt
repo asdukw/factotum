@@ -137,7 +137,17 @@ class DshStreamer(private val context: Context) : ChatStreamer {
                 }
               }
 
-              is DshEvent.TurnEnded -> Unit
+              // 一轮以错误收尾时必须说话。以前这里是 `Unit`：运行时在模型调用之前就失败
+              // （配置错、提供商 400、插件起不来）时，气泡会永远停在「正在启动 dsh 运行时…」，
+              // 用户看到的是「它不理我」。错误原文交给界面，比静默有用。
+              is DshEvent.TurnEnded ->
+                event.error?.takeIf { it.isNotBlank() }?.let { message ->
+                  Log.w(TAG, "turn ended with error: $message")
+                  if (!emittedText) {
+                    send(AgentStreamEvent.TextDelta("这一轮没跑起来：$message", startsStep = true))
+                    emittedText = true
+                  }
+                }
             }
           }
         }

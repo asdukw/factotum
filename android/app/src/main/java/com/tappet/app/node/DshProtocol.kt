@@ -158,7 +158,14 @@ object DshProtocol {
 
       "turn/end" -> {
         val reason = data?.get("reason")?.jsonObject
-        val error = if (reason?.get("kind")?.jsonPrimitive?.contentOrNull == "error") reason.toString() else null
+        // 只取 message 正文：把整段 reason 直接丢给界面，用户会看到一坨 JSON
+        // （401 那种错误里还套着一个 JSON 字符串，读起来更糟）。
+        val error =
+          if (reason?.get("kind")?.jsonPrimitive?.contentOrNull == "error") {
+            reason["error"]?.jsonObject?.string("message") ?: reason.toString()
+          } else {
+            null
+          }
         DshEvent.TurnEnded(sessionId, error)
       }
 

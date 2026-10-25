@@ -187,8 +187,10 @@ class ChatViewModel(
     // 会话列表跟着库走：发消息改标题、删会话都会自动反映到侧栏。
     viewModelScope.launch {
       store.observeSessions().catch { /* 列表读不到不影响聊天本身 */ }.collect { sessions ->
-        // 读卡要走文件与 assets，别在主线程做；分组本身是纯计算。
-        val cards = withContext(timing.dispatcher) { runCatching { roleplay.characters() }.getOrDefault(emptyList()) }
+        // 这里刻意**不切线程**：读卡是 assets.list + 几个几百字节的 JSON，只在会话列表变化时
+        // 跑一次；而切到 IO 会让这个 flow 变成跨调度器的长生命周期协程 —— 单测里 runTest 结束
+        // 后它还在跑，异常会漏到下一个用例（UncaughtExceptionsBeforeTest）。
+        val cards = runCatching { roleplay.characters() }.getOrDefault(emptyList())
         val groups = groupRoleplaySessions(sessions, cards)
         _state.update { state ->
           val name = groups.firstOrNull { group -> group.characterId == state.activeCharacterId }?.name
@@ -430,8 +432,10 @@ class ChatViewModel(
       roleActivated = true
     }
     loadSession(session.id)
-    _state.update {
-      it.copy(activeCharacterId = target, activeCharacterName = session.title ?: it.activeCharacterName)
+    _state.update { state ->
+      // 名字从角色表里取，不从会话标题取：标题是「第一句话」，不是卡名。
+      val name = state.roleplayGroups.firstOrNull { it.characterId == target }?.name
+      state.copy(activeCharacterId = target, activeCharacterName = name)
     }
   }
 

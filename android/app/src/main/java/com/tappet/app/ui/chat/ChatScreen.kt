@@ -614,7 +614,7 @@ private fun ChatBody(
         verticalArrangement = Arrangement.spacedBy(18.dp),
       ) {
         if (state.messages.isEmpty()) {
-          item { EmptyHint() }
+          item { EmptyHint(characterName = state.activeCharacterName) }
         }
         items(items = state.messages, key = { it.id }) { message ->
           MessageBubble(message, speakingId = voiceState?.messageId)
@@ -883,15 +883,17 @@ private fun closeThen(
 
 /** 抽屉标题行。右侧的「+」随分区变义：日常里是新会话，酒馆里是去挑一张卡。 */
 @Composable
-private fun DrawerHeader(enabled: Boolean, onPlus: () -> Unit) {
+private fun DrawerHeader(enabled: Boolean, showPlus: Boolean, onPlus: () -> Unit) {
   Row(verticalAlignment = Alignment.CenterVertically) {
     Text(
       text = "会话",
       style = MaterialTheme.typography.titleMedium,
       modifier = Modifier.weight(1f).padding(start = 12.dp),
     )
-    IconButton(onClick = onPlus, enabled = enabled) {
-      PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (showPlus) {
+      IconButton(onClick = onPlus, enabled = enabled) {
+        PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
     }
   }
 }
@@ -1071,9 +1073,12 @@ private fun SessionDrawer(
 
   ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
     Column(Modifier.fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp)) {
+      // 酒馆分区不设「新建」：会话必须挂在一张卡上，新建就意味着先选卡 ——
+      // 那件事由各角色行右侧的「+」完成，头部再放一个只会让人以为能凭空开会话。
       DrawerHeader(
         enabled = enabled,
-        onPlus = { if (tab == DrawerTab.Normal) onNewSession() else onOpenCharacters() },
+        showPlus = tab == DrawerTab.Normal,
+        onPlus = onNewSession,
       )
       DrawerTabs(tab = tab, onSelect = { tab = it })
 
@@ -1268,7 +1273,7 @@ private fun SessionRow(
 }
 
 @Composable
-private fun EmptyHint() {
+private fun EmptyHint(characterName: String? = null) {
   Column(
     modifier = Modifier.fillMaxWidth().padding(top = 96.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1280,12 +1285,18 @@ private fun EmptyHint() {
       Text(text = "M", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimary)
     }
     Text(
-      text = "你好，我是 Tappet",
+      text = if (characterName != null) characterName else "你好，我是 Tappet",
       style = MaterialTheme.typography.titleMedium,
       modifier = Modifier.padding(top = 18.dp),
     )
     Text(
-      text = "说出要手机做什么，例如「打开设置看看电池电量」。\n任务会实时操作手机界面，工具调用会逐张出现。",
+      // 酒馆里不该出现「说出要手机做什么」：那是干活用的开场，跟扮演是两件事。
+      text =
+        if (characterName != null) {
+          "先说一句就行 —— 开场由这张卡自己写。"
+        } else {
+          "说出要手机做什么，例如「打开设置看看电池电量」。\n任务会实时操作手机界面，工具调用会逐张出现。"
+        },
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       textAlign = TextAlign.Center,

@@ -53,11 +53,15 @@ class RoleplaySessions(
   private val open: (ChatSession) -> Unit,
   private val reportFailure: (Throwable) -> Unit,
 ) {
-  /** 给某个角色开一段新对话。同一张卡可以有好几段，互不干扰。 */
+  /**
+   * 给某个角色开一段新对话。同一张卡可以有好几段，互不干扰。
+   *
+   * 标题故意留空：让第一句用户消息去当标题（与日常会话同一套规则）。用卡名当标题的话，
+   * 同一张卡的三段对话在侧栏里全叫一个名字，根本分不出哪段是哪段。
+   */
   fun new(characterId: String) {
-    val name = groups().firstOrNull { it.characterId == characterId }?.name
     scope.launch {
-      runCatching { store.createSession(title = name, kind = SessionKind.Roleplay, characterId = characterId) }
+      runCatching { store.createSession(title = null, kind = SessionKind.Roleplay, characterId = characterId) }
         .onSuccess(open)
         .onFailure(reportFailure)
     }

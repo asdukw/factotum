@@ -5,6 +5,33 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
+## [1.0.0] - 2026-10-25
+
+### 破坏性变更
+
+- **1.0.0**：改名与包名更换是破坏性变更，按语义化版本直接升主版本。
+- **改名 Factotum（执事）**：`applicationId` → `com.factotum.app`。设备上是全新 App，
+  数据、Keystore 口令与无障碍授权都不迁移，需要重装并重新授权。存储身份（`factotum.db`、
+  prefs、Keystore 别名、连接器 / 提供商 id、无障碍组件名）一起换新。
+- CI secret 改为 `FACTOTUM_*` 前缀（见 `docs/releasing.md`）。
+
+### 新增
+
+- **内置 Debian（proot + bookworm-slim rootfs）**：`run_command` 不再需要 Termux、root 或额外授权；
+  支持 `apt` / PTY / Python / 原生模块，guest 内 HTTPS 可直接用。
+- **定时任务用对话创建**：`schedule_task` 等四个工具，增删改走审批。
+- **`run_command` 纳入写操作审批**：默认逐条确认，审计不记命令原文；可全局放行。
+
+### 移除
+
+- Termux 桥、`RUN_COMMAND` 权限与包可见性、`tools/termux/` 装配脚本。
+
+### 修复
+
+- 更正「Android 10+ 禁止执行可写目录」的错误结论（实测 guest 二进制可从 `filesDir` 执行）。
+
+完整说明见 `docs/releases/v1.0.0.md`。
+
 ## [0.16.0] - 2026-10-22
 
 ### 新增

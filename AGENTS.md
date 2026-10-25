@@ -229,6 +229,9 @@ nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_
   update/delete by `event_id`. All four writes are approval-gated (`tools/pre-execute` → `ask`)
   and post a notification receipt (`DeviceNotices`, promoted/流体云 where the ROM allows it).
   Needs `READ_CALENDAR`/`WRITE_CALENDAR`, granted from the chat prompt only after a real failure.
+- **`run_command` is approval-gated like the calendar writes** (`tools/pre-execute` → `ask`):
+  the audit `reason` says only "执行 shell 命令"; the command text goes to `displayReason`
+  (UI only). "设置 → 执行层 → 写操作审批 = 全允许" answers `allowed-once` without a panel.
 
 - **Coordinate contract:** the model uses only the **image pixels of the latest
   `capture_screenshot`** (1080×2344 → 943×2047), never screen pixels.

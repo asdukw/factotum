@@ -56,6 +56,9 @@ agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs�
   留头留尾。**退出码非 0 不是工具错误** —— 模型要靠它判断下一步。
 - **两种失败要分开**：`SHELL_UNAVAILABLE`（rootfs / proot 没起来）重试无用，插件按工具错误抛；
   命令自己失败（非 0 退出、超时）返回文本，由模型处理。
+- **每条命令过审批缝**（`tools/pre-execute` → `ask`）：审计 `reason` 只写「执行 shell 命令」，
+  命令原文只进 `displayReason`（面板可见、不落盘）。默认逐条问；「设置 → 执行层 → 写操作审批
+  = 全允许」后 answerer 直接回 `allowed-once`，不再弹面板。
 
 ## 4. 验证
 

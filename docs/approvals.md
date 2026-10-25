@@ -129,9 +129,14 @@ ctx.on('tools/pre-execute', (exec, next) => {
 插件测试同时断言四个写工具都被判成 `ask`、读工具放行。
 
 **设备侧写操作**（`dsh-plugin-android-tools`）同一套：`set_alarm` / `add_calendar_event` /
-`update_calendar_event` / `delete_calendar_event` 都在 `tools/pre-execute` 判 `ask`，
-`list_calendar_events` 只读、放行。这四条之所以**必须**进闸门：它们现在是**静默写**
-（`ContentResolver` / `EXTRA_SKIP_UI`），系统界面不再替用户确认 —— 插件层是唯一的闸门。
+`update_calendar_event` / `delete_calendar_event` / 三条定时任务工具 / **`run_command`**
+都在 `tools/pre-execute` 判 `ask`，读工具（`list_calendar_events` 等）放行。前几条之所以
+**必须**进闸门：它们是**静默写**（`ContentResolver` / `EXTRA_SKIP_UI`），系统界面不再替用户确认；
+`run_command` 则是**真 shell**，能写文件、装包、删东西。
+
+`run_command` 的 `reason` 固定写「执行 shell 命令」，**命令原文只进 `displayReason`** ——
+审计日志里不落命令内容（那里面可能有路径、口令或文件内容）。确认面板上看得见要跑什么，
+才有「允许」的意义。
 成功之后由 `device/DeviceNotices.kt` 发一条回执通知（ColorOS 上支持时走流体云），
 `reason` 里只放动作与 id / 标题，不放屏幕内容。
 

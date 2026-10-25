@@ -149,7 +149,11 @@ object PersonaStore {
   fun selectedCharacter(context: Context): CharacterCard? {
     val id = selectedId(context)
     if (!id.startsWith(CHARACTER_PREFIX)) return null
-    return CharacterStore.byId(context, id.removePrefix(CHARACTER_PREFIX))
+    val card = CharacterStore.byId(context, id.removePrefix(CHARACTER_PREFIX))
+    // 卡没了（换了版本、被删、导入失败）就退回默认人格。不这么做的话，
+    // 偏好里会永久留着 `char:<不存在的 id>`，界面一直显示「扮演中」而系统提示其实是用人格拼的。
+    if (card == null) select(context, DEFAULT_ID)
+    return card
   }
 
   /** 当前选中的人格；id 失效时用内置默认（而不是第一个 —— 顺序依赖太脆）。 */

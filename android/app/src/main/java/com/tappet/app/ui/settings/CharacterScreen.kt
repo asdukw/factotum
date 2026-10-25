@@ -75,25 +75,8 @@ internal fun CharacterScreen(
           ActiveBanner(card = state.active!!, applying = state.applying, onStop = onStop)
         }
 
-        SectionLabel("内置角色")
-        SettingsGroup {
-          state.cards.forEachIndexed { index, card ->
-            if (index > 0) SettingsDivider()
-            SettingsRow(
-              glyph = GlyphKind.Person,
-              title = card.name,
-              subtitle = card.tagline.ifEmpty { card.tags.joinToString(" · ") },
-              onClick = { onStart(card.id) },
-              trailing = {
-                if (card.id == state.activeId) {
-                  StatusBadge("扮演中", BadgeTone.Enabled)
-                } else {
-                  ChevronRight()
-                }
-              },
-            )
-          }
-        }
+        SectionLabel("角色卡")
+        CardList(cards = state.cards, activeId = state.activeId, onStart = onStart)
 
         // 选中一张卡后，把「你会看到什么」摊开：开场白与场景。改不了，但能判断要不要进去。
         val preview = state.active
@@ -121,7 +104,7 @@ internal fun CharacterScreen(
         SectionLabel("还没做的")
         SettingsGroup {
           Column(Modifier.padding(16.dp)) {
-            Note("导入社区角色卡（PNG / JSON）—— 下一步")
+            Note("写自己的角色 / 导入社区角色卡（PNG / JSON）")
             Note("每个角色独立记忆（现在共用一份 AGENTS.md）")
             Note("世界书按对话内容按需检索（现在只注入常驻条目与开场命中的条目）")
           }
@@ -134,6 +117,45 @@ internal fun CharacterScreen(
           modifier = Modifier.padding(horizontal = 4.dp),
         )
       }
+    }
+  }
+}
+
+/** 空列表就明说空着，别放一张假卡让人以为坏了。 */
+@Composable
+private fun EmptyCards() {
+  SettingsGroup {
+    Column(Modifier.padding(16.dp)) {
+      Text("还没有角色卡", style = MaterialTheme.typography.bodyLarge)
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = "角色卡是数据文件（assets/roleplay/characters/*.json），导入与编辑入口还没做，" +
+          "所以这一页先空着 —— 读卡、渲染人设、注入世界设定的链路已经在跑。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+  }
+}
+
+@Composable
+private fun CardList(cards: List<CharacterCard>, activeId: String?, onStart: (String) -> Unit) {
+  if (cards.isEmpty()) {
+    EmptyCards()
+    return
+  }
+  SettingsGroup {
+    cards.forEachIndexed { index, card ->
+      if (index > 0) SettingsDivider()
+      SettingsRow(
+        glyph = GlyphKind.Person,
+        title = card.name,
+        subtitle = card.tagline.ifEmpty { card.tags.joinToString(" · ") },
+        onClick = { onStart(card.id) },
+        trailing = {
+          if (card.id == activeId) StatusBadge("扮演中", BadgeTone.Enabled) else ChevronRight()
+        },
+      )
     }
   }
 }
@@ -171,4 +193,9 @@ private fun Note(text: String) {
 
 /** 供设置首页摘要用。 */
 internal fun characterSubtitle(card: CharacterCard?): String =
-  if (card == null) "内置角色卡：和角色聊天" else "正在扮演：${card.name}"
+  when {
+    card != null -> "正在扮演：${card.name}"
+
+    // 页面现在是空的：副标题也要诚实，不然点进去才发现什么都没有。
+    else -> "还没有角色卡"
+  }

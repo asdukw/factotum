@@ -29,3 +29,6 @@ import kotlinx.serialization.Serializable
 
 /** 语音设置（设置 → 语音）：朗读引擎 / 自动朗读 / 语速 / 音色。 */
 @Serializable data object Voice : NavKey
+
+/** 助手（人格）设置（设置 → 助手）：换人格、写自定义 soul、语气契约开关。 */
+@Serializable data object Persona : NavKey

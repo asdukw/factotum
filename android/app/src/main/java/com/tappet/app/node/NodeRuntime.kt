@@ -7,6 +7,7 @@ import com.tappet.app.agent.AgentConfig
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelModalities
+import com.tappet.app.agent.PersonaStore
 import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
@@ -495,6 +496,9 @@ object NodeRuntime : NodeLineListener {
         put("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
         put("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
         put("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))
+        // 人格：与 endpoint 无关，但**必须**每次重载都带上 —— launcher 覆盖 process.env 时
+        // 是「按这个文件的键」，漏了它就会退回字符串默认值（切换人格静默失效）。
+        put("TAPPET_PERSONA_PREFIX", PersonaStore.compose(app))
       }
     File(home, "runtime-config.json").writeText(payload.toString())
   }
@@ -545,6 +549,10 @@ object NodeRuntime : NodeLineListener {
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
     Os.setenv("TAPPET_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("TAPPET_LLM_SESSION", persistentSessionId(app), true)
+    // 人格（soul）：整份系统提示的正文，见 PersonaStore。启动时设一次，
+    // 之后切换人格走 [reload] —— launcher 在 mount 前用 runtime-config.json 覆盖同一个 env，
+    // 不必重启 Node 进程。
+    Os.setenv("TAPPET_PERSONA_PREFIX", PersonaStore.compose(app), true)
     // 联网搜索（模型可见的 web_search 工具）：dsh 自带的 web seam + dsh-web-search-deepseek
     // provider（Anthropic 兼容 Messages + 原生 web_search 服务器工具）。端点与模型按当前
     // 提供商注入 —— 注意这与聊天用的 api / baseUrl 是**两套**，不能互相推（zen 聊天走

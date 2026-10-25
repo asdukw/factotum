@@ -7,6 +7,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.tappet.app.ui.chat.ChatScreen
 import com.tappet.app.ui.settings.ConnectorsScreen
 import com.tappet.app.ui.settings.GmailConnectorScreen
+import com.tappet.app.ui.settings.PersonaScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
 import com.tappet.app.ui.settings.ScheduledTasksScreen
@@ -33,6 +34,7 @@ fun MainNavigation() {
             onOpenConnectors = { backStack.add(Connectors) },
             onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
             onOpenVoice = { backStack.add(Voice) },
+            onOpenPersona = { backStack.add(Persona) },
           )
         }
         entry<Providers> {
@@ -64,6 +66,9 @@ fun MainNavigation() {
         }
         entry<Voice> {
           VoiceScreen(onBack = { backStack.removeLastOrNull() })
+        }
+        entry<Persona> {
+          PersonaScreen(onBack = { backStack.removeLastOrNull() })
         }
       },
   )

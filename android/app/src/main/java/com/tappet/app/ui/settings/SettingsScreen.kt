@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.BuildConfig
 import com.tappet.app.accessibility.OverlaySettings
+import com.tappet.app.agent.PersonaStore
 import com.tappet.app.agent.appVersionName
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.ui.components.UpdateProgressBar
@@ -49,6 +50,7 @@ fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit,
+  onOpenPersona: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -67,6 +69,7 @@ fun SettingsScreen(
     onOpenConnectors = onOpenConnectors,
     onOpenScheduledTasks = onOpenScheduledTasks,
     onOpenVoice = onOpenVoice,
+    onOpenPersona = onOpenPersona,
     modifier = modifier,
   )
 }
@@ -79,6 +82,7 @@ internal fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit = {},
+  onOpenPersona: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -100,7 +104,11 @@ internal fun SettingsScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 24.dp),
       ) {
-        GeneralSection(autoRead = state.voiceAutoRead, onOpenVoice = onOpenVoice)
+        GeneralSection(
+          autoRead = state.voiceAutoRead,
+          onOpenVoice = onOpenVoice,
+          onOpenPersona = onOpenPersona,
+        )
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
         SectionLabel("执行层")
@@ -119,15 +127,27 @@ internal fun SettingsScreen(
 }
 
 @Composable
-private fun GeneralSection(autoRead: Boolean, onOpenVoice: () -> Unit) {
+private fun GeneralSection(
+  autoRead: Boolean,
+  onOpenVoice: () -> Unit,
+  onOpenPersona: () -> Unit,
+) {
+  val context = LocalContext.current
+  // 人格是「选中即生效」的偏好，没有可观察的数据源 —— 从助手页返回时必须重读，
+  // 否则这一行还停在上一次的人格名（与上面无障碍开关同一个处理）。
+  var persona by remember { mutableStateOf(PersonaStore.selected(context)) }
+  LifecycleResumeEffect(Unit) {
+    persona = PersonaStore.selected(context)
+    onPauseOrDispose { }
+  }
   SettingsGroup {
     SettingsRow(
       glyph = GlyphKind.Person,
       title = "助手",
-      subtitle = "设置个性化助手（智能体）",
-      enabled = false,
+      subtitle = "人格：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}",
+      onClick = onOpenPersona,
     ) {
-      StatusBadge("即将推出", BadgeTone.Muted)
+      ChevronRight()
     }
     SettingsDivider()
     SettingsRow(

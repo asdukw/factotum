@@ -1,5 +1,16 @@
 name: Setup build
-description: Shared JDK / Node / Android / Gradle setup, caches, and dsh runtime assembly.
+description: Shared JDK / Node / Android / Gradle setup, caches, and runtime assembly.
+
+# 可从可信 checkout 加载 action，仍按 target checkout 自己钉住的脚本装配，不能给旧 tag 注入新能力。
+inputs:
+  source-directory:
+    description: Target source checkout, relative to the workspace.
+    required: false
+    default: "."
+  cache-encryption-key:
+    description: Optional setup-gradle configuration-cache encryption key; empty disables that cache.
+    required: false
+    default: ""
 
 # assemble.yml 与 release.yml 共用这一段。差异只剩「出 debug 还是 release」「是否签名」，
 # 产物校验统一走 tools/verify-apk.sh —— v0.6.0 的 librg.so 就是两条路只有一条验造成的。
@@ -14,37 +25,36 @@ runs:
       with:
         node-version: "24"
     - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
-    - name: 缓存 NDK / CMake
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-      with:
-        path: |
-          ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
-          ${{ env.ANDROID_HOME }}/cmake/3.31.6
-        key: v2-android-ndk-cmake-${{ runner.os }}-ndk29.0.14206865-cmake3.31.6
+    # 不缓存预装 SDK 的 root-owned NDK/CMake 目录：恢复 tar 的元数据会失败。
+    # sdkmanager 对已安装的同版本包幂等，不需要重定向整个 SDK 或再上传这些目录。
     - name: 装 SDK 平台 / build-tools / NDK / CMake
       shell: bash
       run: |
         yes | sdkmanager --licenses > /dev/null || true
-        sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.31.6"
+        sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.31.6"
     - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
       with:
         validate-wrappers: true
-    - name: 缓存 libnode / rg / sherpa 下载
+        cache-encryption-key: ${{ inputs.cache-encryption-key }}
+    - name: 缓存 libnode / rg / sherpa / proot 下载
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
-          android/.libnode-cache
-          android/.rg-cache
-          android/.sherpa-cache
-        key: v1-fetch-cache-${{ runner.os }}-${{ hashFiles('tools/fetch-libnode.ps1', 'tools/fetch-rg.ps1', 'tools/fetch-sherpa.ps1') }}
+          ${{ inputs.source-directory }}/android/.libnode-cache
+          ${{ inputs.source-directory }}/android/.rg-cache
+          ${{ inputs.source-directory }}/android/.sherpa-cache
+          ${{ inputs.source-directory }}/android/.proot-cache
+        key: v2-fetch-cache-${{ runner.os }}-${{ hashFiles(format('{0}/tools/fetch-libnode.ps1', inputs.source-directory), format('{0}/tools/fetch-rg.ps1', inputs.source-directory), format('{0}/tools/fetch-sherpa.ps1', inputs.source-directory), format('{0}/tools/fetch-proot.ps1', inputs.source-directory)) }}
     - name: 缓存 dsh 装配暂存
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
-        path: android/.dsh-cache/runtime
-        key: v3-dsh-runtime-${{ runner.os }}-${{ hashFiles('tools/bundle-dsh.ps1', 'tools/fetch-libnode.ps1', 'tools/fetch-rg.ps1', 'tools/fetch-sherpa.ps1', 'tools/dsh-phone/**') }}
-    - name: 装配运行时（libnode + dsh）
+        path: ${{ inputs.source-directory }}/android/.dsh-cache/runtime
+        key: v4-dsh-runtime-${{ runner.os }}-${{ hashFiles(format('{0}/tools/bundle-dsh.ps1', inputs.source-directory), format('{0}/tools/dsh-phone/**', inputs.source-directory)) }}
+    - name: 装配运行时（libnode + dsh + 可选 proot）
       shell: pwsh
+      working-directory: ${{ inputs.source-directory }}
       run: |
+        $ErrorActionPreference = "Stop"
         ./tools/fetch-libnode.ps1
         # 模型的 glob / grep 要 ripgrep：bundle-dsh.ps1 会因为缺 .bin/rg 直接 throw
         # （profile 里启用了 tool-fs-search）。产物按 pinned 版本 + sha256 从 release 拉。
@@ -52,4 +62,8 @@ runs:
         # 本地朗读引擎的 native 库（sherpa-onnx）。缺了不会让构建失败，
         # 但本地引擎会静默不可用 —— 与 librg.so 同一类问题。
         ./tools/fetch-sherpa.ps1
+        # marker 是 target 声明的 shipped 能力；旧 tag 没声明时不注入 proot。
+        if (Test-Path -LiteralPath ./android/app/src/main/assets/proot-runtime.json) {
+          ./tools/fetch-proot.ps1
+        }
         ./tools/bundle-dsh.ps1

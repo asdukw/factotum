@@ -1,6 +1,6 @@
 name: Workflow lint
 
-# 只在 workflow / action / Dependabot 配置变动时跑：actionlint 抓语法与表达式注入，
+# workflow / action / 离线回归输入变动时跑：actionlint 抓语法与表达式注入，
 # zizmor 抓未钉 SHA、危险触发器与权限边界。
 on:
   pull_request:
@@ -8,6 +8,12 @@ on:
       - ".github/workflows/**"
       - ".github/actions/**"
       - ".github/dependabot.yml"
+      - "tools/ci/**"
+      - "tools/verify-apk.sh"
+      - "tools/offline-checks/**"
+      - "tools/offline-checks.sh"
+      - "tools/offline-checks/package.json"
+      - "tools/offline-checks/package-lock.json"
   push:
     branches: [master]
     paths: *workflow-paths
@@ -24,6 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+      - name: Workflow 离线回归（不上传、不发布）
+        run: |
+          npm --prefix tools/offline-checks ci --ignore-scripts --no-audit --no-fund
+          node --test tools/ci/*.test.mjs
       - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
           version: 1.7.12

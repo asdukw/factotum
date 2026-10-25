@@ -43,6 +43,9 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
+        with:
+          # Fork PR 没有 secret 时传空值，Gradle 正常构建，只不跨 runner 保存配置缓存。
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       - name: 出包（debug + release）
         working-directory: android

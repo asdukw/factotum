@@ -1,7 +1,6 @@
 name: Release
 
-# 打 tag 就出签名 APK 并发 release。**不走 CI 的常规构建路径**：APK 需要按 pinned 版本拉来的
-# libnode（NDK 编译）+ 装配好的 dsh 运行时，这两步只有这里做（日常 CI 不装 NDK、不拉 libnode）。
+# tag push 或从 master 手动补发历史 tag；触发 workflow 与实际构建源码可以是不同提交。
 on:
   push:
     tags: ["v*"]
@@ -11,7 +10,6 @@ on:
         description: 已存在的 tag 名（补发用）
         required: true
 
-# 同一个 tag 的重跑不并发：两次都可能在 --clobber 同一个 release。
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
@@ -19,7 +17,6 @@ concurrency:
 permissions:
   contents: read
 
-# tag 只在这个 env 里出现，不进 run 脚本插值；下面每一步都会先校验形状。
 env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -27,30 +24,29 @@ jobs:
   build:
     name: 构建并签名
     runs-on: ubuntu-24.04
-    # 签名与 OAuth 凭据应从仓库级 secret 迁到 environment secret（见 docs/releasing.md）。
-    # 环境保护规则只允许 v* tag 部署，并要求人工批准。
+    # 环境允许 v* tag 与手动补发用的 master，并要求人工批准。
     environment: release
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
     steps:
       - name: 校验 tag 形状
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法 tag: $TAG"; exit 1; }
 
-      # 补发（workflow_dispatch）时**必须显式取 tag 指向的 commit**：checkout 默认拿
-      # github.sha = 触发分支的 HEAD，于是「补发一个旧 tag」会静默地出成当前 master 的包 ——
-      # 版本号与 tag 对不上，而且只有真去比对才会发现。tag push 时 ref_name 就是 tag，等价。
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # 两个 sibling checkout，后续 checkout 的 clean 不会删除可信辅助器。
+      # 不能从旧 tag 加载旧版 action/验证器，也不能把新 profile/launcher 复制进旧源码。
+      - name: 取触发 workflow 的可信辅助器
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
-          fetch-depth: 0 # release notes / tag 信息要完整历史
-          submodules: recursive # 设备工具插件在独立仓库
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
           persist-credentials: false
 
-      # Secret 缺失必须在下载 SDK / NDK、装配 runtime 之前失败；否则一次拼写错误会浪费整轮构建时间。
-      # 这里只检查是否非空，绝不打印 secret 值。
+      # 缺项只检查一次，在 SDK/NDK 下载之前失败，绝不打印值。
       - name: 快速检查发布 secrets
         env:
           FACTOTUM_KEYSTORE_BASE64: ${{ secrets.FACTOTUM_KEYSTORE_BASE64 }}
@@ -59,99 +55,70 @@ jobs:
           FACTOTUM_KEY_PASSWORD: ${{ secrets.FACTOTUM_KEY_PASSWORD }}
           FACTOTUM_GMAIL_CLIENT_ID: ${{ secrets.FACTOTUM_GMAIL_CLIENT_ID }}
           FACTOTUM_GMAIL_CLIENT_SECRET: ${{ secrets.FACTOTUM_GMAIL_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for name in \\
-            FACTOTUM_KEYSTORE_BASE64 \\
-            FACTOTUM_KEYSTORE_PASSWORD \\
-            FACTOTUM_KEY_ALIAS \\
-            FACTOTUM_KEY_PASSWORD \\
-            FACTOTUM_GMAIL_CLIENT_ID \\
-            FACTOTUM_GMAIL_CLIENT_SECRET; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::缺少 release environment secret $name"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then exit 1; fi
+        run: bash workflow-tools/tools/ci/release-secrets.sh check
 
-      - uses: ./.github/actions/setup-build # zizmor: ignore[self-repository] actionlint 1.7.12 还不认 $/
-      # tag 与包内版本号是**两处独立的信息**：versionName 来自 build.gradle.kts，tag 来自你推的那个名字。
-      # 忘了改 build.gradle 就会发出「叫 v0.9.0、装上去显示 0.8.0」的包 —— 用户与应用内更新
-      # 都会看错版本（更新检查比的就是 versionName）。组包前先拦一次，比发完再发现便宜得多。
-      - name: tag 与包内 versionName 一致
-        run: |
-          set -euo pipefail
-          WANT="${TAG#v}"
-          GOT=$(grep -oE 'versionName = "[^"]+"' android/app/build.gradle.kts | head -1 | cut -d'"' -f2)
-          echo "tag=$TAG versionName=$GOT"
-          if [ "$WANT" != "$GOT" ]; then
-            echo "::error::tag 是 $TAG，而 build.gradle.kts 里 versionName 是 $GOT —— 先改版本号再打 tag"
-            exit 1
-          fi
+      - name: 取目标 tag 的源码（不接受同名 branch）
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          path: source
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
 
-      - name: 离线自检（审计 / profile / 插件边界）
+      # versionName、签名/Gmail 合同与源码 SHA 都在装配前校验，未知历史合同明确拒绝。
+      - name: 固定源码提交并校验目标构建合同
+        id: source
+        run: node workflow-tools/tools/ci/release-source.mjs resolve source
+
+      - uses: ./workflow-tools/.github/actions/setup-build # zizmor: ignore[self-repository] 可信 workflow checkout
+        with:
+          source-directory: source
+          # 缺键时正常回退，不要求新 secret 或权限。
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      - name: 离线自检（目标 tag 的审计 / profile / 插件边界）
+        working-directory: source
         run: bash tools/offline-checks.sh
 
-      # ① 先过门禁再出包：触发条件是「推了 tag」，不检查那个 commit 的 CI 绿不绿 ——
-      # CI 正红照样能把包装出去。这里跑一遍同样的检查，比查 API 判断「这个 commit 绿了吗」可靠，
-      # 也覆盖「tag 打在一个 CI 从没见过的 commit 上」这种情况。
       - name: 出包前过门禁（与 ci.yml 同一套）
-        working-directory: android
+        working-directory: source/android
         run: ./gradlew spotlessCheck detekt :app:lintDebug :app:testDebugUnitTest --console=plain
 
       - name: 还原签名材料
         env:
-          KEYSTORE_B64: ${{ secrets.FACTOTUM_KEYSTORE_BASE64 }}
-        run: |
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "::error::缺少 secret FACTOTUM_KEYSTORE_BASE64（见 docs/releasing.md）"
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          echo "FACTOTUM_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          FACTOTUM_KEYSTORE_BASE64: ${{ secrets.FACTOTUM_KEYSTORE_BASE64 }}
+        run: bash workflow-tools/tools/ci/release-secrets.sh restore
 
-      # 构建脚本对空值不报错，只会静默退回「要用户自己填 client id」—— 发布包不能这样出去。
-      # 读到空串的常见原因：secret 名字不对，或没配进 `release` 这个 environment（见 docs/releasing.md）。
-      - name: 检查连接器凭据
-        env:
-          FACTOTUM_GMAIL_CLIENT_ID: ${{ secrets.FACTOTUM_GMAIL_CLIENT_ID }}
-          FACTOTUM_GMAIL_CLIENT_SECRET: ${{ secrets.FACTOTUM_GMAIL_CLIENT_SECRET }}
-        run: |
-          for name in FACTOTUM_GMAIL_CLIENT_ID FACTOTUM_GMAIL_CLIENT_SECRET; do
-            if [ -z "${!name}" ]; then
-              echo "::error::缺少 secret $name（见 docs/email-connector.md §4.4）"
-              exit 1
-            fi
-          done
-
-      - name: 出包（签名）
-        working-directory: android
+      - name: 出包（同一签名同时兼容 FACTOTUM / TAPPET Gradle 合同）
+        working-directory: source/android
         env:
           FACTOTUM_KEYSTORE_PASSWORD: ${{ secrets.FACTOTUM_KEYSTORE_PASSWORD }}
           FACTOTUM_KEY_ALIAS: ${{ secrets.FACTOTUM_KEY_ALIAS }}
           FACTOTUM_KEY_PASSWORD: ${{ secrets.FACTOTUM_KEY_PASSWORD }}
-          # 连接器的 OAuth 客户端凭据由这里注入 —— 它们不入库（GitHub 的 push protection
-          # 把这两个值都判成密钥，对管理员一样拦），但**必须进发布产物**，
-          # 否则新装用户要自己去 Google Cloud 注册应用。见 docs/email-connector.md §4.1b。
           FACTOTUM_GMAIL_CLIENT_ID: ${{ secrets.FACTOTUM_GMAIL_CLIENT_ID }}
           FACTOTUM_GMAIL_CLIENT_SECRET: ${{ secrets.FACTOTUM_GMAIL_CLIENT_SECRET }}
-        run: ./gradlew :app:assembleRelease --console=plain
+        run: bash "$GITHUB_WORKSPACE/workflow-tools/tools/ci/release-secrets.sh" assemble
 
-      - name: 验签 + 包里不该有密钥
+      - name: 清理临时 keystore（构建失败也执行）
+        if: always()
+        run: |
+          if [ -n "${FACTOTUM_KEYSTORE_FILE:-}" ]; then rm -f -- "$FACTOTUM_KEYSTORE_FILE"; fi
+
+      - name: 可信验签 + 结构 + 包内密钥扫描
+        working-directory: source
         run: |
           set -euo pipefail
-          APK=android/app/build/outputs/apk/release/app-release.apk
-          bash tools/verify-apk.sh "$APK" --scan-secrets
+          PROOT=absent
+          if [ -f android/app/src/main/assets/proot-runtime.json ]; then PROOT=required; fi
+          bash "$GITHUB_WORKSPACE/workflow-tools/tools/verify-apk.sh" android/app/build/outputs/apk/release/app-release.apk --scan-secrets "--proot=$PROOT"
 
       - name: 暂存 release 资产
         run: |
           set -euo pipefail
           mkdir -p release-artifacts
-          APK=android/app/build/outputs/apk/release/app-release.apk
           ASSET="factotum-$TAG-arm64-v8a.apk"
-          cp "$APK" "release-artifacts/$ASSET"
+          cp source/android/app/build/outputs/apk/release/app-release.apk "release-artifacts/$ASSET"
           (cd release-artifacts && sha256sum "$ASSET" > "$ASSET.sha256")
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -166,28 +133,49 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write # 只在这一步创建 release
-      id-token: write # build provenance
-      attestations: write # 存 provenance attestation
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
     steps:
       - name: 校验 tag 形状
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法 tag: $TAG"; exit 1; }
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: 取触发 workflow 的可信辅助器
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
           persist-credentials: false
+
+      - name: 只取 build 已固定的源码 commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+
+      - name: tag 仍指向构建提交才允许证明和发布
+        run: node workflow-tools/tools/ci/release-source.mjs verify-tag source
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-artifacts
           path: release-artifacts
 
+      - name: 生成实际源码的 SLSA v1 predicate（保留真实触发 workflow）
+        env:
+          WORKFLOW_DIRECTORY: workflow-tools
+        run: node workflow-tools/tools/ci/release-source.mjs provenance source release-provenance.json
+
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release-artifacts/*.apk
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: release-provenance.json
 
       - name: 写 job summary
         run: |
@@ -196,23 +184,13 @@ jobs:
           {
             echo "### Release $TAG"
             echo ""
+            echo "- Source commit: $SOURCE_SHA"
             echo "- APK: $(stat -c%s "release-artifacts/$ASSET") bytes"
             echo "- SHA-256: \`$(cut -d' ' -f1 "release-artifacts/$ASSET.sha256")\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 发 release
+      - name: 发 release（已有 draft 也会公开，保留幂等与说明）
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ASSET="factotum-$TAG-arm64-v8a.apk"
-          NOTES="docs/releases/$TAG.md"
-          # **幂等**：重跑时 release 可能已经存在（上一次跑到一半、或重新打过 tag）。
-          # 以前这里直接 create，第二次必然失败在 "already exists"，而失败发生在
-          # 「包已经签好、结构也验过」之后 —— 白跑一整轮。
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber "release-artifacts/$ASSET" "release-artifacts/$ASSET.sha256"
-          else
-            if [ -f "$NOTES" ]; then ARGS=(--notes-file "$NOTES"); else ARGS=(--generate-notes); fi
-            gh release create "$TAG" --verify-tag --title "$TAG" "${ARGS[@]}" "release-artifacts/$ASSET" "release-artifacts/$ASSET.sha256"
-          fi
+          GH_REPO: ${{ github.repository }}
+        run: node workflow-tools/tools/ci/release-publish.mjs source release-artifacts

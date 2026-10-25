@@ -2,17 +2,20 @@
 
 **什么时候读**：动 `.github/workflows/`、发 `v*` tag、改签名材料之前。
 
-## 1. 四个 workflow
+## 1. 六个 workflow
 
 | workflow | 触发 | 干什么 |
 |---|---|---|
 | `ci.yml` | push master / PR | 先判变更范围；代码改动跑静态检查、单测 + androidTest 编译、离线自检，纯文档改动跳过重活 |
-| `assemble.yml` | 装配相关路径变动时 | 拉 libnode → 装配 dsh → NDK 出 debug 包 → **验产物结构**（native 库在不在、运行时资产是不是真 zip） |
+| `assemble.yml` | 装配相关路径变动时 | 拉 libnode / rg / sherpa / proot → 装配 dsh → NDK 出 debug / release 包 → **验产物结构**（native 库在不在、运行时资产是不是真 zip） |
 | `codeql.yml` | `android/**` 或本文件变动 / 每周 | 语义级安全扫描 |
 | `release.yml` | 推 `v*` tag / 手动补发 | **先过门禁** → 装配 → 签名出包 → 验签 + 扫包内密钥；构建与发布拆成两个 job，构建在 `release` environment 里等人工批准 |
+| `rg.yml` | 手动触发 | 交叉编译固定版本 ripgrep，校验后发布不可变辅助资产，不参与应用 Latest |
+| `workflow-lint.yml` | workflow / action / CI helper 变更及手动触发 | 离线回归、actionlint + ShellCheck、zizmor |
 
 - **CI 绿 ≠ 能用**：无障碍执行层、内嵌 Node 启动、真实任务只能在真机上验证。
-  日常 CI 不装 NDK（那 ~1.5GB 只有 `assemble.yml` 与 `release.yml` 需要，按版本缓存）。
+  日常 CI 不装 NDK；`assemble.yml` 与 `release.yml` 按版本安装，利用 runner 已预装的同版本包，
+  不向 root-owned SDK 目录恢复 NDK/CMake 缓存。
 - **出包之后要验产物本身**，不能只看退出码：v0.1.0 第一次出的 APK 构建成功、装到设备上才炸
   （Linux 的 GNU tar 写不了 zip，产物是改了后缀的 tar），第二次又缺 `libc++_shared.so`。
   `assemble.yml` 就是为这两次教训加的。
@@ -25,8 +28,10 @@
 - **release 的写权限只在 publish job**：build 只读并产出 artifact，publish 才拿 `contents: write`；
   `rg.yml` 同样拆成 build / publish。
 - **assemble 与 release 共用装配入口**：`.github/actions/setup-build` 负责 JDK / Node / Android /
-  Gradle、NDK/CMake 与 fetch 缓存、dsh 装配；产物校验统一走 `tools/verify-apk.sh`
-  （release 加 `--scan-secrets`）。两条路都钉 `ubuntu-24.04`，`apksigner` 用显式安装的
+  Gradle、NDK/CMake 安装、fetch 缓存、dsh 与声明的 proot 载荷装配；支持 `source-directory`
+  指向目标源码。产物校验统一走可信版本的 `tools/verify-apk.sh`（release 加 `--scan-secrets`），
+  要求 native 库与资产非空、APK 与内层 dsh ZIP 完整；当前源码必须带齐 proot 库、rootfs 和 marker。
+  两条路都钉 `ubuntu-24.04`，`apksigner` 用显式安装的
   build-tools 36.0.0，不再用 `sort -V` 猜最新。
 
 ### 分支保护与 push protection
@@ -51,7 +56,17 @@
 3. 打 `v*` tag → 出签名 APK，附 `factotum-<tag>-arm64-v8a.apk` 与 `.sha256`。
    build job 会停在 `release` environment 等人工批准；批准后才读签名密钥、出包。
 
-- 发布物附带 build provenance（`actions/attest-build-provenance`），验证：
+- **手动补发与源码身份**：构建目标用完整 `refs/tags/<tag>` 解析为固定提交，publish 使用同一提交，
+  发布前核验远端 tag 未移动。编排与校验辅助器来自触发工作流的 `github.workflow_sha`，
+  目标源码和装配脚本来自所选标签，不用旧标签的 workflow / APK 验证器。
+  历史标签读取 `TAPPET_*` 的构建合同由现有 `FACTOTUM_*` secrets 的环境变量别名兼容，
+  不新增历史 secret、不改变应用身份。未声明 proot 的历史源码显式使用 `--proot=absent`；
+  当前声明该能力的源码仍必须完整装配，不能借兼容模式绕过检查。
+- 已有 draft release 的重试在资产上传成功后公开发布；已有公开 release 仍按应用包重发约定处理。
+- **辅助 rg 资产不可变**：发布显式指定仓库并设置 `--latest=false`；同版本重跑比较远端真实资产字节，
+  相同才幂等，不同则失败而不覆盖。需要变更二进制时使用新的版本标识，并同步消费者钉住的 SHA。
+- 发布物附带 build provenance（`actions/attest-build-provenance`）：来源依赖明确记录实际标签提交，
+  工作流 / builder 保留真实触发工作流版本，不把 master dispatch 伪装成 tag 触发。验证：
   `gh attestation verify <apk> --repo asdukw/factotum`。建议在仓库设置里开启 **Immutable
   releases**；开启后资产不可覆盖，重发要先删 release（当前的 `--clobber` 会被拒）。
 - publish job 的 summary 里会写 APK 大小与 SHA-256；`.sha256` 同时作为 release 资产发布。
@@ -80,6 +95,13 @@
 
   迁移完成前仓库级 secret 仍然可用（GitHub 会同时提供给带 environment 的 job），所以不会把
   发版打断；但只有删掉仓库级那一份，PR workflow 才真正读不到它们。
+
+### 可选的 Gradle configuration cache
+
+`setup-gradle` 接收可选的 `GRADLE_ENCRYPTION_KEY` secret，用于跨 runner 安全保存 / 恢复配置缓存。
+需要启用时由维护者生成并配置 base64 AES key；release job 从其 `release` environment 读取可用值。
+未配置或不可信 fork 无 secret 时正常退回无配置缓存，不影响检查与构建。
+这不是签名所需的第七项必填 secret；不得为启用缓存扩大 fork 的 secret 访问权限。
 
 ## 4. 发之前至少跑
 

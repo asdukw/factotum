@@ -12,6 +12,8 @@ node tools/audit/selftest.mjs
 
 # js-yaml 的版本锁在 tools/offline-checks/package-lock.json；--ignore-scripts 挡住安装脚本。
 npm --prefix tools/offline-checks ci --ignore-scripts --no-audit --no-fund
+# workflow 脚本和 APK 载荷契约也必须在发版前离线回归。
+node --test tools/ci/*.test.mjs
 node tools/dsh-phone/check-profile.mjs tools/dsh-phone/profile/cordis.patch.yml tools/offline-checks/node_modules
 
 # 连接器的「只读」与「令牌不外泄」两条承诺靠插件测试守住。

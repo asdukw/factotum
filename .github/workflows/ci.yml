@@ -31,26 +31,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
       - id: filter
         name: 判断是否只有文档
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] ||
-             [ -z "${BASE_SHA:-}" ] ||
-             [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ] ||
-             ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-          if printf '%s\n' "$changed" | grep -vE '^(docs/|.*\.md$|LICENSE$)' | grep -q .; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "code=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: node tools/ci/changes-scope.mjs
 
   quality:
     name: 静态检查（ktlint / detekt / Android Lint）
@@ -75,6 +64,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           validate-wrappers: true
+          # 可选：fork PR 没有 secret 时为空，setup-gradle 自动跳过配置缓存加密。
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
       # 不装 NDK / CMake：这三关都不碰 native 构建（实测任务图里没有 cmake 任务），
       # 而 NDK 要下 ~1GB。APK 的装配另有本地流程（tools/fetch-libnode.ps1 + bundle-dsh.ps1）。
       - name: 门禁
@@ -123,6 +114,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           validate-wrappers: true
+          # 可选：fork PR 没有 secret 时为空，setup-gradle 自动跳过配置缓存加密。
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
       # 顺带编译 androidTest：Lint 默认**不看**测试源码（checkTestSources 关着），
       # 不编一遍的话那两个真机测试文件在 CI 里等于没人管。
       - name: 单测 + androidTest 编译

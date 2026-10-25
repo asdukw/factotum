@@ -54,6 +54,8 @@ jobs:
       contents: read
     env:
       NDK_VERSION: "29.0.14206865"
+      # 不向 runner 预装的 root-owned SDK 路径恢复 tar 元数据。
+      RG_ANDROID_SDK_ROOT: ${{ github.workspace }}/.ci-sdk-owned
       # 与 android/app/build.gradle.kts 的 minSdk 对齐；NDK 里可用的最低 API level 是 21。
       ANDROID_API: "24"
     steps:
@@ -69,29 +71,34 @@ jobs:
       - name: 缓存 NDK
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
-          key: android-ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+          path: ${{ env.RG_ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
+          key: rg-user-owned-ndk-v1-${{ runner.os }}-${{ env.NDK_VERSION }}
       - name: 装 NDK
-        run: sdkmanager "ndk;${{ env.NDK_VERSION }}"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RG_ANDROID_SDK_ROOT/licenses"
+          cp -R "$ANDROID_HOME/licenses/." "$RG_ANDROID_SDK_ROOT/licenses/"
+          sdkmanager --sdk_root="$RG_ANDROID_SDK_ROOT" "ndk;$NDK_VERSION"
 
-      # ubuntu runner 自带 rustup；只补一个交叉 target。
+      # ubuntu runner 自带 rustup。stable 仍浮动；--locked 固定 crate 依赖，
+      # 同版本字节不一致由 publish 的不可变资产检查拒绝，不承诺重编可复现。
       - name: 装 Rust 交叉 target
         run: |
           rustup toolchain install stable --profile minimal
           rustup target add --toolchain stable aarch64-linux-android
-          rustc --version
+          rustc +stable --version
 
       - name: 交叉编译
         run: |
           set -euo pipefail
-          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_BIN="$RG_ANDROID_SDK_ROOT/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
           export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
           # --profile release-lto 是 ripgrep 自己定义的 profile：fat LTO + strip symbols +
           # panic=abort + 单 codegen unit。默认的 release profile 只设了 debug = 1，
           # 出来的二进制又大又带符号。
-          cargo install ripgrep --version "$VERSION" \
+          cargo +stable install ripgrep --locked --version "$VERSION" \
             --target aarch64-linux-android --profile release-lto --root "$PWD/out"
           ls -la out/bin/
 
@@ -102,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           RG=out/bin/rg
-          NDK_BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_BIN="$RG_ANDROID_SDK_ROOT/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "workspace=$PWD"; ls -la out/bin/ || true
           echo "readelf=$NDK_BIN/llvm-readelf"; ls -la "$NDK_BIN/llvm-readelf" || true
           READELF="$NDK_BIN/llvm-readelf"
@@ -145,24 +152,23 @@ jobs:
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::非法版本: $VERSION"; exit 1; }
 
+      # Helper 是 workflow 同一可信 dispatch 提交中的源码，不从构建 artifact 执行脚本。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rg-artifacts
           path: rg-artifacts
 
-      - name: 发 release 产物
+      - name: 发 release 产物（固定版本不可变，不占应用 Latest）
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="rg-$VERSION"
-          RG=rg-artifacts/rg-aarch64-linux-android
-          SHA=rg-artifacts/rg-aarch64-linux-android.sha256
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber "$RG" "$SHA"
-          else
-            gh release create "$TAG" \
-              --title "ripgrep $VERSION (aarch64-linux-android)" \
-              --notes "交叉编译给 Factotum 内嵌运行时用的 ripgrep。默认特性（无 pcre2），自包含，只依赖 bionic 的 libc/libdl。供 tools/fetch-rg.ps1 按版本下载，产物不入库。" \
-              "$RG" "$SHA"
-          fi
+          GH_REPO: ${{ github.repository }}
+        run: node tools/ci/rg-publish.mjs rg-artifacts

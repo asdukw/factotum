@@ -77,11 +77,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -96,6 +98,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.AgentModelSwitcher
 import com.tappet.app.agent.ApprovalHub
+import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.ChatMessage
 import com.tappet.app.agent.ChatRole
@@ -118,6 +121,7 @@ import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.node.NodeRuntime
 import com.tappet.app.ui.components.ProviderModelIcon
+import com.tappet.app.ui.settings.ChevronRight
 import com.tappet.app.voice.RecognizedText
 import com.tappet.app.voice.VoiceInput
 import com.tappet.app.voice.VoiceReader
@@ -144,6 +148,7 @@ fun ChatScreen(
   modifier: Modifier = Modifier,
   onOpenCharacters: () -> Unit = {},
   onOpenPersona: () -> Unit = {},
+  onOpenCharacterDetail: (String) -> Unit = {},
   store: SessionStore = LocalContext.current.tappetSessionStore(),
 ) {
   val appContext = LocalContext.current.applicationContext
@@ -155,9 +160,12 @@ fun ChatScreen(
       streamer = DshStreamer(appContext),
       store = store,
       switcher = AgentModelSwitcher(appContext),
+      // 回前台时重读一次配置：设置页里换了模型 / 填了新 key，顶栏不该还写着旧的。
+      configSource = { AgentConfigStore.current(appContext) },
       roleplay =
         RoleplayBinding(
           characters = { CharacterStore.cards(appContext) },
+          pins = { CharacterPins.pinned(appContext) },
           // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
           // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。
           switcher = { characterId ->
@@ -179,6 +187,11 @@ fun ChatScreen(
     onSession = viewModel::openSession,
     onNormal = viewModel.roleplayActions::leave,
   )
+  // 同一处再对齐一次外部状态：收藏 / 模型是在别的页面改的，回来时列表要按新状态重排。
+  LifecycleResumeEffect(Unit) {
+    viewModel.resumeRefresh()
+    onPauseOrDispose {}
+  }
   ChatScreen(
     state = state,
     onInputChange = viewModel::onInputChange,
@@ -193,6 +206,7 @@ fun ChatScreen(
     onOpenSettings = onOpenSettings,
     onOpenCharacters = onOpenCharacters,
     onOpenPersona = onOpenPersona,
+    onOpenCharacterDetail = onOpenCharacterDetail,
     onSwitchModel = viewModel.modelSwitch::switch,
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
     modifier = modifier,
@@ -232,6 +246,7 @@ internal fun ChatScreen(
   onOpenSettings: () -> Unit = {},
   onOpenCharacters: () -> Unit = {},
   onOpenPersona: () -> Unit = {},
+  onOpenCharacterDetail: (String) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -242,21 +257,7 @@ internal fun ChatScreen(
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
 
-  // 会话一开始跑就收起软键盘。
-  // 理由不是「看着清爽」：agent 接下来要在屏幕上操作（读屏 / 截图 / 点按），
-  // 键盘既占掉小半屏，又会让 IME 窗口出现在控件树与截图里 —— 模型会把键盘本身
-  // 当成页面内容的一部分，去点一个并不存在的按钮。
-  // 挂在 isStreaming 而不是「点了发送」上：重载运行时、恢复中断的会话等路径也会进入
-  // 流式状态，这样一处覆盖得到。
-  LaunchedEffect(state.isStreaming) {
-    if (state.isStreaming) {
-      keyboard?.hide()
-      focus.clearFocus()
-      // 新的任务开始了，上一条还在念的话立刻停 —— 用户接下来要看的是新回复，
-      // 旧回复的声音会和新的正文抢注意力。
-      VoiceReader.stop()
-    }
-  }
+  HideKeyboardWhileStreaming(streaming = state.isStreaming, keyboard = keyboard, focus = focus)
 
   // 模型提问（`ask_user_question`）：面板浮在聊天之上。
   // 状态在 `UserQuestionHub` 这个单例里，不在 ViewModel —— 桥那边挂起的协程属于进程，
@@ -272,6 +273,14 @@ internal fun ChatScreen(
       modelSheetOpen = false
       pendingSwitch = false
     }
+  }
+
+  // 抽屉里也能打开模型切换：酒馆里换模型是常见动作（便宜的跑日常、好的跑角色），
+  // 不该先关掉抽屉再去输入框找那个入口。
+  val openModelSwitch: () -> Unit = {
+    modelChoices = onPrepareModelSwitch()
+    modelSheetOpen = true
+    scope.launch { drawerState.close() }
   }
 
   ModalNavigationDrawer(
@@ -295,6 +304,8 @@ internal fun ChatScreen(
         onOpenCharacters = closeThen(scope, drawerState, onOpenCharacters),
         onOpenPersona = closeThen(scope, drawerState, onOpenPersona),
         onOpenSettings = closeThen(scope, drawerState, onOpenSettings),
+        onOpenCharacterDetail = closeThen(scope, drawerState) { id -> onOpenCharacterDetail(id) },
+        onOpenModelSwitch = openModelSwitch,
       )
     },
   ) {
@@ -333,7 +344,30 @@ internal fun ChatScreen(
 }
 
 /**
- * 朗读失败的提示只在屏幕上停一会儿：它是提示，不是需要用户处理的错误。
+ * 会话一开始跑就收起软键盘。
+ *
+ * 理由不是「看着清爽」：agent 接下来要在屏幕上操作（读屏 / 截图 / 点按），键盘既占掉小半屏，
+ * 又会让 IME 窗口出现在控件树与截图里 —— 模型会把键盘本身当成页面内容的一部分，去点一个
+ * 并不存在的按钮。挂在 isStreaming 而不是「点了发送」上：重载运行时、恢复中断的会话等路径
+ * 也会进入流式状态，这样一处覆盖得到。
+ */
+@Composable
+private fun HideKeyboardWhileStreaming(
+  streaming: Boolean,
+  keyboard: SoftwareKeyboardController?,
+  focus: FocusManager,
+) {
+  LaunchedEffect(streaming) {
+    if (!streaming) return@LaunchedEffect
+    keyboard?.hide()
+    focus.clearFocus()
+    // 新的任务开始了，上一条还在念的话立刻停 —— 用户接下来要看的是新回复，
+    // 旧回复的声音会和新的正文抢注意力。
+    VoiceReader.stop()
+  }
+}
+
+/** 朗读失败的提示只在屏幕上停一会儿：它是提示，不是需要用户处理的错误。
  *
  * 单独一个 composable 是为了让它没有布局职责 —— 效果与界面混在一起时，
  * 「这个分支到底影响布局还是只影响副作用」读不出来。
@@ -953,6 +987,7 @@ private fun RoleplayList(
   onOpenSession: (String) -> Unit,
   onRequestDelete: (ChatSession) -> Unit,
   onOpenCharacters: () -> Unit,
+  onOpenCharacterDetail: (String) -> Unit = {},
 ) {
   if (groups.isEmpty()) {
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -986,6 +1021,7 @@ private fun RoleplayList(
           enabled = enabled,
           onOpen = { onOpenRoleplay(group.characterId) },
           onNew = { onNewRoleplaySession(group.characterId) },
+          onDetail = { onOpenCharacterDetail(group.characterId) },
         )
       }
       items(items = group.sessions, key = { it.id }) { session ->
@@ -1008,6 +1044,7 @@ private fun RoleplayHeader(
   enabled: Boolean,
   onOpen: () -> Unit,
   onNew: () -> Unit,
+  onDetail: () -> Unit = {},
 ) {
   val subtitle =
     when {
@@ -1025,7 +1062,8 @@ private fun RoleplayHeader(
     ) {
       Column(Modifier.weight(1f)) {
         Text(
-          text = group.name,
+          // 收藏的卡带一个星号：侧栏一排名字时，这是唯一能一眼看出「哪张是我常用的」的记号。
+          text = if (group.pinned) "★ ${group.name}" else group.name,
           style = MaterialTheme.typography.bodyMedium,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -1038,6 +1076,8 @@ private fun RoleplayHeader(
           overflow = TextOverflow.Ellipsis,
         )
       }
+      // 去详情页：人设、开场、世界设定都在那儿，和「开新会话」是两个动作。
+      IconButton(onClick = onDetail, enabled = enabled) { ChevronRight() }
       IconButton(onClick = onNew, enabled = enabled) {
         PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
       }
@@ -1062,6 +1102,8 @@ private fun SessionDrawer(
   onOpenCharacters: () -> Unit,
   onOpenPersona: () -> Unit,
   onOpenSettings: () -> Unit,
+  onOpenCharacterDetail: (String) -> Unit = {},
+  onOpenModelSwitch: () -> Unit = {},
 ) {
   var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
   // 在酒馆会话里打开侧栏时直接落在酒馆分区：不然用户要自己找自己在哪。
@@ -1106,6 +1148,7 @@ private fun SessionDrawer(
             onOpenSession = onOpenSession,
             onRequestDelete = { pendingDelete = it },
             onOpenCharacters = onOpenCharacters,
+            onOpenCharacterDetail = onOpenCharacterDetail,
           )
       }
 
@@ -1115,6 +1158,7 @@ private fun SessionDrawer(
         onOpenCharacters = onOpenCharacters,
         onOpenPersona = onOpenPersona,
         onOpenSettings = onOpenSettings,
+        onOpenModelSwitch = onOpenModelSwitch,
       )
     }
   }
@@ -1152,6 +1196,7 @@ private fun DrawerFooter(
   onOpenCharacters: () -> Unit,
   onOpenPersona: () -> Unit,
   onOpenSettings: () -> Unit,
+  onOpenModelSwitch: () -> Unit,
 ) {
   HorizontalDivider(Modifier.padding(vertical = 8.dp))
   if (roleplayEntries) {
@@ -1159,6 +1204,10 @@ private fun DrawerFooter(
       PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     DrawerNavRow(label = "人格设置", onClick = onOpenPersona) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    // 酒馆里的模型入口：每段会话会记住自己用哪个模型（回来时自动装回去）。
+    DrawerNavRow(label = "本段会话的模型", onClick = onOpenModelSwitch) {
       PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }

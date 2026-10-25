@@ -47,6 +47,8 @@ data class RoleplayGroup(
   val name: String,
   val tagline: String,
   val sessions: List<ChatSession>,
+  /** 收藏（置顶）：侧栏排在最前，行首带一个记号。 */
+  val pinned: Boolean = false,
 ) {
   val latest: ChatSession? get() = sessions.firstOrNull()
   val isEmpty: Boolean get() = sessions.isEmpty()
@@ -73,6 +75,8 @@ data class ChatTiming(
 data class RoleplayBinding(
   val characters: () -> List<CharacterCard> = { emptyList() },
   val switcher: RoleSwitcher? = null,
+  /** 收藏（置顶）的卡 id，最近收藏在前；侧栏按它把收藏的排到最前。 */
+  val pins: () -> List<String> = { emptyList() },
 )
 
 data class ChatUiState(
@@ -138,6 +142,11 @@ class ChatViewModel(
   private val switcher: ModelSwitcher? = null,
   /** 酒馆相关的两个依赖（角色卡来源 + 载体切换），打包成一个参数免得构造签名无限变长。 */
   private val roleplay: RoleplayBinding = RoleplayBinding(),
+  /**
+   * 重新读一份当前配置（设置页里换了模型 / 密钥之后，聊天页顶栏要跟着变）。
+   * 传函数而不是传 Context：ViewModel 不持有 Context，也不会常驻一份明文密钥。
+   */
+  private val configSource: () -> AgentConfig? = { null },
 ) : ViewModel() {
   private val reasoningLabel = config.reasoningEffort ?: "默认"
 
@@ -153,6 +162,29 @@ class ChatViewModel(
     )
   val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
+  /** 会话级模型：切开 / 装回都记在会话上（运行时只有一个模型，这里存的是「当时用的是哪个」）。 */
+  private val sessionModels =
+    SessionModels(
+      switcher = switcher,
+      store = store,
+      scope = viewModelScope,
+      now = { _state.value.model },
+      // 进会话自动装回模型时，顶栏那一行要跟着换（走切换器的那条路自己会更新状态，
+      // 这条路绕过了它）。写成行内是为了不再多一个方法 —— 方法数已到阈值边缘。
+      onApplied = { choice ->
+        _state.update {
+          it.copy(
+            providerId = choice.providerId,
+            providerName = choice.providerName,
+            model = choice.model,
+            configured = true,
+            configSummary = "${choice.model} · $reasoningLabel",
+          )
+        }
+      },
+      reportFailure = { message -> _state.update { it.copy(switchError = message) } },
+    )
+
   /** 聊天页的模型切换状态机（读候选 / 落盘 / 重载运行时）。 */
   val modelSwitch =
     ChatModelSwitchController(
@@ -162,6 +194,7 @@ class ChatViewModel(
       snapshot = { _state.value },
       update = { transform -> _state.update(transform) },
       ioDispatcher = timing.dispatcher,
+      onApplied = { choice -> sessionModels.remember(_state.value.sessionId, choice.model) },
     )
 
   /** 酒馆分区的会话操作（新开 / 回到 / 退出）。 */
@@ -191,7 +224,8 @@ class ChatViewModel(
         // 跑一次；而切到 IO 会让这个 flow 变成跨调度器的长生命周期协程 —— 单测里 runTest 结束
         // 后它还在跑，异常会漏到下一个用例（UncaughtExceptionsBeforeTest）。
         val cards = runCatching { roleplay.characters() }.getOrDefault(emptyList())
-        val groups = groupRoleplaySessions(sessions, cards)
+        val pins = runCatching { roleplay.pins() }.getOrDefault(emptyList())
+        val groups = groupRoleplaySessions(sessions, cards, pins)
         _state.update { state ->
           val name = groups.firstOrNull { group -> group.characterId == state.activeCharacterId }?.name
           state.copy(
@@ -410,6 +444,27 @@ class ChatViewModel(
     }
   }
 
+  // 回到聊天页时对齐外部状态：设置页与角色页是压栈进来的，在那里换了模型、收藏了角色，
+  // 聊天页的 state 还是旧的 —— 顶栏写着上一个模型、收藏的角色没排到前面。重进时对齐一次，
+  // 比到处发广播简单。写成属性而不是方法，是因为这个类的方法数正压在 detekt 阈值上。
+  val resumeRefresh: () -> Unit = {
+    configSource()?.let { fresh ->
+      _state.update {
+        it.copy(
+          configured = fresh.isConfigured,
+          providerId = fresh.preset.id,
+          providerName = fresh.preset.label,
+          model = fresh.model,
+          configSummary = fresh.shortSummary(),
+        )
+      }
+    }
+    val cards = runCatching { roleplay.characters() }.getOrDefault(emptyList())
+    val pins = runCatching { roleplay.pins() }.getOrDefault(emptyList())
+    val groups = groupRoleplaySessions(_state.value.sessions, cards, pins)
+    _state.update { it.copy(roleplayGroups = groups) }
+  }
+
   /**
    * 切会话 = 切「谁在说话」+ 换历史。
    *
@@ -431,6 +486,8 @@ class ChatViewModel(
       activatedCharacterId = target
       roleActivated = true
     }
+    // 这段会话上次用的是别的模型就装回去（同模型不白 reload）。
+    sessionModels.restore(session)
     loadSession(session.id)
     _state.update { state ->
       // 名字从角色表里取，不从会话标题取：标题是「第一句话」，不是卡名。

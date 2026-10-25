@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.CharacterCard
+import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
 
 /**
@@ -38,7 +39,11 @@ import com.tappet.app.agent.CharacterStore
  * 免得用户以为是坏了而不是还没做。
  */
 @Composable
-fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modifier = Modifier) {
+fun CharacterScreen(
+  onBack: () -> Unit,
+  onOpenDetail: (String) -> Unit = {},
+  modifier: Modifier = Modifier,
+) {
   val appContext = LocalContext.current.applicationContext
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
@@ -51,8 +56,6 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
   CharacterScreen(
     state = state,
     onBack = onBack,
-    // 建完会话再回聊天页：交接先落地，聊天页才会打开它。
-    onStart = { id -> viewModel.start(id) { onStartChat() } },
     onStop = viewModel::stop,
     onImport = {
       // 有的网盘/文件管理器把 png 报成 octet-stream，所以给一组，别只写 image/png
@@ -60,6 +63,8 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
     },
     onDelete = viewModel::delete,
     onDismissMessage = viewModel::consumeMessage,
+    // 点一行进详情页：卡里存着人设 / 开场 / 世界设定，直接开聊等于逼用户先聊再判断。
+    onOpenDetail = onOpenDetail,
     modifier = modifier,
   )
 }
@@ -68,13 +73,14 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
 internal fun CharacterScreen(
   state: CharacterViewModel.UiState,
   onBack: () -> Unit,
-  onStart: (String) -> Unit,
   onStop: () -> Unit,
   onImport: () -> Unit = {},
   onDelete: (String) -> Unit = {},
   onDismissMessage: () -> Unit = {},
+  onOpenDetail: (String) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
+  val appContext = LocalContext.current.applicationContext
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
       SettingsHeader(title = "角色", onBack = onBack)
@@ -104,7 +110,8 @@ internal fun CharacterScreen(
         CardList(
           cards = state.cards,
           activeId = state.activeId,
-          onStart = onStart,
+          pins = CharacterPins.pinned(appContext),
+          onOpen = onOpenDetail,
           onDelete = onDelete,
         )
 
@@ -191,7 +198,8 @@ private fun EmptyCards() {
 private fun CardList(
   cards: List<CharacterCard>,
   activeId: String?,
-  onStart: (String) -> Unit,
+  pins: List<String>,
+  onOpen: (String) -> Unit,
   onDelete: (String) -> Unit,
 ) {
   if (cards.isEmpty()) {
@@ -203,9 +211,10 @@ private fun CardList(
       if (index > 0) SettingsDivider()
       SettingsRow(
         glyph = GlyphKind.Person,
-        title = card.name,
+        // 收藏的卡在列表里也带个记号，不然点进详情才知道自己收藏过。
+        title = if (card.id in pins) "★ ${card.name}" else card.name,
         subtitle = card.tagline.ifEmpty { card.tags.joinToString(" · ") },
-        onClick = { onStart(card.id) },
+        onClick = { onOpen(card.id) },
         trailing = {
           if (card.id == activeId) StatusBadge("扮演中", BadgeTone.Enabled)
           // 内置卡在 assets 里删不掉，所以只给导入的卡显示删除

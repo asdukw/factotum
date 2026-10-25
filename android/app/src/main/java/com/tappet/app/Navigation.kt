@@ -5,6 +5,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.tappet.app.ui.chat.ChatScreen
+import com.tappet.app.ui.settings.CharacterDetailScreen
 import com.tappet.app.ui.settings.CharacterScreen
 import com.tappet.app.ui.settings.ConnectorsScreen
 import com.tappet.app.ui.settings.GmailConnectorScreen
@@ -31,6 +32,7 @@ fun MainNavigation() {
             // 酒馆侧栏的两个入口：直接进角色库 / 人格页，不必绕设置。
             onOpenCharacters = { backStack.add(Characters) },
             onOpenPersona = { backStack.add(Persona) },
+            onOpenCharacterDetail = { id -> backStack.add(CharacterDetail(id)) },
           )
         }
         entry<Settings> {
@@ -78,9 +80,16 @@ fun MainNavigation() {
           PersonaScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<Characters> {
+          // 开始对话这件事交给详情页：点一行先看卡在演什么，再决定要不要开。
           CharacterScreen(
             onBack = { backStack.removeLastOrNull() },
-            // 开始扮演后直接回聊天页：用户点这一下是想马上说话，不是想在设置里看结果。
+            onOpenDetail = { id -> backStack.add(CharacterDetail(id)) },
+          )
+        }
+        entry<CharacterDetail> { key ->
+          CharacterDetailScreen(
+            characterId = key.characterId,
+            onBack = { backStack.removeLastOrNull() },
             onStartChat = { repeat(backStack.size - 1) { backStack.removeLastOrNull() } },
           )
         }

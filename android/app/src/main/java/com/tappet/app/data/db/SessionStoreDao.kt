@@ -19,10 +19,6 @@ abstract class SessionStoreDao {
   @Query("SELECT * FROM session WHERE kind = :kind ORDER BY updated_at DESC LIMIT 1")
   abstract suspend fun latestSession(kind: SessionKind): SessionEntity?
 
-  /** 最近一段「人会回到」的会话：日常或酒馆，不含后台任务记录。 */
-  @Query("SELECT * FROM session WHERE kind != 'Background' ORDER BY updated_at DESC LIMIT 1")
-  abstract suspend fun latestAnySession(): SessionEntity?
-
   @Query("SELECT * FROM session WHERE id = :id")
   abstract suspend fun session(id: String): SessionEntity?
 
@@ -37,6 +33,9 @@ abstract class SessionStoreDao {
   /** 只在标题还空着时写入，避免后来的消息覆盖用户改过的标题。 */
   @Query("UPDATE session SET title = :title WHERE id = :id AND title IS NULL")
   abstract suspend fun titleIfEmpty(id: String, title: String)
+
+  @Query("UPDATE session SET model = :model WHERE id = :id")
+  abstract suspend fun setModel(id: String, model: String?)
 
   @Query("UPDATE session SET excluded = :excluded WHERE id = :id")
   abstract suspend fun setExcluded(id: String, excluded: Boolean)

@@ -11,6 +11,7 @@ import com.tappet.app.agent.requestApiKey
 import com.tappet.app.agent.saveRemoteModels
 import com.tappet.app.agent.saveSelectedModels
 import com.tappet.app.agent.setModel
+import com.tappet.app.node.NodeRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +55,11 @@ internal class ProviderDetailViewModel(
     val fetchError: String? = null,
     val tab: DetailTab = DetailTab.Config,
     val error: String? = null,
+    /** 正在把改动推给运行时（cordis remount，不重启 App）。 */
+    val applying: Boolean = false,
+    val applyError: String? = null,
+    /** 已经推给运行时成功过一次：界面用它区分「还没生效」与「生效了」。 */
+    val appliedAt: Long? = null,
   ) {
     val canEnable: Boolean
       get() = baseUrl.isNotBlank() && model.isNotBlank()
@@ -161,6 +167,8 @@ internal class ProviderDetailViewModel(
       return
     }
     _state.update { it.copy(keyInput = "", keySaved = true, hasKey = true, error = null) }
+    // 新 key 要立刻生效：重载时宿主会把密钥一并交给运行时（否则得重启 App）
+    applyToRuntime()
   }
 
   fun clearKey() {
@@ -169,6 +177,7 @@ internal class ProviderDetailViewModel(
       return
     }
     _state.update { it.copy(hasKey = false, keySaved = false, error = null) }
+    applyToRuntime()
   }
 
   /**
@@ -190,6 +199,7 @@ internal class ProviderDetailViewModel(
       return
     }
     reload()
+    applyToRuntime()
   }
 
   /** Response API 开关只改调用风格，不动端点 / 模型。 */
@@ -202,6 +212,7 @@ internal class ProviderDetailViewModel(
       }
     _state.update { it.copy(api = api, error = null) }
     persistFields()
+    applyToRuntime()
   }
 
   /**
@@ -219,6 +230,7 @@ internal class ProviderDetailViewModel(
         current.selectedModels + id
       }
     saveSelectedModels(appContext, preset, next)
+    applyToRuntime()
     when {
       id !in next && current.model == id -> setModel(appContext, preset, next.firstOrNull().orEmpty())
       id in next && current.model.isBlank() -> setModel(appContext, preset, id)
@@ -245,6 +257,7 @@ internal class ProviderDetailViewModel(
     val hasKey = AgentConfigStore.provider(appContext, preset).hasKey
     if (hasKey) AgentConfigStore.setEnabled(appContext, preset, true)
     reload()
+    applyToRuntime()
     _state.update {
       it.copy(
         modelDraft = id,
@@ -263,6 +276,7 @@ internal class ProviderDetailViewModel(
       return
     }
     reload()
+    applyToRuntime()
     _state.update {
       it.copy(
         modelDraft = it.model,
@@ -271,6 +285,27 @@ internal class ProviderDetailViewModel(
         revealKey = false,
         error = null,
       )
+    }
+  }
+
+  /**
+   * 把当前配置推给运行时。
+   *
+   * 以前这一步不存在：改完模型 / 启用 / 密钥只是落盘，而 dsh 的模型来自 profile 里的 env，
+   * 只有重载（cordis remount）才会重新读 —— 于是用户必须划掉后台重开 App。现在配置一改就
+   * 重载：同一个 Node 进程内卸载再挂载，界面不闪、会话不丢。
+   */
+  fun applyToRuntime() {
+    if (_state.value.applying) return
+    _state.update { it.copy(applying = true, applyError = null) }
+    viewModelScope.launch {
+      runCatching { NodeRuntime.reload(appContext) }
+        .onSuccess { _state.update { it.copy(applying = false, appliedAt = System.currentTimeMillis()) } }
+        .onFailure { error ->
+          _state.update {
+            it.copy(applying = false, applyError = error.message ?: error.javaClass.simpleName)
+          }
+        }
     }
   }
 

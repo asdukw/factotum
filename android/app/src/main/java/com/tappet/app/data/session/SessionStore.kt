@@ -15,6 +15,14 @@ data class ChatSession(
   val updatedAt: Long,
   /** 酒馆会话绑定的角色卡；日常会话为 null。 */
   val characterId: String? = null,
+  /**
+   * 这段会话上次用的模型 id；没选过（或一直跟着全局走）为 null。
+   *
+   * 运行时同一时刻只有一个模型，所以这不是「每个会话并行用不同模型」，而是「回到这段
+   * 会话时把当时那个模型装回去」。存下来才有意义 —— 否则酒馆用便宜模型、日常用贵模型
+   * 这件事每次切会话都要手点一遍。
+   */
+  val model: String? = null,
 ) {
   /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
   val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
@@ -111,6 +119,9 @@ interface SessionStore {
     error: String?,
     finishedAt: Long?,
   )
+
+  /** 记下这段会话在用的模型（切模型时写，进会话时据此装回去）。 */
+  suspend fun setSessionModel(sessionId: String, model: String?) {}
 
   /** 第一条用户消息写下去时顺手起个标题；已经有标题就不动。 */
   suspend fun setTitleIfEmpty(sessionId: String, title: String)

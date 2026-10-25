@@ -106,6 +106,7 @@ fun ProviderDetailScreen(
     onFetchModels = viewModel::fetchModels,
     onClearKey = viewModel::clearKey,
     onReset = viewModel::resetProvider,
+    onApply = viewModel::applyToRuntime,
     modifier = modifier,
   )
 }
@@ -129,6 +130,8 @@ internal fun ProviderDetailScreen(
   onFetchModels: () -> Unit,
   onClearKey: () -> Unit,
   onReset: () -> Unit,
+  /** 「重启运行时」：手动把改动推给 dsh（不重启 App）。 */
+  onApply: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
@@ -141,7 +144,7 @@ internal fun ProviderDetailScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 16.dp),
       ) {
-        InfoBanner("改动会保存；运行时在聊天页切换模型时重载，或下次启动生效")
+        RuntimeApplyBanner(state = state, onApply = onApply)
         Spacer(Modifier.height(12.dp))
         if (state.error != null) {
           Text(
@@ -179,6 +182,50 @@ internal fun ProviderDetailScreen(
         }
       }
       DetailTabBar(selected = state.tab, onSelect = onTabSelect)
+    }
+  }
+}
+
+/**
+ * 生效状态条。
+ *
+ * 以前这里写的是「或下次启动生效」—— 那正是「换个模型得划掉 App 重开」的来源。现在改配置会
+ * 立刻把运行时重载一次（同一个 Node 进程内 remount），所以状态条只需要说清三件事：
+ * 正在生效 / 生效了 / 失败（失败给一个重试按钮，别让人除了重启无路可走）。
+ */
+@Composable
+private fun RuntimeApplyBanner(state: ProviderDetailViewModel.UiState, onApply: () -> Unit) {
+  SettingsGroup {
+    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f)) {
+        Text(
+          text =
+            when {
+              state.applying -> "正在重载运行时…"
+              state.applyError != null -> "重载失败"
+              state.appliedAt != null -> "已生效"
+              else -> "改完自动生效"
+            },
+          style = MaterialTheme.typography.bodyMedium,
+          color =
+            if (state.applyError != null) {
+              MaterialTheme.colorScheme.error
+            } else {
+              MaterialTheme.colorScheme.onSurface
+            },
+        )
+        Text(
+          text =
+            state.applyError
+              ?: "重载在同一个进程内完成，不用划掉后台重开 —— 但当前对话会开一段新上下文。",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Spacer(Modifier.width(8.dp))
+      TextButton(onClick = onApply, enabled = !state.applying) {
+        Text(if (state.applyError != null) "重试" else "重启运行时")
+      }
     }
   }
 }

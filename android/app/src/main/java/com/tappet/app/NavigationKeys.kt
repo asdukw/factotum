@@ -35,3 +35,6 @@ import kotlinx.serialization.Serializable
 
 /** 角色库（设置 → 角色）：选一张角色卡开始角色扮演。 */
 @Serializable data object Characters : NavKey
+
+/** 一张角色卡的详情：人设 / 开场 / 世界设定，收藏与开始对话都从这里走。 */
+@Serializable data class CharacterDetail(val characterId: String) : NavKey

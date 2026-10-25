@@ -250,7 +250,7 @@ object NodeRuntime : NodeLineListener {
         return@withLock initialize(app)
       }
       val config = AgentConfigStore.current(app)
-      writeRuntimeConfig(app, config)
+      writeRuntimeConfig(app, config, withKey = true)
       val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
       val ready = File(home, "runtime.ready")
       val before = runCatching { ready.readText() }.getOrDefault("")
@@ -274,6 +274,9 @@ object NodeRuntime : NodeLineListener {
       } catch (timeout: TimeoutCancellationException) {
         _status.value = Status.Failed("重载超时：${timeout.message ?: "未知错误"}")
         throw timeout
+      } finally {
+        // 不管成没成，密钥都不留在盘上：launcher 已经在 mount 前把它读进 process.env 了。
+        runCatching { writeRuntimeConfig(app, config, withKey = false) }
       }
       _status.value = Status.Running
       Log.i(TAG, "runtime reloaded")
@@ -470,10 +473,16 @@ object NodeRuntime : NodeLineListener {
     if (preset.endpoint.search == null) "TAPPET_WEB_SEARCH_UNSUPPORTED" else "TAPPET_LLM_KEY"
 
   /**
-   * 写重载用的**非密配置**（env 名 → 值）。密钥不进来：只写一个指向预置 key env 的引用。
-   * launcher 在每次 mount 前读它并覆盖 process.env —— 同一个 Node 进程里这是唯一能改配置的路。
+   * 写重载用的配置（env 名 → 值）。launcher 在每次 mount 前读它并覆盖 `process.env` ——
+   * 同一个 Node 进程里这是唯一能改配置的路。
+   *
+   * [withKey] 为真时才把密钥本身写进去，而且**只在这一瞬间**：`reload` 读完立刻重写一份不带
+   * 密钥的。为什么需要它：进程启动时会把每个提供商的 key 预置成 `TAPPET_LLM_KEY_<ID>`，
+   * 但**启动之后新加的提供商**没有这个 env，光换引用只会拿到空字符串 —— 那就是「加完 key
+   * 还得划掉 App 重开」的真正原因。密钥本来就以明文存在应用私有的 SharedPreferences 里，
+   * 落在同一信任边界的文件里、且只存在一个 mount 的时间窗，不引入新的暴露面。
    */
-  private fun writeRuntimeConfig(app: Context, config: AgentConfig) {
+  private fun writeRuntimeConfig(app: Context, config: AgentConfig, withKey: Boolean = false) {
     val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
     val payload =
       buildJsonObject {
@@ -493,6 +502,8 @@ object NodeRuntime : NodeLineListener {
         )
         put("TAPPET_LLM_ZEN", if (config.preset.zenSessionHeader) "1" else "")
         put("TAPPET_LLM_KEY_FROM", keyEnvName(config.preset))
+        // 循环覆盖发生在 KEY_FROM 拷贝之后，所以这一条会盖掉上面的引用；没写就退回引用。
+        if (withKey && config.apiKey.isNotBlank()) put("TAPPET_LLM_KEY", config.apiKey)
         put("TAPPET_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
         put("TAPPET_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
         put("TAPPET_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))

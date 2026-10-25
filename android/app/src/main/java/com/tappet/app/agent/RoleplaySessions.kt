@@ -11,7 +11,11 @@ import kotlinx.coroutines.launch
  *
  * 卡被删掉的会话单独归到「已删除的角色」：历史不跟着卡一起消失，用户还能把它读出来、删掉。
  */
-fun groupRoleplaySessions(sessions: List<ChatSession>, cards: List<CharacterCard>): List<RoleplayGroup> {
+fun groupRoleplaySessions(
+  sessions: List<ChatSession>,
+  cards: List<CharacterCard>,
+  pinned: List<String> = emptyList(),
+): List<RoleplayGroup> {
   val byCard =
     sessions
       .filter { it.kind == SessionKind.Roleplay && it.characterId != null }
@@ -23,6 +27,7 @@ fun groupRoleplaySessions(sessions: List<ChatSession>, cards: List<CharacterCard
         name = card.name,
         tagline = card.tagline,
         sessions = byCard[card.id].orEmpty().sortedByDescending { it.updatedAt },
+        pinned = card.id in pinned,
       )
     }
   val orphaned =
@@ -36,7 +41,11 @@ fun groupRoleplaySessions(sessions: List<ChatSession>, cards: List<CharacterCard
           sessions = list.sortedByDescending { it.updatedAt },
         )
       }
-  return groups + orphaned
+  // 收藏的排前面，顺序按收藏先后（pinned 列表本身就是「最近收藏在前」）；
+  // 没收藏的保持库里原来的顺序 —— 别因为置顶功能把大家熟悉的排列顺序也搅乱。
+  val rank = pinned.withIndex().associate { (index, id) -> id to index }
+  val ordered = groups.sortedBy { rank[it.characterId] ?: Int.MAX_VALUE }
+  return ordered + orphaned
 }
 
 /**

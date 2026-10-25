@@ -27,7 +27,19 @@ class RoomSessionStore(
       dao.latestSession(SessionKind.Chat)?.toDomain() ?: newSessionLocked(title = null)
     }
 
-  override suspend fun latestSession(): ChatSession? = dao.latestAnySession()?.toDomain()
+  /**
+   * 「上次在说话的地方」＝ 日常与酒馆两段里更新的那段。
+   *
+   * 不用一条 `kind != 'Background'` 的查询：DAO 的方法数已经顶到 detekt 阈值，
+   * 而这两个 kind 恰好就是「人会回来的」全部，组合起来比再加一个抽象方法更省。
+   */
+  override suspend fun latestSession(): ChatSession? =
+    listOfNotNull(
+      dao.latestSession(SessionKind.Chat),
+      dao.latestSession(SessionKind.Roleplay),
+    )
+      .maxByOrNull { it.updatedAt }
+      ?.toDomain()
 
   override suspend fun session(id: String): ChatSession? = dao.session(id)?.toDomain()
 
@@ -108,6 +120,10 @@ class RoomSessionStore(
     )
   }
 
+  override suspend fun setSessionModel(sessionId: String, model: String?) {
+    dao.setModel(sessionId, model)
+  }
+
   override suspend fun setTitleIfEmpty(sessionId: String, title: String) {
     dao.titleIfEmpty(sessionId, title)
   }
@@ -155,6 +171,7 @@ private fun SessionEntity.toDomain() =
     createdAt = createdAt,
     updatedAt = updatedAt,
     characterId = characterId,
+    model = model,
   )
 
 private fun MessageEntity.toDomain() =

@@ -14,8 +14,8 @@ calls. The only runtime is the Android app (Kotlin).
 | Data | Room + SQLCipher; API keys wrapped by Android Keystore |
 | Agent runtime | Embedded Node 24 (nodejs-mobile fork) + dsh phone profile |
 | Device execution | `AccessibilityService` (UI tree first, screenshots fallback) + `DeviceBridgeServer` (127.0.0.1 + token) |
-| Tools | dsh plugin `dsh-plugin-android-tools` (10 primitives + optional `run_command`), separate public repo, HTTP bridge → `DeviceAction`; plus a mail connector (read tools + approval-gated writes) |
-| Linux on phone | Termux + proot Debian, `tools/termux/bridge.py` (127.0.0.1 + token) → plugin `run_command` (bypasses accessibility) |
+| Tools | dsh plugin `dsh-plugin-android-tools` (10 primitives + `run_command`), separate public repo, HTTP bridge → `DeviceAction`; plus a mail connector (read tools + approval-gated writes) |
+.\tools\fetch-proot.ps1                   # 内嵌 proot + Debian rootfs（见 docs/linux-on-phone.md）
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
 ## 2. Setup and assembly
@@ -28,6 +28,7 @@ git submodule update --init --recursive   # device-tools plugin lives in its own
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so from the NDK
 .\tools\fetch-sherpa.ps1                  # sherpa native lib + silero VAD model (ASR only)
 .\tools\bundle-dsh.ps1                    # vendored dsh → assets/dsh-runtime.zip
+.	oolsetch-proot.ps1                   # 内嵌 proot + Debian rootfs（见 docs/linux-on-phone.md）
 ```
 
 - Run `.ps1` scripts with **`pwsh` 7**, not `powershell` 5.1: 5.1 writes backslashed zip entries,
@@ -85,9 +86,9 @@ android/                  the only runtime (Kotlin / Compose)
   app/src/main/cpp/       JNI (node::Start + stdout forwarding)
   app/src/test/           JVM unit tests
   app/src/androidTest/    device tests
-tools/                    fetch-libnode, fetch-sherpa, bundle-dsh, check-sensitive,
+tools/                    fetch-libnode, fetch-sherpa, fetch-proot, bundle-dsh, check-sensitive,
                           install-debug (build + install on device),
-                          audit/ (task traces), termux/ (bridge), dsh-phone/ (launcher,
+                          audit/ (task traces), dsh-phone/ (launcher,
                           profile, patches, plugins)
 docs/                     deep docs + releases/<tag>.md
 ```
@@ -206,15 +207,22 @@ One atomic action touches four places: `device/DeviceAction.kt` (definition),
 and `tools/dsh-phone/plugins/android-tools/index.mjs` (`ctx.tools` + model-facing description).
 Then `bundle-dsh.ps1` and reinstall.
 
-Model-visible tools (15): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
+Model-visible tools (19): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,duration_ms)`,
 `capture_screenshot()`, `tap_target(screenshot_id,x1,y1,x2,y2)`, `long_press_target(...)`,
 `type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`,
 `set_alarm(hour,minute,label?)`, `add_calendar_event(...)`, `list_calendar_events(begin,end)`,
-`update_calendar_event(event_id,...)`, `delete_calendar_event(event_id)`. With Linux
-configured add `run_command`; with a mail connector add nine mail tools (five read-only:
-`mail_list`, `mail_search`, `mail_read`, `mail_thread`, `mail_labels`; four approval-gated
-writes: `mail_modify`, `mail_draft`, `mail_send`, `mail_save_attachment`).
+`update_calendar_event(event_id,...)`, `delete_calendar_event(event_id)`,
+`schedule_task(title,prompt,hour,minute)`, `list_scheduled_tasks`, `update_scheduled_task(id,...)`,
+`delete_scheduled_task(id)`. `run_command` runs inside the embedded Debian (registered when the host sets
+`TAPPET_PROOT=1`); with a mail connector add
+nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_thread`,
+`mail_labels`; four approval-gated writes: `mail_modify`, `mail_draft`, `mail_send`,
+`mail_save_attachment`).
 
+- **Scheduled tasks are created by conversation, not by a settings form.** The model parses
+  "每天早上八点提醒我看天气" into `schedule_task(title,prompt,hour,minute)`; the settings entry is
+  gone. Writes (`schedule_task` / `update_scheduled_task` / `delete_scheduled_task`) go through
+  the approval seam. Only daily HH:mm exists; no cron. See `docs/scheduled-tasks.md`.
 - **Calendar and alarms never go through the UI.** `ContentResolver` + `AlarmClock` intents
   (`device/SystemIntents.kt`), silent: no editor, no system confirmation. Editing an event by
   tapping the Calendar app cost 27 UI actions for one change — `list_calendar_events` first, then
@@ -332,10 +340,12 @@ adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a 
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action TAP_TARGET --es screenshot_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
 # Receipt notification (importance / sound / promotion), without running a task
 adb shell am broadcast -n com.tappet.app/.accessibility.DeviceActionReceiver -a com.tappet.app.debug.ACTION --es action NOTICE
+# 内嵌 proot 冒烟（先把 App 拉到前台，ColorOS 会推迟后台广播）；--es cmd 可换命令
+adb shell "am broadcast -n com.tappet.app/.node.NodeDebugReceiver -a com.tappet.app.debug.NODE --es op PROOT --ez logPayload true"
 ```
 
-Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, `TERMUX`, voice `ASR`/`VAD`) are in
-`docs/android-accessibility.md` §10, `docs/termux.md`, and `docs/voice.md` §9. Quote the whole
+Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, voice `ASR`/`VAD`) are in
+`docs/android-accessibility.md` §10, `docs/linux-on-phone.md`, and `docs/voice.md` §9. Quote the whole
 `am broadcast` with `adb shell "..."` when arguments contain spaces.
 
 With `tappet.debugSuffix` set, replace both the package and the component shorthand:
@@ -382,7 +392,7 @@ Full table: `docs/pitfalls.md`.
 | Web search | `docs/web-search.md` | `bundle-dsh.ps1` + reinstall; verify the search model actually searches |
 | Voice (TTS/STT, ASR decoding) | `docs/voice.md` | §7.5 invariants; unit tests; device check per §8 |
 | In-app updates, download failure policy | `docs/app-updater.md` | §7.5; `UpdateDownloaderResumeTest` |
-| Linux on the phone | `docs/termux.md` | plugin commit first + `bundle-dsh.ps1` |
+| Linux on the phone (embedded Debian) | `docs/linux-on-phone.md` | `fetch-proot.ps1` + plugin commit first + `bundle-dsh.ps1` |
 | Memory / context injection | `docs/memory.md` | — |
 | Scheduled tasks | `docs/scheduled-tasks.md` | — |
 | `ask_user_question` | `docs/user-questions.md` | — |

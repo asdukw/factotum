@@ -111,6 +111,8 @@ import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
 import com.tappet.app.device.BridgeHealth
 import com.tappet.app.device.DeviceAction
+import com.tappet.app.schedule.ScheduledTaskScheduler
+import com.tappet.app.schedule.needsExactAlarmReminder
 import com.tappet.app.ui.components.ProviderModelIcon
 import com.tappet.app.voice.RecognizedText
 import com.tappet.app.voice.VoiceInput
@@ -541,8 +543,7 @@ private fun ChatBody(
       onOpenSessions = onOpenSessions,
       onNewSession = onNewSession,
     )
-    AccessibilityPrompt()
-    CalendarPermissionPrompt()
+    PermissionPrompts()
     if (!state.configured) {
       // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
       BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
@@ -812,6 +813,54 @@ private fun CalendarPermissionPrompt() {
     },
     dismissButton = { TextButton(onClick = { BridgeHealth.dismiss() }) { Text("稍后") } },
   )
+}
+
+/** 三条权限提示收在一处：ChatBody 已经贴着 detekt 的 80 行上限，别再往它里面加调用。 */
+@Composable
+private fun PermissionPrompts() {
+  AccessibilityPrompt()
+  CalendarPermissionPrompt()
+  ExactAlarmPrompt()
+}
+
+/**
+ * 「有定时任务，但没开「闹钟和提醒」」的主动提醒。
+ *
+ * 与 [AccessibilityPrompt] / [CalendarPermissionPrompt] 不同：这两条只在**真实失败**后出现，
+ * 而缺少精确闹钟权限**不会失败** —— 任务照跑，只是可能晚 15 分钟以上（窗口闹钟不豁免 Doze）。
+ * 等失败永远等不到，所以这里改成每次回到前台主动查一次：有启用的任务 + 权限没开就摆一条。
+ *
+ * 权限授予后 `ScheduledTaskBootReceiver` 会整体重排，把窗口闹钟升级成精确闹钟 ——
+ * 用户点完「去开启」回来，下一次触发就已经是准点的。
+ */
+@Composable
+private fun ExactAlarmPrompt() {
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var needed by remember { mutableStateOf(false) }
+  LifecycleResumeEffect(Unit) {
+    scope.launch { needed = needsExactAlarmReminder(context) }
+    onPauseOrDispose { }
+  }
+  if (!needed) return
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      "有定时任务，但「闹钟和提醒」权限未开启：任务可能晚 15 分钟以上。",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.error,
+      modifier = Modifier.weight(1f),
+    )
+    TextButton(
+      onClick = {
+        runCatching { context.startActivity(ScheduledTaskScheduler.exactAlarmSettingsIntent(context)) }
+      },
+    ) {
+      Text("去开启")
+    }
+  }
 }
 
 @Composable

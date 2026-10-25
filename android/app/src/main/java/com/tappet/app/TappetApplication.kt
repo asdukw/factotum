@@ -6,6 +6,7 @@ import com.tappet.app.data.db.TappetDatabase
 import com.tappet.app.data.db.TappetDatabaseProvider
 import com.tappet.app.data.session.RoomSessionStore
 import com.tappet.app.data.session.SessionStore
+import com.tappet.app.schedule.ExactAlarmMonitor
 import com.tappet.app.voice.AsrModelCatalog
 import com.tappet.app.voice.VoiceModelInstaller
 import com.tappet.app.voice.VoiceModelKinds
@@ -27,6 +28,9 @@ class TappetApplication : Application() {
 
   override fun onCreate() {
     super.onCreate()
+
+    // 定时任务的「闹钟和提醒」权限提醒：每 6 小时一次非精确闹钟，幂等（已排过就不重复排）。
+    ExactAlarmMonitor.schedule(this)
 
     appScope.launch {
       runCatching { sessionStore.markStreamingAsInterrupted() }

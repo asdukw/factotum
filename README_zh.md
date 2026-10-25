@@ -245,7 +245,7 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
 | [docs/email-connector.md](docs/email-connector.md) | 连接器的边界与隐私闸门 |
 | [docs/web-search.md](docs/web-search.md) | 联网搜索的边界、协议与实测 |
 | [docs/app-updater.md](docs/app-updater.md) | 应用内更新：断点续传与校验 |
-| [docs/termux.md](docs/termux.md) | 手机上的 Linux：Termux 桥与 `run_command` |
+| [docs/linux-on-phone.md](docs/linux-on-phone.md) | 手机上的 Linux：内嵌 proot + Debian 与 `run_command` |
 | [docs/releasing.md](docs/releasing.md) | CI 与发版流程、签名材料 |
 | [docs/pitfalls.md](docs/pitfalls.md) | 完整排障表 |
 | [docs/roadmap.md](docs/roadmap.md) | 技术路线畅想（未验证的假设） |

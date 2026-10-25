@@ -1,0 +1,6 @@
+{
+  "proot": "5.1.107.101",
+  "talloc": "2.5.0",
+  "shmem": "0.7",
+  "rootfs": "sha256:41b2195c355367079ebad200f9591fe3c2cb886c3b1e67abaaf2090dc11c04d9"
+}

@@ -167,6 +167,11 @@ class TappetAccessibilityService : AccessibilityService(), DeviceBridge {
       is DeviceAction.ListCalendarEvents,
       is DeviceAction.UpdateCalendarEvent,
       is DeviceAction.DeleteCalendarEvent,
+      is DeviceAction.CreateScheduledTask,
+      is DeviceAction.ListScheduledTasks,
+      is DeviceAction.UpdateScheduledTask,
+      is DeviceAction.DeleteScheduledTask,
+      is DeviceAction.RunCommand,
       ->
         DeviceActionResult(ok = false, summary = "这个动作由桥直接处理，不经过无障碍", code = "NOT_HANDLED_HERE")
 

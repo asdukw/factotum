@@ -75,6 +75,15 @@ sealed interface DeviceAction {
   data class SetAlarm(val hour: Int, val minute: Int, val label: String?) : DeviceAction
 
   /**
+   * 在手机上的 Linux（内嵌 proot + Debian）里执行一条命令。
+   *
+   * **不是 UI 动作**：不过无障碍、不上屏、也不交给别的 App —— [com.tappet.app.proot.ProotRuntime]
+   * 在本进程域里起一次 proot。每条命令一个独立会话：cwd / 环境变量 / 后台进程都不保留。
+   * 它改的是文件系统，没有撤销。
+   */
+  data class RunCommand(val cmd: String, val timeoutMs: Long) : DeviceAction
+
+  /**
    * 新建日程。**直接写 `CalendarContract`**（`ContentResolver.insert`）—— 不开界面、不用点保存。
    *
    * 代价是 `READ_CALENDAR` + `WRITE_CALENDAR` 两个运行时权限（READ 只为查可写日历的 id）。
@@ -97,8 +106,17 @@ sealed interface DeviceAction {
     /** 设备上没有可写的日历（没有登录账号 / 全是只读日历）。 */
     const val CODE_NO_WRITABLE_CALENDAR = "NO_WRITABLE_CALENDAR"
 
+    /** 内嵌 Linux（proot + rootfs）没起来：重试同一条命令不会成功。 */
+    const val CODE_SHELL_UNAVAILABLE = "SHELL_UNAVAILABLE"
+
     /** 日程 id 不存在（已被删 / 记错了）。让模型重新 list，不要按标题猜。 */
     const val CODE_EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
+
+    /** 定时任务 id 不存在。同样先 list 再操作。 */
+    const val CODE_SCHEDULE_NOT_FOUND = "SCHEDULE_NOT_FOUND"
+
+    /** 时间不在合法钟点上（hour 0-23 / minute 0-59）。 */
+    const val CODE_SCHEDULE_INVALID_TIME = "SCHEDULE_INVALID_TIME"
   }
 
   /**
@@ -122,6 +140,35 @@ sealed interface DeviceAction {
 
   /** 删除日程。破坏性操作，必须经审批闸门。 */
   data class DeleteCalendarEvent(val eventId: Long) : DeviceAction
+
+  /**
+   * 语义化创建定时任务：每天 [hour]:[minute] 让 agent 跑 [prompt]。
+   *
+   * 模型把「每天早上八点提醒我看天气」拆成时间与指令，这里只负责落库与排闹钟。
+   * 手机上只有「每天一次」这种粒度（见 `docs/scheduled-tasks.md`）。
+   */
+  data class CreateScheduledTask(
+    val title: String,
+    val prompt: String,
+    val hour: Int,
+    val minute: Int,
+  ) : DeviceAction
+
+  /** 列出定时任务。id 是改 / 删的前置 —— 不让模型按标题猜。 */
+  data class ListScheduledTasks(val includeDisabled: Boolean = true) : DeviceAction
+
+  /** 修改定时任务；null = 这一项不改。 */
+  data class UpdateScheduledTask(
+    val id: String,
+    val title: String? = null,
+    val prompt: String? = null,
+    val hour: Int? = null,
+    val minute: Int? = null,
+    val enabled: Boolean? = null,
+  ) : DeviceAction
+
+  /** 删除定时任务。破坏性操作，必须经审批闸门。 */
+  data class DeleteScheduledTask(val id: String) : DeviceAction
 }
 
 enum class SwipeDirection {

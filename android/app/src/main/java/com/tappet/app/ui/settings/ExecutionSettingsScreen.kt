@@ -23,14 +23,14 @@ import com.tappet.app.agent.ApprovalSettings
 import com.tappet.app.device.AccessibilityStatus
 
 /**
- * 执行层（设置 → 执行层）：无障碍、写操作审批、任务悬浮球、定时任务。
+ * 执行层（设置 → 执行层）：无障碍、写操作审批、任务悬浮球。
  *
  * 这一页只放**影响 agent 怎么动手机**的开关；模型与数据源在各自的分页里。
+ * 定时任务不在这里 —— 它由对话语义化创建（`docs/scheduled-tasks.md`）。
  */
 @Composable
 fun ExecutionSettingsScreen(
   onBack: () -> Unit,
-  onOpenScheduledTasks: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -98,13 +98,6 @@ fun ExecutionSettingsScreen(
               },
             )
           }
-          SettingsDivider()
-          SettingsRow(
-            glyph = GlyphKind.Server,
-            title = "定时任务",
-            subtitle = "每天到点让 agent 跑一句指令",
-            onClick = onOpenScheduledTasks,
-          )
         }
       }
     }

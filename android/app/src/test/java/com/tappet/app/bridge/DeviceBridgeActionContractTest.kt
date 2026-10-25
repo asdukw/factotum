@@ -40,6 +40,11 @@ class DeviceBridgeActionContractTest {
       "list_calendar_events" to """{"begin":1,"end":2}""",
       "update_calendar_event" to """{"event_id":1}""",
       "delete_calendar_event" to """{"event_id":1}""",
+      "schedule_task" to """{"title":"t","prompt":"p","hour":8,"minute":0}""",
+      "list_scheduled_tasks" to "{}",
+      "update_scheduled_task" to """{"id":"t1"}""",
+      "delete_scheduled_task" to """{"id":"t1"}""",
+      "run_command" to """{"cmd":"true"}""",
     )
 
   @Test
@@ -72,6 +77,10 @@ class DeviceBridgeActionContractTest {
         "list_calendar_events",
         "update_calendar_event",
         "delete_calendar_event",
+        "schedule_task",
+        "list_scheduled_tasks",
+        "update_scheduled_task",
+        "delete_scheduled_task",
       )
     for (tool in tools) assertTrue(tool, tool in DeviceBridgeServer.KNOWN_ACTIONS)
   }

@@ -1,8 +1,10 @@
 package com.tappet.app.schedule
 
+import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.tappet.app.node.NodeTaskService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,11 +49,19 @@ class ScheduledTaskBootReceiver : BroadcastReceiver() {
     val relevant =
       intent.action == Intent.ACTION_BOOT_COMPLETED ||
         intent.action == Intent.ACTION_TIME_CHANGED ||
-        intent.action == Intent.ACTION_TIMEZONE_CHANGED
+        intent.action == Intent.ACTION_TIMEZONE_CHANGED ||
+        // 用户刚在系统设置里打开了「闹钟和提醒」：把已有的窗口闹钟重排成精确闹钟。
+        // 不重排的话，之前建的每条任务都会继续晚 15 分钟内，直到下一次编辑。
+        (
+          Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            intent.action == AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
+        )
     if (!relevant) return
     val app = context.applicationContext
     CoroutineScope(Dispatchers.IO).launch {
       runCatching { ScheduledTaskScheduler.scheduleAll(app) }
+      // 开机 / 改时间也会清掉非精确闹钟 —— 权限提醒的轮询一并重排。
+      runCatching { ExactAlarmMonitor.schedule(app, force = true) }
     }
   }
 }

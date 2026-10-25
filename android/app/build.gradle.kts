@@ -201,12 +201,20 @@ android {
       // librg.so 不是共享库，是 fetch-rg.ps1 放进去的可执行文件（见 manifest 的
       // extractNativeLibs="true"）。不加这条 AGP 会拿 llvm-strip 去处理它。
       keepDebugSymbols += "**/librg.so"
+      // 同理：proot 与它的 loader 也是可执行文件（fetch-proot.ps1 放进来的），
+      // 被 strip 处理过的 loader 起不来。
+      keepDebugSymbols += "**/libproot.so"
+      keepDebugSymbols += "**/libprootloader.so"
     }
   }
 
   androidResources {
     // dsh 运行时已是 zip，别再压一遍（也省构建时间）
     noCompress += "zip"
+    // Debian rootfs 是 gzip（27MB，本身压不动），别再 deflate 一遍。
+    // **扩展名必须是 .bin**：aapt2 会把 .gz 资产解压并把后缀去掉（变成 proot-rootfs.tar），
+    // 运行时按 .gz 名字 open 会直接 FileNotFoundException。
+    noCompress += "bin"
   }
 
   lint {

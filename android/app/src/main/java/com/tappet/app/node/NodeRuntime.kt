@@ -7,7 +7,6 @@ import com.tappet.app.agent.AgentConfig
 import com.tappet.app.agent.AgentConfigStore
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelModalities
-import com.tappet.app.agent.TermuxBridgeStore
 import com.tappet.app.agent.llmModelsJson
 import com.tappet.app.agent.requestApiKey
 import com.tappet.app.bridge.ApprovalBridgeServer
@@ -566,14 +565,10 @@ object NodeRuntime : NodeLineListener {
     Os.setenv("DSH_PERMISSION_MODE", "danger-full-access", true)
     Os.setenv("ANDROID_BRIDGE_URL", DeviceBridgeServer.start(app), true)
     Os.setenv("ANDROID_BRIDGE_TOKEN", DeviceBridgeServer.authToken(), true)
-    // 手机上 Linux 环境（Termux + proot Debian）的桥：配了才有值，插件按这两个 env
-    // 决定要不要把 run_command 注册进工具表（空值 = 不注册，见插件 index.mjs）。
-    //
-    // **故意不进 runtime-config.json**：那个文件是明文的非密配置，而 token 能在设备上执行
-    // 任意命令，与 API key 同级。代价是改 token 要重启 App（与换 API key 同一条规矩），
-    // 换来的是「明文配置里永远不会出现凭据」。
-    Os.setenv("TAPPET_TERMUX_URL", TermuxBridgeStore.url(app), true)
-    Os.setenv("TAPPET_TERMUX_TOKEN", TermuxBridgeStore.token(app).orEmpty(), true)
+    // 内嵌 proot + Debian 就绪：插件看到这个变量才把 run_command 注册进工具表。
+    // 命令走同一个本地桥（`POST /action` + `run_command`），不另开端口、不另发 token ——
+    // 那条桥本来就只监听 127.0.0.1 且 token 每进程随机（见 DeviceBridgeServer）。
+    Os.setenv("TAPPET_PROOT", "1", true)
     // 连接器桥是**另一个**本地服务（理由见 ConnectorBridgeServer 的类注释）：它只发短命的
     // access token，不代理云端 API 请求。没配连接器时它照样起着，只是每次调用都回
     // NOT_CONNECTED —— 「工具在、但会如实报错」比「工具随配置忽隐忽现」对模型更可预测。

@@ -12,9 +12,7 @@ import com.tappet.app.ui.settings.GmailConnectorScreen
 import com.tappet.app.ui.settings.ModelServicesScreen
 import com.tappet.app.ui.settings.ProviderDetailScreen
 import com.tappet.app.ui.settings.ProvidersScreen
-import com.tappet.app.ui.settings.ScheduledTasksScreen
 import com.tappet.app.ui.settings.SettingsScreen
-import com.tappet.app.ui.settings.TermuxBridgeScreen
 import com.tappet.app.ui.settings.VoiceScreen
 
 @Composable
@@ -46,10 +44,7 @@ fun MainNavigation() {
           )
         }
         entry<ExecutionSettings> {
-          ExecutionSettingsScreen(
-            onBack = { backStack.removeLastOrNull() },
-            onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
-          )
+          ExecutionSettingsScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<About> {
           AboutScreen(onBack = { backStack.removeLastOrNull() })
@@ -74,12 +69,6 @@ fun MainNavigation() {
             providerId = key.providerId,
             onBack = { backStack.removeLastOrNull() },
           )
-        }
-        entry<ScheduledTasks> {
-          ScheduledTasksScreen(onBack = { backStack.removeLastOrNull() })
-        }
-        entry<TermuxBridge> {
-          TermuxBridgeScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<Voice> {
           VoiceScreen(onBack = { backStack.removeLastOrNull() })

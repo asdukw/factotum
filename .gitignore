@@ -53,6 +53,9 @@ android/app/src/main/assets/dsh-runtime.zip
 android/app/src/main/assets/model-modalities.json
 # silero VAD 模型（tools/fetch-sherpa.ps1 拉，629KB；语音输入的端点判定用）
 android/app/src/main/assets/silero_vad.onnx
+# 内嵌 proot + Debian rootfs（tools/fetch-proot.ps1 拉；jniLibs 已在上面忽略）
+android/.proot-cache/
+android/app/src/main/assets/proot-rootfs.bin
 # 离线自检的 js-yaml 依赖（tools/offline-checks.sh 用 npm ci 临时安装，检出即弃）
 tools/offline-checks/node_modules/
 

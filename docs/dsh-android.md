@@ -44,7 +44,7 @@ Tappet APK（单进程）
   MCP server（会话/SSE/协议协商）；而 dsh 插件只需 `ctx.tools` 注册 + `fetch`
   本地 HTTP，代码量小一个量级，且能直接用 dsh 的审批/展示管线。MCP 留作
   将来对外复用桥的选项。
-- **为什么内嵌而不是 Termux**：产品形态是一个 APK；Termux 只适合做早期验证。
+- **为什么内嵌而不是外部进程**：产品形态是一个 APK，不要求用户另装一个终端 App。
 - **profile**：以 `packages/bundle/sdk-minimal/cordis.patch.yml` 为模板——
   去掉 shell/subprocess/sandbox/terminal/attachment，保留
   timer/llm/session/system-prompt/tools/mcp-resources/agent/llm-retry/jobs/agent-loop/

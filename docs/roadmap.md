@@ -237,7 +237,7 @@ Can We Trust Large Multimodal Model Powered GUI Agents?*），而且这类攻击
 | 提问 answerer（`plugins/user-questions`） | 官方 `dsh-client-ui-user-questions` | 同上 |
 | 纯 JS 附件存储（`android-attachments`） | 官方 `dsh-attachment-local` | 依赖 sharp，没有 Android 产物 |
 | ripgrep 桩（`ripgrep-stub`） | 官方 `@vscode/ripgrep` | 包里没有 Android 二进制 |
-| Termux 桥 + `run_command` | 官方 `dsh-subprocess` / `dsh-bash-local` | 需要能在 App 进程里起 shell；Android 上没有可用的 bash，必须经 Termux |
+| 内嵌 proot + Debian + `run_command` | 官方 `dsh-subprocess` / `dsh-bash-local` | **已落地**：不再需要 Termux，见 `docs/linux-on-phone.md` |
 | 设备执行层（`DeviceAction` + 无障碍） | 社区 Android MCP / adb 方案 | 多依赖 PC 侧 adb 或 root，与「手机上自治」冲突 |
 | Gmail 连接器 | 社区 Gmail MCP server | 都是 MCP / stdio 进程模型 + 本地 OAuth；我们的令牌在 Kotlin 侧、不落盘 |
 | 语音（sherpa / VAD / ASR） | 官方 speech-to-text 包 | 运行时 / 模型不一定有 Android 产物 |

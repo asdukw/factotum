@@ -1,6 +1,5 @@
 package com.tappet.app.schedule
 
-import com.tappet.app.ui.settings.parseTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

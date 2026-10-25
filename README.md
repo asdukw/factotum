@@ -266,7 +266,7 @@ secret checks → release).
 | [docs/email-connector.md](docs/email-connector.md) | Connector boundaries and privacy gate |
 | [docs/web-search.md](docs/web-search.md) | Web search boundary, protocol and measurements |
 | [docs/app-updater.md](docs/app-updater.md) | In-app updates: resume and verification |
-| [docs/termux.md](docs/termux.md) | Linux on the phone: Termux bridge and `run_command` |
+| [docs/linux-on-phone.md](docs/linux-on-phone.md) | Linux on the phone: embedded proot + Debian and `run_command` |
 | [docs/releasing.md](docs/releasing.md) | CI, release process, signing |
 | [docs/pitfalls.md](docs/pitfalls.md) | Full troubleshooting table |
 | [docs/roadmap.md](docs/roadmap.md) | Unverified direction |

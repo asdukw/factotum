@@ -150,6 +150,32 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     _state.update { it.copy(message = "已删除") }
   }
 
+  /**
+   * 新建一张空白卡：先落盘再进编辑页。
+   *
+   * 落盘在前，用户中途退出也不会在列表里留下半张卡；而「空页」本身就是他要的东西 ——
+   * 不用再靠导入一张别人的卡来获得一个能写字的地方。
+   */
+  fun createBlank(onCreated: (String) -> Unit) {
+    val card = blankCard().copy(name = "")
+    if (!CharacterStore.saveImported(appContext, card)) {
+      _state.update { it.copy(message = "新建失败：写不进应用目录") }
+      return
+    }
+    refresh()
+    onCreated(card.id)
+  }
+
+  /** 保存编辑结果（只对应用目录里的卡有意义）。 */
+  fun save(card: CharacterCard) {
+    if (!CharacterStore.saveImported(appContext, card)) {
+      _state.update { it.copy(message = "保存失败：写不进应用目录") }
+      return
+    }
+    refresh()
+    _state.update { it.copy(message = "已保存「${card.name}」") }
+  }
+
   private fun displayName(uri: Uri): String {
     val projection = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME)
     val name =

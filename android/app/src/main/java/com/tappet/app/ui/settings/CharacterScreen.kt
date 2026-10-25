@@ -62,6 +62,7 @@ fun CharacterScreen(
       picker.launch(arrayOf("image/png", "image/*", "application/json", "text/plain", "application/octet-stream"))
     },
     onDelete = viewModel::delete,
+    onCreateBlank = { viewModel.createBlank(onOpenDetail) },
     onDismissMessage = viewModel::consumeMessage,
     // 点一行进详情页：卡里存着人设 / 开场 / 世界设定，直接开聊等于逼用户先聊再判断。
     onOpenDetail = onOpenDetail,
@@ -78,6 +79,7 @@ internal fun CharacterScreen(
   onDelete: (String) -> Unit = {},
   onDismissMessage: () -> Unit = {},
   onOpenDetail: (String) -> Unit = {},
+  onCreateBlank: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val appContext = LocalContext.current.applicationContext
@@ -96,17 +98,7 @@ internal fun CharacterScreen(
         }
 
         SectionLabel("角色卡")
-        SettingsGroup {
-          SettingsRow(
-            glyph = GlyphKind.Plus,
-            title = if (state.importing) "正在读取…" else "导入角色卡",
-            subtitle = "支持 SillyTavern 的 PNG 卡或 JSON（只取人设与语气）",
-            enabled = !state.importing,
-            onClick = onImport,
-          ) {
-            ChevronRight()
-          }
-        }
+        CardSourceRows(importing = state.importing, onImport = onImport, onCreateBlank = onCreateBlank)
         CardList(
           cards = state.cards,
           activeId = state.activeId,
@@ -190,6 +182,32 @@ private fun EmptyCards() {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+    }
+  }
+}
+
+/** 两个来源：导入别人的卡，或者从空白开始自己写。 */
+@Composable
+private fun CardSourceRows(importing: Boolean, onImport: () -> Unit, onCreateBlank: () -> Unit) {
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Plus,
+      title = if (importing) "正在读取…" else "导入角色卡",
+      subtitle = "支持 SillyTavern 的 PNG 卡或 JSON（只取人设与语气）",
+      enabled = !importing,
+      onClick = onImport,
+    ) {
+      ChevronRight()
+    }
+    SettingsDivider()
+    // 自己写：不导入任何人的卡，直接从空白开始 —— 这一条是「不要预设」的正解。
+    SettingsRow(
+      glyph = GlyphKind.Plus,
+      title = "新建空白卡",
+      subtitle = "从零写一张：名字 / 人设 / 开场白都留空，进编辑器自己填",
+      onClick = onCreateBlank,
+    ) {
+      ChevronRight()
     }
   }
 }

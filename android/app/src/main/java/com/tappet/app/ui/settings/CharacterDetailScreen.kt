@@ -53,16 +53,34 @@ fun CharacterDetailScreen(
   val appContext = LocalContext.current.applicationContext
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
-  val card = remember(characterId, state.cards) { CharacterStore.byId(appContext, characterId) }
+  // 本地持一份，编辑保存后不用等列表刷新回来（列表是另一条流，回来晚一步就会闪一下旧文案）。
+  var card by remember(characterId) { mutableStateOf(CharacterStore.byId(appContext, characterId)) }
   var pinned by remember(characterId) { mutableStateOf(CharacterPins.isPinned(appContext, characterId)) }
+  // 空白卡建完直接进编辑：它的第一个动作一定是「写名字」，没有别的可看。
+  var editing by remember(characterId) { mutableStateOf(card?.name.isNullOrBlank()) }
+
+  val current = card
+  if (editing && current != null) {
+    CharacterEditPage(
+      card = current,
+      onCancel = { editing = false },
+      onSave = { updated ->
+        viewModel.save(updated)
+        card = updated
+        editing = false
+      },
+    )
+    return
+  }
 
   CharacterDetailScreen(
-    card = card,
+    card = current,
     pinned = pinned,
     applying = state.applying,
     onBack = onBack,
     onStart = { id -> viewModel.start(id) { onStartChat() } },
     onTogglePin = { pinned = CharacterPins.toggle(appContext, characterId) },
+    onEdit = { editing = true },
     onDelete = {
       viewModel.delete(characterId)
       CharacterPins.forget(appContext, characterId)
@@ -80,6 +98,7 @@ internal fun CharacterDetailScreen(
   onBack: () -> Unit,
   onStart: (String) -> Unit,
   onTogglePin: () -> Unit,
+  onEdit: () -> Unit = {},
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -102,8 +121,10 @@ internal fun CharacterDetailScreen(
         ActionRow(
           pinned = pinned,
           applying = applying,
+          editable = card.imported,
           onStart = { onStart(card.id) },
           onTogglePin = onTogglePin,
+          onEdit = onEdit,
         )
 
         ProseSection("人设", card.description)
@@ -133,20 +154,7 @@ internal fun CharacterDetailScreen(
           }
         }
 
-        SectionLabel("关于这张卡")
-        SettingsGroup {
-          Column(Modifier.padding(16.dp)) {
-            Detail("来源", if (card.imported) "导入的卡（存在应用私有目录）" else "内置卡")
-            if (card.creator.isNotBlank()) Detail("作者", card.creator)
-            if (card.license.isNotBlank()) Detail("许可", card.license)
-            if (card.tags.isNotEmpty()) Detail("标签", card.tags.joinToString(" · "))
-            Detail(
-              "这两样都不进来",
-              "卡里的 system_prompt / 示例对话在导入时就被丢弃 —— 前者常写着「忽略一切规则」，" +
-                "后者占 token 且口癖会被过度模仿。",
-            )
-          }
-        }
+        AboutCard(card)
 
         if (card.imported) {
           Spacer(Modifier.height(16.dp))
@@ -161,6 +169,24 @@ internal fun CharacterDetailScreen(
           )
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun AboutCard(card: CharacterCard) {
+  SectionLabel("关于这张卡")
+  SettingsGroup {
+    Column(Modifier.padding(16.dp)) {
+      Detail("来源", if (card.imported) "导入的卡（存在应用私有目录）" else "内置卡")
+      if (card.creator.isNotBlank()) Detail("作者", card.creator)
+      if (card.license.isNotBlank()) Detail("许可", card.license)
+      if (card.tags.isNotEmpty()) Detail("标签", card.tags.joinToString(" · "))
+      Detail(
+        "这两样都不进来",
+        "卡里的 system_prompt / 示例对话在导入时就被丢弃 —— 前者常写着「忽略一切规则」，" +
+          "后者占 token 且口癖会被过度模仿。编辑页也没有这两个输入框，那里不该成为绕过去的路。",
+      )
     }
   }
 }
@@ -194,15 +220,23 @@ private fun CardHero(card: CharacterCard) {
 private fun ActionRow(
   pinned: Boolean,
   applying: Boolean,
+  editable: Boolean,
   onStart: () -> Unit,
   onTogglePin: () -> Unit,
+  onEdit: () -> Unit,
 ) {
-  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-    Button(onClick = onStart, enabled = !applying, modifier = Modifier.weight(1f)) {
-      Text(if (applying) "正在准备…" else "开始对话")
+  Column(Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Button(onClick = onStart, enabled = !applying, modifier = Modifier.weight(1f)) {
+        Text(if (applying) "正在准备…" else "开始对话")
+      }
+      Spacer(Modifier.width(8.dp))
+      TextButton(onClick = onTogglePin) { Text(if (pinned) "取消收藏" else "收藏置顶") }
     }
-    Spacer(Modifier.width(8.dp))
-    TextButton(onClick = onTogglePin) { Text(if (pinned) "取消收藏" else "收藏置顶") }
+    // 内置卡的正文在 assets 里，改了会被下次打包覆盖 —— 只有导入/新建的卡能改。
+    if (editable) {
+      TextButton(onClick = onEdit, modifier = Modifier.align(Alignment.End)) { Text("编辑文案") }
+    }
   }
 }
 

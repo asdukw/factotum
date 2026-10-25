@@ -42,7 +42,9 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     // ② 它也救不了已经在跑的 App：那个状态是目标 App 进程启动时采样一次并缓存的。
     // 机制与 debug 广播仍留着（FactotumAccessibilityService.setTouchExplorationForTask），
     // 但任务路径不再自动开 —— 手势始终可用，用户手动点击也不受影响。
+    var taskLease: NodeRuntime.TaskLease? = null
     try {
+      taskLease = checkNotNull(NodeRuntime.beginTask()) { "运行时正忙，设置正在应用，请稍后重试" }
       NodeRuntime.initialize(app)
       var sawRunning = false
       var turnFailure: DshEvent.TurnEnded? = null
@@ -177,6 +179,7 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       AgentProgressCenter.fail(sessionId, error.message ?: error.javaClass.simpleName)
       throw error
     } finally {
+      taskLease?.let(NodeRuntime::endTask)
       NodeTaskService.stop(app)
     }
   }

@@ -16,6 +16,7 @@ import com.factotum.app.bridge.UserQuestionBridgeServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -163,6 +165,9 @@ object NodeRuntime : NodeLineListener {
   private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
   private val initMutex = Mutex()
   private val reloadMutex = Mutex()
+  private val operationGate = Any()
+  private var taskActive = false
+  private var reloadActive = false
 
   @Volatile private var initResult: JsonObject? = null
 
@@ -243,54 +248,118 @@ object NodeRuntime : NodeLineListener {
    */
   suspend fun reload(context: Context): JsonObject =
     reloadMutex.withLock {
-      val app = context.applicationContext
-      if (!started.get()) {
-        ensureStarted(app)
-        return@withLock initialize(app)
+      synchronized(operationGate) {
+        check(!taskActive) { "运行中任务未完成，暂不能应用设置" }
+        reloadActive = true
       }
-      val config = AgentConfigStore.current(app)
-      refreshKeyEnvironment(app, config)
-      writeRuntimeConfig(app, config)
-      val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
-      val ready = File(home, "runtime.ready")
-      val before = runCatching { ready.readText() }.getOrDefault("")
-
-      pending.values.forEach {
-        it.completeExceptionally(IllegalStateException("runtime reloading"))
-      }
-      pending.clear()
-      runtimeTag = newRuntimeTag()
-      dshSessionIds.clear()
-      callerSessionIds.clear()
-      initResult = null
-      _status.value = Status.Preparing("重载运行时")
-      Log.i(TAG, "reload requested (provider=${config.preset.label}, model=${config.model})")
-      File(home, "runtime.reload").writeText(System.currentTimeMillis().toString())
-
       try {
-        withTimeout(RELOAD_TIMEOUT_MS) {
-          while (runCatching { ready.readText() }.getOrDefault("") == before) delay(100)
-        }
-      } catch (timeout: TimeoutCancellationException) {
-        _status.value = Status.Failed("重载超时：${timeout.message ?: "未知错误"}")
-        throw timeout
+        reloadLocked(context)
+      } finally {
+        synchronized(operationGate) { reloadActive = false }
       }
-      _status.value = Status.Running
-      Log.i(TAG, "runtime reloaded")
-      initialize(app)
     }
+
+  private suspend fun reloadLocked(context: Context): JsonObject {
+    val app = context.applicationContext
+    if (!started.get()) {
+      ensureStarted(app)
+      return initialize(app)
+    }
+    val config = AgentConfigStore.current(app)
+    refreshKeyEnvironment(app, config)
+    writeRuntimeConfig(app, config)
+    val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
+    val ready = File(home, "runtime.ready")
+    val before = runCatching { ready.readText() }.getOrDefault("")
+
+    pending.values.forEach {
+      it.completeExceptionally(IllegalStateException("runtime reloading"))
+    }
+    pending.clear()
+    runtimeTag = newRuntimeTag()
+    dshSessionIds.clear()
+    callerSessionIds.clear()
+    initResult = null
+    _status.value = Status.Preparing("重载运行时")
+    Log.i(TAG, "reload requested (provider=${config.preset.label}, model=${config.model})")
+    File(home, "runtime.reload").writeText(System.currentTimeMillis().toString())
+
+    try {
+      withTimeout(RELOAD_TIMEOUT_MS) {
+        while (runCatching { ready.readText() }.getOrDefault("") == before) delay(100)
+      }
+    } catch (timeout: TimeoutCancellationException) {
+      _status.value = Status.Failed("重载超时：${timeout.message ?: "未知错误"}")
+      throw timeout
+    }
+    _status.value = Status.Running
+    Log.i(TAG, "runtime reloaded")
+    return initialize(app)
+  }
 
   /**
    * 应用设置页改动，但不因保存设置而冷启动 Node。返回 false 表示运行时尚未启动，
    * 下一次正常启动会直接读取最新的 Keystore 配置。
    */
   suspend fun reloadIfRunning(context: Context): Boolean {
-    if (!started.get() || status.value !is Status.Ready) return false
+    synchronized(operationGate) {
+      if (!started.get()) return false
+    }
+    while (true) {
+      synchronized(operationGate) {
+        if (!taskActive && !reloadActive && status.value is Status.Ready) break
+        if (status.value is Status.Failed || status.value is Status.Exited) return false
+      }
+      delay(100)
+    }
     reload(context)
     return true
   }
 
-  /** 提交一条用户任务（同一 sessionId 复用会话）；返回入队消息 id。 */
+  /**
+   * 等待当前任务完成后应用最新配置。设置页的连续保存都读同一份 current()，所以即便多个
+   * 保存操作排队，最后一次 reload 也不会重新使用旧配置。
+   */
+  suspend fun applyWhenIdle(context: Context): Boolean = reloadIfRunning(context)
+
+  internal class TaskLease
+
+  private var activeTaskLease: TaskLease? = null
+  private var taskIdle = CompletableDeferred<Unit>().apply { complete(Unit) }
+  private var taskSubmitted = false
+
+  internal fun beginTask(): TaskLease? =
+    synchronized(operationGate) {
+      if (taskActive || reloadActive) return null
+      TaskLease().also {
+        taskActive = true
+        taskIdle = CompletableDeferred()
+        activeTaskLease = it
+      }
+    }
+
+  internal fun endTask(lease: TaskLease) {
+    synchronized(operationGate) {
+      if (activeTaskLease === lease) {
+        taskActive = false
+        activeTaskLease = null
+        taskSubmitted = false
+        taskIdle.complete(Unit)
+      }
+    }
+  }
+
+  internal fun markTaskSubmitted(lease: TaskLease) {
+    synchronized(operationGate) {
+      if (activeTaskLease === lease) taskSubmitted = true
+    }
+  }
+
+  private suspend fun awaitTaskIdle(lease: TaskLease) {
+    val shouldWait = synchronized(operationGate) { activeTaskLease === lease && taskSubmitted }
+    if (shouldWait) withContext(NonCancellable) { taskIdle.await() }
+  }
+
   suspend fun prompt(sessionId: String, text: String): String {
     val dshId = dshSessionId(sessionId)
     val params =
@@ -318,45 +387,51 @@ object NodeRuntime : NodeLineListener {
    */
   suspend fun runTask(sessionId: String, text: String, timeoutMs: Long = 15 * 60_000L): TaskOutcome =
     withTimeout(timeoutMs) {
-      val assistant = StringBuilder()
-      var toolCalls = 0
-      var sawRunning = false
-      val turnErrors = mutableListOf<String>()
-      val completed = CompletableDeferred<TaskOutcome>()
+      val lease = checkNotNull(beginTask()) { "运行时正忙，无法提交任务" }
+      try {
+        val assistant = StringBuilder()
+        var toolCalls = 0
+        var sawRunning = false
+        val turnErrors = mutableListOf<String>()
+        val completed = CompletableDeferred<TaskOutcome>()
 
-      val collector =
-        CoroutineScope(Dispatchers.Default).launch {
-          dshEvents.collect { event ->
-            if (event.sessionId != sessionId) return@collect
-            when (event) {
-              // 增量只给界面看；调试任务的字符数统计以步进成品为准，免得重复计数
-              is DshEvent.StreamDelta -> Unit
+        val collector =
+          CoroutineScope(Dispatchers.Default).launch {
+            dshEvents.collect { event ->
+              if (event.sessionId != sessionId) return@collect
+              when (event) {
+                // 增量只给界面看；调试任务的字符数统计以步进成品为准，免得重复计数
+                is DshEvent.StreamDelta -> Unit
 
-              is DshEvent.AssistantMessage -> assistant.append(event.text)
+                is DshEvent.AssistantMessage -> assistant.append(event.text)
 
-              is DshEvent.ToolCall -> toolCalls++
+                is DshEvent.ToolCall -> toolCalls++
 
-              is DshEvent.TurnEnded -> event.error?.let(turnErrors::add)
+                is DshEvent.TurnEnded -> event.error?.let(turnErrors::add)
 
-              is DshEvent.Status ->
-                if (event.running) {
-                  sawRunning = true
-                } else if (sawRunning && !completed.isCompleted) {
-                  completed.complete(TaskOutcome(assistant.toString(), toolCalls, turnErrors.toList()))
-                }
+                is DshEvent.Status ->
+                  if (event.running) {
+                    sawRunning = true
+                  } else if (sawRunning && !completed.isCompleted) {
+                    completed.complete(TaskOutcome(assistant.toString(), toolCalls, turnErrors.toList()))
+                  }
 
-              is DshEvent.ToolResult -> Unit
+                is DshEvent.ToolResult -> Unit
+              }
             }
           }
-        }
 
-      try {
-        // 等收集器真正订阅上再提交，避免丢掉第一个状态通知。
-        awaitEventSubscribers()
-        prompt(sessionId, text)
-        completed.await()
+        try {
+          // 等收集器真正订阅上再提交，避免丢掉第一个状态通知。
+          awaitEventSubscribers()
+          prompt(sessionId, text).also { markTaskSubmitted(lease) }
+          completed.await()
+        } finally {
+          collector.cancel()
+        }
       } finally {
-        collector.cancel()
+        awaitTaskIdle(lease)
+        endTask(lease)
       }
     }
 

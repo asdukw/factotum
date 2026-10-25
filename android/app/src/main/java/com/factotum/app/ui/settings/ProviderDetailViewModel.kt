@@ -13,6 +13,8 @@ import com.factotum.app.agent.saveSelectedModels
 import com.factotum.app.agent.setModel
 import com.factotum.app.node.NodeRuntime
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +33,7 @@ internal class ProviderDetailViewModel(
   providerId: String,
   private val fetcher: ModelListFetcher = HttpModelListFetcher(),
   private val runtimeApply: suspend (Context) -> Boolean = { context ->
-    NodeRuntime.reloadIfRunning(context)
+    NodeRuntime.applyWhenIdle(context)
   },
 ) : ViewModel() {
   private val preset: LlmPreset = LlmPreset.byId(providerId) ?: LlmPreset.Custom
@@ -79,6 +81,8 @@ internal class ProviderDetailViewModel(
 
   private val _state = MutableStateFlow(UiState())
   val state: StateFlow<UiState> = _state.asStateFlow()
+
+  private var runtimeApplyJob: Job? = null
 
   init {
     reload()
@@ -142,6 +146,7 @@ internal class ProviderDetailViewModel(
   fun onBaseUrlChange(value: String) {
     _state.update { it.copy(baseUrl = value, error = null) }
     persistFields()
+    scheduleRuntimeApply()
   }
 
   fun onModelDraftChange(value: String) {
@@ -176,7 +181,7 @@ internal class ProviderDetailViewModel(
         error = null,
       )
     }
-    applyRuntimeIfActive()
+    scheduleRuntimeApply()
   }
 
   fun clearKey() {
@@ -193,7 +198,7 @@ internal class ProviderDetailViewModel(
         error = null,
       )
     }
-    applyRuntimeIfActive()
+    scheduleRuntimeApply()
   }
 
   /**
@@ -216,7 +221,7 @@ internal class ProviderDetailViewModel(
       return
     }
     reload()
-    if (wasActive || enabled) applyRuntimeIfActive(force = true)
+    if (wasActive || enabled) scheduleRuntimeApply(force = true)
   }
 
   /** Response API 开关只改调用风格，不动端点 / 模型。 */
@@ -229,12 +234,14 @@ internal class ProviderDetailViewModel(
       }
     _state.update { it.copy(api = api, error = null) }
     persistFields()
+    scheduleRuntimeApply()
   }
 
   /**
    * 把模型加进 / 移出「可用模型」。移除当前模型时自动落到剩下的第一个；一个都不剩就清空。
    * 新加的第一个模型（当前模型为空）会顺手设为当前模型。
    */
+  @Suppress("CyclomaticComplexMethod")
   fun toggleSelectedModel(modelId: String) {
     val id = modelId.trim()
     if (id.isEmpty()) return
@@ -246,11 +253,19 @@ internal class ProviderDetailViewModel(
         current.selectedModels + id
       }
     saveSelectedModels(appContext, preset, next)
+    val nextModel =
+      when {
+        id !in next && current.model == id -> next.firstOrNull().orEmpty()
+        else -> current.model
+      }
     when {
-      id !in next && current.model == id -> setModel(appContext, preset, next.firstOrNull().orEmpty())
+      id !in next && current.model == id -> setModel(appContext, preset, nextModel)
       id in next && current.model.isBlank() -> setModel(appContext, preset, id)
     }
     reload()
+    val modelChanged =
+      (id !in next && current.model == id) || (id in next && current.model.isBlank())
+    if (modelChanged && current.enabled) scheduleRuntimeApply(force = true)
   }
 
   /**
@@ -278,6 +293,7 @@ internal class ProviderDetailViewModel(
         error = if (hasKey) null else "模型已保存；保存 API Key 后才能启用",
       )
     }
+    if (hasKey) scheduleRuntimeApply(force = true)
   }
 
   fun useModelDraft() {
@@ -300,21 +316,19 @@ internal class ProviderDetailViewModel(
         error = null,
       )
     }
-    applyRuntimeIfActive(force = wasActive)
+    scheduleRuntimeApply(force = wasActive)
   }
 
-  private fun applyRuntimeIfActive(force: Boolean = false) {
+  private fun scheduleRuntimeApply(force: Boolean = false) {
     if (!force && AgentConfigStore.enabledPreset(appContext) != preset) return
     _state.update { it.copy(runtimeApplying = true, runtimeApplied = false, error = null) }
-    viewModelScope.launch {
+    runtimeApplyJob?.cancel()
+    runtimeApplyJob = viewModelScope.launch {
+      delay(250)
       try {
         val applied = withContext(Dispatchers.IO) { runtimeApply(appContext) }
         _state.update {
-          it.copy(
-            runtimeApplying = false,
-            runtimeApplied = applied,
-            error = if (applied) null else null,
-          )
+          it.copy(runtimeApplying = false, runtimeApplied = applied, error = if (applied) null else "运行时尚未就绪")
         }
       } catch (
         @Suppress("TooGenericExceptionCaught") error: Throwable,

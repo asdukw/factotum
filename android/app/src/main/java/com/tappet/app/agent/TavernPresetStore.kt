@@ -47,6 +47,30 @@ object TavernPresetStore {
   fun selected(context: Context): TavernPreset =
     presets(context).firstOrNull { it.id == selectedId(context) } ?: TavernPreset.DEFAULT
 
+  /**
+   * 某一轮该用哪套：按卡指定的优先，没指定就跟全局。
+   *
+   * 为什么要有这一层：一套「冷酷军装」的写法和一套「轻小说吐槽」的写法，往往不是同一张卡的
+   * 需求。全局一份预设意味着每换一张卡都要手动切一次，而忘了切就会得到一张口吻不对的卡 ——
+   * 那种错误用户只会归因成「模型不行」。绑定的预设被删掉时退回全局，绝不留下一个悬空 id。
+   */
+  fun forCard(context: Context, cardId: String?): TavernPreset {
+    val bound = cardId?.let { id -> prefs(context).getString(cardKey(id), null) } ?: return selected(context)
+    return presets(context).firstOrNull { it.id == bound } ?: selected(context)
+  }
+
+  /** 这张卡绑了哪套；null = 跟随全局。 */
+  fun boundId(context: Context, cardId: String): String? = prefs(context).getString(cardKey(cardId), null)
+
+  /** 绑定（[presetId] 为 null 即解绑，回到跟随全局）。 */
+  fun bindCard(context: Context, cardId: String, presetId: String?) {
+    val editor = prefs(context).edit()
+    if (presetId == null) editor.remove(cardKey(cardId)) else editor.putString(cardKey(cardId), presetId)
+    editor.apply()
+  }
+
+  private fun cardKey(cardId: String) = "card:$cardId"
+
   fun select(context: Context, id: String) {
     prefs(context).edit().putString(KEY_SELECTED, id).apply()
   }

@@ -10,9 +10,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +37,7 @@ import com.tappet.app.agent.CharacterMemory
 import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.SecondaryLogic
+import com.tappet.app.agent.TavernPresetStore
 import com.tappet.app.agent.WorldEntry
 
 /**
@@ -108,6 +112,10 @@ internal fun CharacterDetailScreen(
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val appContext = LocalContext.current.applicationContext
+  var pickingPreset by remember { mutableStateOf(false) }
+  var presetToken by remember { mutableStateOf(0) }
+
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
       SettingsHeader(title = card?.name ?: "角色", onBack = onBack)
@@ -133,32 +141,28 @@ internal fun CharacterDetailScreen(
           onEdit = onEdit,
         )
 
+        PresetRow(
+          cardId = card.id,
+          token = presetToken,
+          onPick = { pickingPreset = true },
+        )
+        if (pickingPreset) {
+          PresetPickerDialog(
+            cardId = card.id,
+            onDismiss = {
+              pickingPreset = false
+              // 关掉对话框就重读一次绑定：否则行上还挂着旧名字（用户会以为没生效）
+              presetToken++
+            },
+          )
+        }
+
         ProseSection("人设", card.description)
         ProseSection("性格与说话方式", card.personality)
         ProseSection("开场场景", card.scenario)
         ProseSection("开场白", card.firstMes)
 
-        if (card.world.isNotEmpty()) {
-          SectionLabel("世界设定 · ${card.world.size} 条")
-          SettingsGroup {
-            Column(Modifier.padding(16.dp)) {
-              card.world
-                .sortedByDescending { it.constant }
-                .forEach { entry ->
-                  Text(
-                    text = entryLabel(entry),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
-                  Text(
-                    text = entry.content.take(160) + if (entry.content.length > 160) "…" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 10.dp),
-                  )
-                }
-            }
-          }
-        }
+        WorldSection(card)
 
         MemoryCard(memory)
         AboutCard(card)
@@ -176,6 +180,118 @@ internal fun CharacterDetailScreen(
           )
         }
       }
+    }
+  }
+}
+
+/**
+ * 世界设定只读列表：常驻的排前面（它们每轮都在，是这张卡的「底座」）。
+ *
+ * 每条只显示前 160 字 —— 详情页是让人判断「这张卡在演什么」的，不是阅读器；
+ * 要改去编辑页。
+ */
+@Composable
+private fun WorldSection(card: CharacterCard) {
+  if (card.world.isEmpty()) return
+  SectionLabel("世界设定 · ${card.world.size} 条")
+  SettingsGroup {
+    Column(Modifier.padding(16.dp)) {
+      card.world
+        .sortedByDescending { it.constant }
+        .forEach { entry ->
+          Text(
+            text = entryLabel(entry),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Text(
+            text = entry.content.take(160) + if (entry.content.length > 160) "…" else "",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 10.dp),
+          )
+        }
+    }
+  }
+}
+
+/**
+ * 「这张卡用哪套 preset」。
+ *
+ * 放在详情页而不是预设页：用户的注意力在这里（「这张卡为什么说话不像」），要他跳到设置里
+ * 再选一遍，中间就断了。行上直接写当前生效的那套名字 —— 「跟随全局（默认（扮演））」
+ * 这种写法让人知道全局是什么，也就不用去猜。
+ */
+@Composable
+private fun PresetRow(cardId: String, token: Int, onPick: () -> Unit) {
+  val appContext = LocalContext.current.applicationContext
+  // 依赖 token 而不只是 cardId：绑定改完要能立刻反映到这一行上
+  val preset = remember(cardId, token) { TavernPresetStore.forCard(appContext, cardId) }
+  val bound = remember(cardId, token) { TavernPresetStore.boundId(appContext, cardId) }
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Sparkles,
+      title = "酒馆预设",
+      subtitle = if (bound == null) "跟随全局 · ${preset.name}" else preset.name,
+      onClick = onPick,
+    ) {
+      ChevronRight()
+    }
+  }
+}
+
+/**
+ * 选预设：第一行是「跟随全局」，其余每套一行。
+ *
+ * 「跟随全局」不是多此一举 —— 没这一行，用户就无法把一张卡从「绑定」退回「跟随」，
+ * 而全局那套是会变的，绑定死一套等于放弃了以后改全局。
+ */
+@Composable
+private fun PresetPickerDialog(cardId: String, onDismiss: () -> Unit) {
+  val appContext = LocalContext.current.applicationContext
+  val presets = remember(cardId) { TavernPresetStore.presets(appContext) }
+  val global = remember(cardId) { TavernPresetStore.selected(appContext) }
+  var bound by remember(cardId) { mutableStateOf(TavernPresetStore.boundId(appContext, cardId)) }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("这张卡用哪套预设") },
+    text = {
+      Column {
+        PresetChoice(
+          label = "跟随全局",
+          detail = "当前全局：${global.name}",
+          selected = bound == null,
+          onClick = {
+            TavernPresetStore.bindCard(appContext, cardId, null)
+            bound = null
+          },
+        )
+        presets.forEach { preset ->
+          PresetChoice(
+            label = preset.name,
+            detail = if (preset.builtIn) "内置" else "自定义",
+            selected = bound == preset.id,
+            onClick = {
+              TavernPresetStore.bindCard(appContext, cardId, preset.id)
+              bound = preset.id
+            },
+          )
+        }
+      }
+    },
+    confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+  )
+}
+
+@Composable
+private fun PresetChoice(label: String, detail: String, selected: Boolean, onClick: () -> Unit) {
+  Row(
+    Modifier.fillMaxWidth().selectable(selected = selected, onClick = onClick).padding(vertical = 4.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    RadioButton(selected = selected, onClick = onClick)
+    Column(Modifier.weight(1f)) {
+      Text(label, style = MaterialTheme.typography.bodyMedium)
+      Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
 }

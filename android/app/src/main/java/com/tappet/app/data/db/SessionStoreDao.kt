@@ -11,7 +11,13 @@ import kotlinx.coroutines.flow.Flow
  *
  * 用抽象类而不是接口，是为了能在 `@Transaction` 方法里写实现（插入消息时
  * 顺带取序号、更新会话时间戳，必须在同一个事务里）。
+ *
+ * 它也刻意保持「一个库的全部读写入口」：拆成两张表两张 DAO 之后，凡是跨会话与消息的操作
+ * （删会话级联、统计、重排）都得在两处各写一遍，调用方还得同时持有两个 DAO。
+ * 方法数顶到 detekt 阈值，是这份职责真实的宽度 —— 所以这里压掉那条规则，而不是从外面
+ * 再拆一张 DAO 出来。
  */
+@Suppress("TooManyFunctions")
 @Dao
 abstract class SessionStoreDao {
   // ---- session ----
@@ -48,6 +54,10 @@ abstract class SessionStoreDao {
 
   @Query("SELECT * FROM message WHERE session_id = :sessionId ORDER BY seq")
   abstract suspend fun messages(sessionId: String): List<MessageEntity>
+
+  /** 删一条消息；「重写」「删掉这一轮」用它（工具调用跟着 message_id 级联）。 */
+  @Query("DELETE FROM message WHERE id = :id")
+  abstract suspend fun deleteMessage(id: String): Int
 
   @Query("SELECT COALESCE(MAX(seq), 0) + 1 FROM message WHERE session_id = :sessionId")
   abstract suspend fun nextSeq(sessionId: String): Long

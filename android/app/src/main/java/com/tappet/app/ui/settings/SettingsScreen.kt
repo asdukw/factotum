@@ -50,7 +50,6 @@ fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit,
-  onOpenPersona: () -> Unit,
   onOpenCharacters: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -70,7 +69,6 @@ fun SettingsScreen(
     onOpenConnectors = onOpenConnectors,
     onOpenScheduledTasks = onOpenScheduledTasks,
     onOpenVoice = onOpenVoice,
-    onOpenPersona = onOpenPersona,
     onOpenCharacters = onOpenCharacters,
     modifier = modifier,
   )
@@ -84,7 +82,6 @@ internal fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenScheduledTasks: () -> Unit,
   onOpenVoice: () -> Unit = {},
-  onOpenPersona: () -> Unit = {},
   onOpenCharacters: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
@@ -111,7 +108,7 @@ internal fun SettingsScreen(
         // 娱乐跟「干活」分开：人格与角色卡只在酒馆会话里决定谁在说话，日常会话不受影响。
         // 放在同一组里，用户会以为改人格就是改助手本身。
         SectionLabel("娱乐")
-        EntertainmentSection(onOpenPersona = onOpenPersona, onOpenCharacters = onOpenCharacters)
+        EntertainmentSection(onOpenCharacters = onOpenCharacters)
         SectionLabel("模型与服务")
         ModelServicesSection(state = state, onOpenProviders = onOpenProviders)
         SectionLabel("执行层")
@@ -136,36 +133,18 @@ internal fun SettingsScreen(
  * 「助手本人 + 当前人格」。所以它们既不属于模型/服务，也不该跟执行层混在一起。
  */
 @Composable
-private fun EntertainmentSection(
-  onOpenPersona: () -> Unit,
-  onOpenCharacters: () -> Unit,
-) {
+private fun EntertainmentSection(onOpenCharacters: () -> Unit) {
   val context = LocalContext.current
   // 选中即生效、没有可观察的数据源 —— 从子页返回时必须重读，否则停在旧值
   // （与无障碍开关同一个处理）。
-  var persona by remember { mutableStateOf(PersonaStore.selected(context)) }
   var activeCharacter by remember { mutableStateOf(PersonaStore.selectedCharacter(context)) }
   LifecycleResumeEffect(Unit) {
-    persona = PersonaStore.selected(context)
     activeCharacter = PersonaStore.selectedCharacter(context)
     onPauseOrDispose { }
   }
   SettingsGroup {
-    SettingsRow(
-      glyph = GlyphKind.Person,
-      title = "人格",
-      // 扮演中的人格不生效：不写清楚，用户会以为人格设置坏了。
-      subtitle =
-        if (activeCharacter != null) {
-          "角色扮演中，人格暂不生效"
-        } else {
-          "日常会话的说话方式：${persona.name} · ${persona.summary.ifEmpty { "切换它说话的方式" }}"
-        },
-      onClick = onOpenPersona,
-    ) {
-      ChevronRight()
-    }
-    SettingsDivider()
+    // 人格切换这一行**暂时摘掉**：酒馆里该由角色卡说话，人格是另一套机制（改的是日常会话的语气），
+    // 两套入口同时摆在这里，用户分不清「现在是谁在说话」。代码留着，等上游对它有了结论再回来。
     SettingsRow(
       glyph = GlyphKind.Sparkles,
       title = "角色卡",

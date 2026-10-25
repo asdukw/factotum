@@ -247,6 +247,8 @@ class ChatViewModel(
     if (!snapshot.canSend) return
     val sessionId = snapshot.sessionId ?: return
     val prompt = snapshot.input.trim()
+    // 真正发出去的文本可能比用户打的多一段世界书资料；界面与库里存的仍是 `prompt`。
+    val wire = withLore(snapshot, prompt)
 
     _state.update { it.copy(input = "") }
 
@@ -288,139 +290,246 @@ class ChatViewModel(
           )
         }
 
-        val content = StringBuilder()
-        val reasoning = StringBuilder()
-        var failure: Throwable? = null
-        var stopped = false
-        var statusOnly = false
-        var lastFlush = timing.clock()
-        // 增量合并：UI 最多每 UI_FLUSH_INTERVAL_MS 刷一次 —— token 级帧很多，
-        // 逐帧重算 Markdown 太贵；DB 那边另有 timing.flushIntervalMs 的节流。
-        var lastUiFlush = timing.clock()
-        // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
-        var stepStart = 0
-        var reasoningStepStart = 0
-        // 思考时长：第一次推理增量起算，第一条正文到达时结算（只活在这一轮，不入库）
-        var thinkingStartedAt: Long? = null
-
-        fun settleThinking() {
-          val started = thinkingStartedAt ?: return
-          thinkingStartedAt = null
-          markThinkingMs(draft.id, (timing.clock() - started).coerceAtLeast(0))
-        }
-
-        try {
-          streamer.stream(sessionId, prompt).collect { event ->
-            when (event) {
-              is AgentStreamEvent.ReasoningDelta -> {
-                if (thinkingStartedAt == null) {
-                  val started = timing.clock()
-                  thinkingStartedAt = started
-                  // 界面据此把「思考中 1.2 秒」实时往上走；结算时换成 thinkingMs。
-                  markThinkingStarted(draft.id, started)
-                }
-                if (event.startsStep) reasoningStepStart = reasoning.length
-                reasoning.append(event.text)
-                val now = timing.clock()
-                if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
-                  lastUiFlush = now
-                  markReasoning(draft.id, reasoning.toString())
-                }
-                if (now - lastFlush >= timing.flushIntervalMs) {
-                  lastFlush = now
-                  // 节流落库：增量可能每帧都来，200ms 一次已足够「进程被杀也不丢太多」
-                  flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
-                }
-              }
-
-              is AgentStreamEvent.Status -> {
-                statusOnly = true
-                content.clear()
-                content.append(event.text)
-                appendText(draft.id, event.text, replace = true)
-              }
-
-              is AgentStreamEvent.ToolCallStarted -> startToolCall(draft.id, sessionId, event)
-
-              is AgentStreamEvent.ToolCallFinished -> finishToolCall(draft.id, event)
-
-              is AgentStreamEvent.TextDelta -> {
-                settleThinking()
-                // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
-                if (statusOnly) {
-                  statusOnly = false
-                  content.clear()
-                }
-                if (event.startsStep) stepStart = content.length
-                content.append(event.text)
-                val now = timing.clock()
-                if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
-                  lastUiFlush = now
-                  // UI 镜像直接取缓冲快照：坐标与缓冲永远一致，不必推理增量拼接的边界。
-                  appendText(draft.id, content.toString(), replace = true)
-                }
-                if (now - lastFlush >= timing.flushIntervalMs) {
-                  lastFlush = now
-                  flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
-                }
-              }
-
-              is AgentStreamEvent.StepFinal -> {
-                settleThinking()
-                // 增量只是先给眼睛看的；这一步的成品到了就**只替换本步**追加的部分。
-                event.reasoning?.let { full ->
-                  reasoning.setLength(reasoningStepStart.coerceAtMost(reasoning.length))
-                  reasoning.append(full)
-                  markReasoning(draft.id, reasoning.toString())
-                }
-                event.text?.let { full ->
-                  content.setLength(stepStart.coerceAtMost(content.length))
-                  content.append(full)
-                  appendText(draft.id, content.toString(), replace = true)
-                }
-                lastUiFlush = timing.clock()
-                lastFlush = lastUiFlush
-                flush(draft.id, content, reasoning, MessageStatus.Streaming, error = null)
-              }
-
-              AgentStreamEvent.Completed -> Unit
-            }
-          }
-        } catch (cancellation: CancellationException) {
-          stopped = true
-          throw cancellation
-        } catch (
-          // 同上：任务跑批的兜底，失败要落到 failure 交给界面，不能直接炸掉协程。
-          @Suppress("TooGenericExceptionCaught") throwable: Throwable,
-        ) {
-          failure = throwable
-        } finally {
-          withContext(NonCancellable) {
-            val status =
-              when {
-                stopped -> MessageStatus.Stopped
-                failure != null -> MessageStatus.Error
-                else -> MessageStatus.Complete
-              }
-            val error = failure?.let { it.message ?: it.javaClass.simpleName }
-            // 收尾前把 UI 与本地缓冲对齐：增量是合并刷新的（≤50ms），最后几个字可能还没上屏
-            if (content.isNotEmpty()) appendText(draft.id, content.toString(), replace = true)
-            if (reasoning.isNotEmpty()) markReasoning(draft.id, reasoning.toString())
-            flush(draft.id, content, reasoning, status, error)
-            // 这一轮没跑完就被停/出错时，把还挂在「执行中」的工具卡落成中断态。
-            if (stopped || failure != null) finishRunningToolCalls(draft.id)
-            // 思考中被打断也要结算时长，否则界面会永远停在「思考中」。
-            settleThinking()
-            finishStream(draft.id, error)
-          }
-        }
+        streamInto(sessionId, draft.id, wire)
       }
   }
 
-  /** 中止本次流式响应，已收到的内容保留（库里记为 Stopped）。 */
-  fun stop() {
-    streamJob?.cancel()
+  /**
+   * 把一轮响应流进 [draftId]。
+   *
+   * 抽出来是因为「重写这一轮」和「发一条新的」除了开头那两句之外走的是同一条路：
+   * 都要落库、都要节流、都要在异常里把状态收尾。复制一份的下场是两处行为慢慢分叉。
+   *
+   * [wire] 是**真正发出去**的文本（可能带着世界书资料），界面与库里存的是调用方给的那份。
+   */
+  private suspend fun streamInto(sessionId: String, draftId: String, wire: String) {
+    val turn = TurnRun(sessionId, draftId)
+    try {
+      streamer.stream(sessionId, wire).collect { event -> turn.handle(event) }
+    } catch (cancellation: CancellationException) {
+      turn.stopped = true
+      throw cancellation
+    } catch (
+      // 任务跑批的兜底，失败要落到 failure 交给界面，不能直接炸掉协程。
+      @Suppress("TooGenericExceptionCaught") throwable: Throwable,
+    ) {
+      turn.failure = throwable
+    } finally {
+      withContext(NonCancellable) { turn.finish() }
+    }
   }
+
+  /**
+   * 一轮响应的可变状态与收帧逻辑。
+   *
+   * 抽成类不是为了复用，而是为了**把 `when` 的每个分支收成一个小函数** —— 七个分支挤在
+   * 一个函数里，改一处要读一百行，复杂度也压不下来。这里的状态只活在一轮之内。
+   */
+  private inner class TurnRun(
+    private val sessionId: String,
+    private val draftId: String,
+  ) {
+    val content = StringBuilder()
+    val reasoning = StringBuilder()
+    var failure: Throwable? = null
+    var stopped = false
+    private var statusOnly = false
+
+    // 增量合并：UI 最多每 UI_FLUSH_INTERVAL_MS 刷一次 —— token 级帧很多，
+    // 逐帧重算 Markdown 太贵；DB 那边另有 timing.flushIntervalMs 的节流。
+    private var lastFlush = timing.clock()
+    private var lastUiFlush = timing.clock()
+
+    // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
+    private var stepStart = 0
+    private var reasoningStepStart = 0
+
+    // 思考时长：第一次推理增量起算，第一条正文到达时结算（只活在这一轮，不入库）
+    private var thinkingStartedAt: Long? = null
+
+    suspend fun handle(event: AgentStreamEvent) {
+      when (event) {
+        is AgentStreamEvent.ReasoningDelta -> onReasoning(event)
+        is AgentStreamEvent.Status -> onStatus(event.text)
+        is AgentStreamEvent.ToolCallStarted -> startToolCall(draftId, sessionId, event)
+        is AgentStreamEvent.ToolCallFinished -> finishToolCall(draftId, event)
+        is AgentStreamEvent.TextDelta -> onTextDelta(event)
+        is AgentStreamEvent.StepFinal -> onStepFinal(event)
+        AgentStreamEvent.Completed -> Unit
+      }
+    }
+
+    private suspend fun onReasoning(event: AgentStreamEvent.ReasoningDelta) {
+      if (thinkingStartedAt == null) {
+        val started = timing.clock()
+        thinkingStartedAt = started
+        // 界面据此把「思考中 1.2 秒」实时往上走；结算时换成 thinkingMs。
+        markThinkingStarted(draftId, started)
+      }
+      if (event.startsStep) reasoningStepStart = reasoning.length
+      reasoning.append(event.text)
+      val now = timing.clock()
+      if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
+        lastUiFlush = now
+        markReasoning(draftId, reasoning.toString())
+      }
+      throttleFlush(now)
+    }
+
+    private suspend fun onStatus(text: String) {
+      statusOnly = true
+      content.clear()
+      content.append(text)
+      appendText(draftId, text, replace = true)
+    }
+
+    private suspend fun onTextDelta(event: AgentStreamEvent.TextDelta) {
+      settleThinking()
+      // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
+      if (statusOnly) {
+        statusOnly = false
+        content.clear()
+      }
+      if (event.startsStep) stepStart = content.length
+      content.append(event.text)
+      val now = timing.clock()
+      if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
+        lastUiFlush = now
+        // UI 镜像直接取缓冲快照：坐标与缓冲永远一致，不必推理增量拼接的边界。
+        appendText(draftId, content.toString(), replace = true)
+      }
+      throttleFlush(now)
+    }
+
+    private suspend fun onStepFinal(event: AgentStreamEvent.StepFinal) {
+      settleThinking()
+      // 增量只是先给眼睛看的；这一步的成品到了就**只替换本步**追加的部分。
+      event.reasoning?.let { full ->
+        reasoning.setLength(reasoningStepStart.coerceAtMost(reasoning.length))
+        reasoning.append(full)
+        markReasoning(draftId, reasoning.toString())
+      }
+      event.text?.let { full ->
+        content.setLength(stepStart.coerceAtMost(content.length))
+        content.append(full)
+        appendText(draftId, content.toString(), replace = true)
+      }
+      lastUiFlush = timing.clock()
+      lastFlush = lastUiFlush
+      flush(draftId, content, reasoning, MessageStatus.Streaming, error = null)
+    }
+
+    /** 节流落库：增量可能每帧都来，200ms 一次已足够「进程被杀也不丢太多」。 */
+    private suspend fun throttleFlush(now: Long) {
+      if (now - lastFlush < timing.flushIntervalMs) return
+      lastFlush = now
+      flush(draftId, content, reasoning, MessageStatus.Streaming, error = null)
+    }
+
+    private fun settleThinking() {
+      val started = thinkingStartedAt ?: return
+      thinkingStartedAt = null
+      markThinkingMs(draftId, (timing.clock() - started).coerceAtLeast(0))
+    }
+
+    /** 收尾：定状态、把最后的缓冲对齐到界面与库，再把还挂着的工具卡落成中断态。 */
+    suspend fun finish() {
+      val status =
+        when {
+          stopped -> MessageStatus.Stopped
+          failure != null -> MessageStatus.Error
+          else -> MessageStatus.Complete
+        }
+      val error = failure?.let { it.message ?: it.javaClass.simpleName }
+      // 收尾前把 UI 与本地缓冲对齐：增量是合并刷新的（≤50ms），最后几个字可能还没上屏
+      if (content.isNotEmpty()) appendText(draftId, content.toString(), replace = true)
+      if (reasoning.isNotEmpty()) markReasoning(draftId, reasoning.toString())
+      flush(draftId, content, reasoning, status, error)
+      // 这一轮没跑完就被停/出错时，把还挂在「执行中」的工具卡落成中断态。
+      if (stopped || failure != null) finishRunningToolCalls(draftId)
+      // 思考中被打断也要结算时长，否则界面会永远停在「思考中」。
+      settleThinking()
+      finishStream(draftId, error)
+    }
+  }
+
+  /**
+   * 给这一轮补上命中的世界书条目。
+   *
+   * 只在发送这一刻算：卡是数据，随时可能被改；把结果缓存下来会让「改了设定但没生效」变成一个
+   * 说不清的状态。最近三条用户消息一起当关键词来源 —— 「她呢」这种指代只有连着上文才命中。
+   */
+  private val withLore: (ChatUiState, String) -> String = { snapshot, text ->
+    val card = snapshot.activeCharacterId?.let { id -> roleplay.characters().firstOrNull { it.id == id } }
+    val recent = snapshot.messages.filter { it.role == ChatRole.User }.map { it.content }.takeLast(3)
+    LoreInject.augment(card, text, recent)
+  }
+
+  /**
+   * 重写最后一条回复。
+   *
+   * 做法是删掉那条，然后让模型把这一轮再说一遍 —— 不是「回滚到上一拍再重发」。
+   * 区别是实在的：dsh 的会话上下文里那一轮已经发生了，删库删不掉它那边的记忆，
+   * 所以新回复会建立在「我上一条说过了」之上。这不是完美实现，但它是唯一不需要
+   * SDK 提供回滚 API 的实现；界面上也写明了这一点。
+   */
+  val regenerate: () -> Unit = lambda@{
+    val snapshot = _state.value
+    if (!snapshot.canSend) return@lambda
+    val sessionId = snapshot.sessionId ?: return@lambda
+    val last = snapshot.messages.lastOrNull() ?: return@lambda
+    if (last.role != ChatRole.Assistant || last.streaming || last.content.isBlank()) return@lambda
+
+    streamJob =
+      viewModelScope.launch {
+        val draft =
+          runCatching {
+            store.deleteMessage(last.id)
+            store.appendMessage(sessionId, MessageRole.Assistant, "", MessageStatus.Streaming)
+          }
+            .getOrElse { throwable ->
+              reportStorageFailure(throwable)
+              return@launch
+            }
+        _state.update {
+          it.copy(
+            isStreaming = true,
+            messages = it.messages.dropLast(1) + ChatMessage(id = draft.id, role = ChatRole.Assistant, streaming = true),
+          )
+        }
+        streamInto(sessionId, draft.id, withLore(snapshot, REGENERATE_PROMPT))
+      }
+  }
+
+  /**
+   * 删掉最后一轮（助手那条 + 它前面紧挨着的用户那条）。
+   *
+   * 只在本地删：dsh 那边的上下文照旧，所以下一句仍会「接着刚才」说。真要做到干净，
+   * 需要按会话重放历史给运行时 —— 那是另一件事（见 roleplay 的设计笔记）。
+   */
+  val deleteLastTurn: () -> Unit = lambda@{
+    val snapshot = _state.value
+    if (snapshot.isStreaming) return@lambda
+    val messages = snapshot.messages
+    val lastAssistant = messages.indexOfLast { it.role == ChatRole.Assistant }
+    if (lastAssistant < 0) return@lambda
+    val from =
+      if (lastAssistant > 0 && messages[lastAssistant - 1].role == ChatRole.User) {
+        lastAssistant - 1
+      } else {
+        lastAssistant
+      }
+    val removed = messages.subList(from, messages.size).toList()
+    if (removed.isEmpty()) return@lambda
+    viewModelScope.launch {
+      runCatching { removed.forEach { store.deleteMessage(it.id) } }
+        .onSuccess { _state.update { state -> state.copy(messages = state.messages.dropLast(removed.size)) } }
+        .onFailure(::reportStorageFailure)
+    }
+  }
+
+  /** 中止本次流式响应，已收到的内容保留（库里记为 Stopped）。 */
+  val stop: () -> Unit = { streamJob?.cancel() }
 
   /** 切到指定会话；任务进行中忽略（UI 已置灰）。 */
   fun openSession(id: String) {
@@ -756,6 +865,14 @@ class ChatViewModel(
 
     /** 会话标题取第一条用户消息的前若干字。 */
     const val TITLE_MAX_CHARS = 24
+
+    /**
+     * 「重写」时真正发出去的那句。
+     *
+     * 不落库、不上屏 —— 它只是让模型再说一遍的把手。写成问句式的要求，比「重新生成」这种
+     * 系统口吻更容易被角色接住：模型会顺着角色的语气重写，而不是跳出来解释自己在重写。
+     */
+    const val REGENERATE_PROMPT = "（重写你上一条回复：换个写法，不要用刚才的开头，也别解释你在重写。）"
   }
 }
 

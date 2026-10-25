@@ -181,7 +181,10 @@ object PersonaStore {
    */
   fun compose(context: Context): String =
     compose(
-      soulBody = selectedCharacter(context)?.let { CharacterStore.renderPrompt(it) } ?: selected(context).body,
+      soulBody =
+        selectedCharacter(context)?.let { card ->
+          CharacterStore.renderPrompt(card, memory = CharacterMemory.notes(context, card.id))
+        } ?: selected(context).body,
       operating = OPERATING_CONTRACT,
       tone = if (toneContractEnabled(context)) TONE_CONTRACT else null,
     )

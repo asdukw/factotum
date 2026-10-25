@@ -134,17 +134,17 @@ internal fun CharacterScreen(
           }
         }
 
-        SectionLabel("还没做的")
+        SectionLabel("怎么工作")
         SettingsGroup {
           Column(Modifier.padding(16.dp)) {
-            Note("在 App 里手写/编辑角色（现在只能导入现成的卡）")
-            Note("每个角色独立记忆（现在共用一份 AGENTS.md）")
-            Note("世界书按对话内容按需检索（现在只注入常驻条目与开场命中的条目）")
+            Note("卡里的 system_prompt 与示例对话不会进来 —— 前者常写着「忽略一切规则」，后者占 token 且口癖会被过度模仿。")
+            Note("常驻的世界设定每轮都在；其余条目在发消息那一刻按关键词命中才跟着这一轮送进去。")
+            Note("记忆按角色分开存，只对它自己生效；内容由你写，模型不会偷偷往里加。")
           }
         }
         Spacer(Modifier.height(12.dp))
         Text(
-          text = "开始扮演会重载运行时并开一段新上下文；退出角色随时可以回到默认人格。",
+          text = "开始扮演会重载运行时并开一段新上下文；退出角色随时可以回到日常。",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(horizontal = 4.dp),

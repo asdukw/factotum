@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tappet.app.agent.CharacterCard
+import com.tappet.app.agent.CharacterMemory
 import com.tappet.app.agent.CharacterPins
 import com.tappet.app.agent.CharacterStore
 
@@ -63,9 +64,10 @@ fun CharacterDetailScreen(
   if (editing && current != null) {
     CharacterEditPage(
       card = current,
+      memory = CharacterMemory.notes(appContext, characterId),
       onCancel = { editing = false },
-      onSave = { updated ->
-        viewModel.save(updated)
+      onSave = { updated, memory ->
+        viewModel.save(updated, memory)
         card = updated
         editing = false
       },
@@ -77,6 +79,7 @@ fun CharacterDetailScreen(
     card = current,
     pinned = pinned,
     applying = state.applying,
+    memory = CharacterMemory.notes(appContext, characterId),
     onBack = onBack,
     onStart = { id -> viewModel.start(id) { onStartChat() } },
     onTogglePin = { pinned = CharacterPins.toggle(appContext, characterId) },
@@ -95,6 +98,7 @@ internal fun CharacterDetailScreen(
   card: CharacterCard?,
   pinned: Boolean,
   applying: Boolean,
+  memory: String = "",
   onBack: () -> Unit,
   onStart: (String) -> Unit,
   onTogglePin: () -> Unit,
@@ -154,6 +158,7 @@ internal fun CharacterDetailScreen(
           }
         }
 
+        MemoryCard(memory)
         AboutCard(card)
 
         if (card.imported) {
@@ -170,6 +175,26 @@ internal fun CharacterDetailScreen(
         }
       }
     }
+  }
+}
+
+/**
+ * 角色记忆：一张卡一份，注入到它自己的系统提示里。
+ *
+ * 摆在这一页是因为它和卡的正文一样属于「这张卡是什么」；但存在另一份文件里 ——
+ * 记忆是随对话长出来的，不该混进从别处导入的卡正文。
+ */
+@Composable
+private fun MemoryCard(notes: String) {
+  SectionLabel("角色记忆")
+  SettingsGroup {
+    Text(
+      text = notes.ifBlank { "还没有。点「编辑文案」可以写：你们之间发生过什么、约好过什么 —— 只对这张卡生效。" },
+      style = MaterialTheme.typography.bodyMedium,
+      color =
+        if (notes.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+      modifier = Modifier.fillMaxWidth().padding(16.dp),
+    )
   }
 }
 

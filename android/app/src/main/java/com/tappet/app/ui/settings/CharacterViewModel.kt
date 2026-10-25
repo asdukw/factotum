@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.agent.CharacterCard
 import com.tappet.app.agent.CharacterImporter
+import com.tappet.app.agent.CharacterMemory
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.PersonaStore
 import com.tappet.app.agent.SessionHandoff
@@ -140,6 +141,7 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
 
   /** 删掉一张导入的卡；正在扮演的卡被删时顺手退出角色，免得界面停在「扮演中」。 */
   fun delete(id: String) {
+    CharacterMemory.forget(appContext, id)
     CharacterStore.deleteImported(appContext, id)
     if (_state.value.activeId == id) {
       PersonaStore.clearCharacter(appContext)
@@ -166,12 +168,13 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     onCreated(card.id)
   }
 
-  /** 保存编辑结果（只对应用目录里的卡有意义）。 */
-  fun save(card: CharacterCard) {
+  /** 保存编辑结果（只对应用目录里的卡有意义）；[memory] 一并写这张卡记忆的那份文件。 */
+  fun save(card: CharacterCard, memory: String = "") {
     if (!CharacterStore.saveImported(appContext, card)) {
       _state.update { it.copy(message = "保存失败：写不进应用目录") }
       return
     }
+    CharacterMemory.save(appContext, card.id, memory)
     refresh()
     _state.update { it.copy(message = "已保存「${card.name}」") }
   }

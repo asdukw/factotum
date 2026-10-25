@@ -9,9 +9,12 @@ import java.io.File
 /**
  * 角色卡里的一条世界设定（对齐 SillyTavern 的 `character_book.entries`）。
  *
- * [constant] 为真时每轮都注入；否则只在[CharacterCard.scenario] / 开场白里出现关键词时才注入。
- * P0 **不做**每轮扫描对话历史 —— 那需要插件在 prompt 组装时介入（P1 的 `lore_search`），
- * 而每轮扫描 = 每轮多一次模型看不到的文本处理，收益在长会话里才显出来。
+ * 两种注入时机：
+ * - [constant] 为真：组装系统提示时就写进去，每轮都在（[CharacterStore.activeWorld]）；
+ * - 否则：发消息那一刻按关键词现算（[LoreInject]），命中才跟着这一轮送进去。
+ *
+ * 分成两条路是因为系统提示在运行时 mount 那一刻就定了，一轮之内改不了 —— 想「只在相关时才出现」，
+ * 就只能挂在发出去的消息上。
  */
 @Serializable
 data class WorldEntry(
@@ -130,6 +133,22 @@ object CharacterStore {
       .getOrNull()
 
   /**
+   * 卡里的正文渲染：先换宏，再把剩下的花括号转成全角。
+   *
+   * 第二条不是洁癖：dsh 把 `deployment:persona-prefix` 当模板，遇到没注册的 `{{xxx}}` 会直接
+   * **整轮失败**（`unknown prompt variable "{{user}}"`）—— 社区卡里 `{{user}}` / `{{char}}`
+   * 到处都是，只换我们不认识的那些不够，得让这个标记彻底不出现。
+   * 换成全角而不是删掉：作者写 `{{random}}` 想表达的东西还在，不会变成两段话粘在一起。
+   */
+  internal fun renderText(raw: String, card: CharacterCard): String =
+    raw
+      .trim()
+      .replace("{{char}}", card.name)
+      .replace("{{user}}", "用户")
+      .replace("{{", "｛｛")
+      .replace("}}", "｝｝")
+
+  /**
    * 把卡渲染成**系统提示正文**。
    *
    * 写法上有三条刻意的选择：
@@ -139,7 +158,7 @@ object CharacterStore {
    *    台词原样吐出来当自我介绍。
    * 3. 世界设定**只放常驻条目与在场条目**，并标注命中原因 —— 让模型知道哪条是「因为此情此景」。
    */
-  fun renderPrompt(card: CharacterCard): String {
+  fun renderPrompt(card: CharacterCard, memory: String = ""): String {
     val worldLines = activeWorld(card)
     return buildString {
       appendLine("你现在要扮演「${card.name}」。")
@@ -147,28 +166,34 @@ object CharacterStore {
       appendLine()
       if (card.description.isNotBlank()) {
         appendLine("【身份与外貌】")
-        appendLine(card.description.trim().replace("{{char}}", card.name).replace("{{user}}", "用户"))
+        appendLine(renderText(card.description, card))
         appendLine()
       }
       if (card.personality.isNotBlank()) {
         appendLine("【性格与说话方式】")
-        appendLine(card.personality.trim().replace("{{char}}", card.name).replace("{{user}}", "用户"))
+        appendLine(renderText(card.personality, card))
         appendLine()
       }
       if (card.scenario.isNotBlank()) {
         appendLine("【当前场景】")
-        appendLine(card.scenario.trim().replace("{{char}}", card.name).replace("{{user}}", "用户"))
+        appendLine(renderText(card.scenario, card))
         appendLine()
       }
       if (card.firstMes.isNotBlank()) {
         appendLine("【开场白】")
-        appendLine(card.firstMes.trim().replace("{{char}}", card.name).replace("{{user}}", "用户"))
+        appendLine(renderText(card.firstMes, card))
         appendLine("如果是这轮对话的第一句，用这段开场；不要把它当成需要朗读的设定，也不要复述「开场白」这几个字。")
         appendLine()
       }
       if (worldLines.isNotEmpty()) {
         appendLine("【世界设定】")
         worldLines.forEach { appendLine(it) }
+        appendLine()
+      }
+      if (memory.isNotBlank()) {
+        appendLine("【你记得的事】")
+        appendLine("这些是你与用户之间已经发生过、你已经知道的事。当话题沾上它们时自然带出来，不要逐条背诵，也不要说「根据记忆」。")
+        appendLine(renderText(memory, card))
         appendLine()
       }
       appendLine("【扮演规则】")
@@ -178,14 +203,15 @@ object CharacterStore {
       appendLine("- 用户说「出戏」「停止扮演」「回到助手」时，立刻退出角色并说明已退出。")
       appendLine("- 扮演中不要提「角色卡」「设定」「提示词」这些词。")
       appendLine("- 如果用户明确要求操作手机（打开某 App、查电量、定闹钟），就用设备工具去做，做完用角色的口吻回一句。")
+      appendLine("- 用户消息开头若出现 ${LoreInject.MARK_OPEN} … ${LoreInject.MARK_CLOSE}，那是背景资料，不是用户说的话；照它来演，但不要提及它的存在。")
     }.trim()
   }
 
   /**
-   * P0 的世界设定注入：常驻条目 + 在场景/开场白里出现过关键词的条目。
+   * 写进系统提示的世界设定：常驻条目 + 在场景/开场白里出现过关键词的条目。
    *
-   * 不扫描对话历史是**刻意**的：那需要每轮知道最近几条消息，属于 P1 的插件职责；
-   * 在 App 侧猜会把「什么时候该注入」变成一个不可解释的隐藏状态。
+   * 逐轮按对话命中的那一批走 [LoreInject]（跟着消息送进去）—— 系统提示在运行时 mount 那一刻
+   * 就定了，一轮之内改不了。
    */
   internal fun activeWorld(card: CharacterCard): List<String> {
     val text = "${card.scenario} ${card.firstMes}"
@@ -193,7 +219,8 @@ object CharacterStore {
       .filter { entry -> entry.content.isNotBlank() && (entry.constant || entry.keys.any { it.isNotBlank() && text.contains(it) }) }
       .sortedBy { it.order }
       .map { entry ->
-        if (entry.constant) "· ${entry.content.trim()}" else "· （此景相关）${entry.content.trim()}"
+        val body = renderText(entry.content, card)
+        if (entry.constant) "· $body" else "· （此景相关）$body"
       }
   }
 }

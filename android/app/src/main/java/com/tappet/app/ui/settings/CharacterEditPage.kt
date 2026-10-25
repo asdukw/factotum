@@ -50,8 +50,9 @@ private data class WorldDraft(
 @Composable
 internal fun CharacterEditPage(
   card: CharacterCard,
+  memory: String = "",
   onCancel: () -> Unit,
-  onSave: (CharacterCard) -> Unit,
+  onSave: (CharacterCard, String) -> Unit,
 ) {
   var name by remember(card.id) { mutableStateOf(card.name) }
   var tagline by remember(card.id) { mutableStateOf(card.tagline) }
@@ -60,6 +61,7 @@ internal fun CharacterEditPage(
   var scenario by remember(card.id) { mutableStateOf(card.scenario) }
   var firstMes by remember(card.id) { mutableStateOf(card.firstMes) }
   var tags by remember(card.id) { mutableStateOf(card.tags.joinToString("、")) }
+  var memoryText by remember(card.id) { mutableStateOf(memory) }
   val world =
     remember(card.id) {
       mutableStateListOf<WorldDraft>().apply {
@@ -95,6 +97,14 @@ internal fun CharacterEditPage(
 
         WorldEditSection(world)
 
+        SectionLabel("角色记忆")
+        Field(
+          label = "你与用户之间已经发生过的事",
+          value = memoryText,
+          minLines = 3,
+          hint = "只对这张卡生效，换角色不会串。写关系、约定、发生过的事；留空即清除。",
+        ) { memoryText = it }
+
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           TextButton(onClick = onCancel) { Text("取消") }
@@ -113,7 +123,7 @@ internal fun CharacterEditPage(
                   world = toWorldEntries(world),
                   imported = true,
                 )
-              onSave(next)
+              onSave(next, memoryText)
             },
             enabled = name.isNotBlank(),
           ) {

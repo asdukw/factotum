@@ -29,9 +29,8 @@ fun MainNavigation() {
         entry<Main> {
           ChatScreen(
             onOpenSettings = { backStack.add(Settings) },
-            // 酒馆侧栏的两个入口：直接进角色库 / 人格页，不必绕设置。
+            // 酒馆侧栏的入口：直接进角色库，不必绕设置（人格页暂时只留在代码里）。
             onOpenCharacters = { backStack.add(Characters) },
-            onOpenPersona = { backStack.add(Persona) },
             onOpenCharacterDetail = { id -> backStack.add(CharacterDetail(id)) },
           )
         }
@@ -42,7 +41,6 @@ fun MainNavigation() {
             onOpenConnectors = { backStack.add(Connectors) },
             onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
             onOpenVoice = { backStack.add(Voice) },
-            onOpenPersona = { backStack.add(Persona) },
             onOpenCharacters = { backStack.add(Characters) },
           )
         }

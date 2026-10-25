@@ -120,6 +120,13 @@ interface SessionStore {
     finishedAt: Long?,
   )
 
+  /**
+   * 删一条消息（重写 / 删掉这一轮）。
+   *
+   * 给了默认实现：只关心追加的测试替身不必跟着改；真实现必须覆盖，否则界面上删掉的会自己回来。
+   */
+  suspend fun deleteMessage(id: String) {}
+
   /** 记下这段会话在用的模型（切模型时写，进会话时据此装回去）。 */
   suspend fun setSessionModel(sessionId: String, model: String?) {}
 

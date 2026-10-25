@@ -147,7 +147,6 @@ fun ChatScreen(
   onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
   onOpenCharacters: () -> Unit = {},
-  onOpenPersona: () -> Unit = {},
   onOpenCharacterDetail: (String) -> Unit = {},
   store: SessionStore = LocalContext.current.tappetSessionStore(),
 ) {
@@ -196,7 +195,7 @@ fun ChatScreen(
     state = state,
     onInputChange = viewModel::onInputChange,
     onSend = viewModel::send,
-    onStop = viewModel::stop,
+    onStop = viewModel.stop,
     onNewSession = viewModel::newSession,
     onOpenSession = viewModel::openSession,
     onDeleteSession = viewModel::deleteSession,
@@ -205,10 +204,11 @@ fun ChatScreen(
     onLeaveRoleplay = viewModel.roleplayActions::leave,
     onOpenSettings = onOpenSettings,
     onOpenCharacters = onOpenCharacters,
-    onOpenPersona = onOpenPersona,
     onOpenCharacterDetail = onOpenCharacterDetail,
     onSwitchModel = viewModel.modelSwitch::switch,
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
+    onRegenerate = viewModel.regenerate,
+    onDeleteTurn = viewModel.deleteLastTurn,
     modifier = modifier,
   )
 }
@@ -245,8 +245,9 @@ internal fun ChatScreen(
   onLeaveRoleplay: () -> Unit = {},
   onOpenSettings: () -> Unit = {},
   onOpenCharacters: () -> Unit = {},
-  onOpenPersona: () -> Unit = {},
   onOpenCharacterDetail: (String) -> Unit = {},
+  onRegenerate: () -> Unit = {},
+  onDeleteTurn: () -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -265,21 +266,14 @@ internal fun ChatScreen(
   ChatOverlays()
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
-  var modelSheetOpen by remember { mutableStateOf(false) }
-  var pendingSwitch by remember { mutableStateOf(false) }
-  var modelChoices by remember { mutableStateOf(emptyList<ModelChoice>()) }
-  LaunchedEffect(state.switchingModel) {
-    if (pendingSwitch && !state.switchingModel && state.switchError == null) {
-      modelSheetOpen = false
-      pendingSwitch = false
-    }
-  }
+  val sheet = remember { ModelSheet() }
+  LaunchedEffect(state.switchingModel) { sheet.settle(state.switchingModel, state.switchError) }
 
   // 抽屉里也能打开模型切换：酒馆里换模型是常见动作（便宜的跑日常、好的跑角色），
   // 不该先关掉抽屉再去输入框找那个入口。
   val openModelSwitch: () -> Unit = {
-    modelChoices = onPrepareModelSwitch()
-    modelSheetOpen = true
+    sheet.choices = onPrepareModelSwitch()
+    sheet.open = true
     scope.launch { drawerState.close() }
   }
 
@@ -302,7 +296,6 @@ internal fun ChatScreen(
         onNewRoleplaySession = closeThen(scope, drawerState) { id -> onNewRoleplaySession(id) },
         onOpenRoleplay = closeThen(scope, drawerState) { id -> onOpenRoleplay(id) },
         onOpenCharacters = closeThen(scope, drawerState, onOpenCharacters),
-        onOpenPersona = closeThen(scope, drawerState, onOpenPersona),
         onOpenSettings = closeThen(scope, drawerState, onOpenSettings),
         onOpenCharacterDetail = closeThen(scope, drawerState) { id -> onOpenCharacterDetail(id) },
         onOpenModelSwitch = openModelSwitch,
@@ -318,27 +311,26 @@ internal fun ChatScreen(
       onStop = onStop,
       onNewSession = onNewSession,
       onLeaveRoleplay = onLeaveRoleplay,
+      onRegenerate = onRegenerate,
+      onDeleteTurn = onDeleteTurn,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
-        modelChoices = onPrepareModelSwitch()
-        modelSheetOpen = true
+        sheet.choices = onPrepareModelSwitch()
+        sheet.open = true
       },
     )
   }
 
-  if (modelSheetOpen) {
+  if (sheet.open) {
     ModelSwitchSheet(
-      choices = modelChoices,
+      choices = sheet.choices,
       switching = state.switchingModel,
       error = state.switchError,
       onSelect = { choice ->
-        pendingSwitch = true
+        sheet.pending = true
         onSwitchModel(choice)
       },
-      onDismiss = {
-        modelSheetOpen = false
-        pendingSwitch = false
-      },
+      onDismiss = { sheet.reset() },
     )
   }
 }
@@ -599,6 +591,8 @@ private fun ChatBody(
   onOpenSessions: () -> Unit,
   onModelSwitchClick: () -> Unit,
   onLeaveRoleplay: () -> Unit = {},
+  onRegenerate: () -> Unit = {},
+  onDeleteTurn: () -> Unit = {},
 ) {
   // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
@@ -641,19 +635,13 @@ private fun ChatBody(
     StatusBanners(state = state, voiceError = voiceError, dictation = dictation)
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
-      LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-      ) {
-        if (state.messages.isEmpty()) {
-          item { EmptyHint(characterName = state.activeCharacterName) }
-        }
-        items(items = state.messages, key = { it.id }) { message ->
-          MessageBubble(message, speakingId = voiceState?.messageId)
-        }
-      }
+      MessageList(
+        state = state,
+        listState = listState,
+        speakingId = voiceState?.messageId,
+        onRegenerate = onRegenerate,
+        onDeleteTurn = onDeleteTurn,
+      )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
       if (!following) {
@@ -683,6 +671,62 @@ private fun ChatBody(
       onModelSwitchClick = onModelSwitchClick,
       onMicClick = onMicClick,
     )
+  }
+}
+
+/**
+ * 模型面板的三个开关合成一个 holder。
+ *
+ * 不是为了省行数：它们是**一起变**的 —— 面板开着、点了某个模型（pending）、切换结束后要收起来。
+ * 拆成三个 remember 时，任何一条路径漏掉 pending 的复位，面板就会「换完不关」。
+ */
+private class ModelSheet {
+  var open by mutableStateOf(false)
+  var pending by mutableStateOf(false)
+  var choices by mutableStateOf<List<ModelChoice>>(emptyList())
+
+  /** 切换结束后收起面板；切换出错时留在原地，让用户看到原因。 */
+  fun settle(switching: Boolean, error: String?) {
+    if (pending && !switching && error == null) open = false
+    if (!switching) pending = false
+  }
+
+  fun reset() {
+    open = false
+    pending = false
+  }
+}
+
+/** 消息列表：空态 + 每一条气泡。「重写 / 删掉这一轮」只挂在最后一条助手消息上。 */
+@Composable
+private fun MessageList(
+  state: ChatUiState,
+  listState: LazyListState,
+  speakingId: String?,
+  onRegenerate: () -> Unit,
+  onDeleteTurn: () -> Unit,
+) {
+  // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
+  // 而删中间一轮会让后面的对话悬在半空。
+  val tailId = state.messages.lastOrNull { it.role == ChatRole.Assistant }?.id
+  LazyColumn(
+    state = listState,
+    modifier = Modifier.fillMaxSize(),
+    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+    verticalArrangement = Arrangement.spacedBy(18.dp),
+  ) {
+    if (state.messages.isEmpty()) {
+      item { EmptyHint(characterName = state.activeCharacterName) }
+    }
+    items(items = state.messages, key = { it.id }) { message ->
+      MessageBubble(
+        message = message,
+        speakingId = speakingId,
+        tail = message.id == tailId && !state.isStreaming,
+        onRegenerate = onRegenerate,
+        onDeleteTurn = onDeleteTurn,
+      )
+    }
   }
 }
 
@@ -1100,7 +1144,6 @@ private fun SessionDrawer(
   onNewRoleplaySession: (String) -> Unit,
   onOpenRoleplay: (String) -> Unit,
   onOpenCharacters: () -> Unit,
-  onOpenPersona: () -> Unit,
   onOpenSettings: () -> Unit,
   onOpenCharacterDetail: (String) -> Unit = {},
   onOpenModelSwitch: () -> Unit = {},
@@ -1156,7 +1199,6 @@ private fun SessionDrawer(
         roleplayEntries = tab == DrawerTab.Roleplay,
         configSummary = configSummary,
         onOpenCharacters = onOpenCharacters,
-        onOpenPersona = onOpenPersona,
         onOpenSettings = onOpenSettings,
         onOpenModelSwitch = onOpenModelSwitch,
       )
@@ -1188,22 +1230,18 @@ private fun SessionDrawer(
   }
 }
 
-/** 抽屉底部：酒馆里多两个入口（角色卡 / 人格），再加上设置与当前模型摘要。 */
+/** 抽屉底部：酒馆里多两个入口（角色卡 / 本段会话的模型），再加上设置与当前模型摘要。 */
 @Composable
 private fun DrawerFooter(
   roleplayEntries: Boolean,
   configSummary: String,
   onOpenCharacters: () -> Unit,
-  onOpenPersona: () -> Unit,
   onOpenSettings: () -> Unit,
   onOpenModelSwitch: () -> Unit,
 ) {
   HorizontalDivider(Modifier.padding(vertical = 8.dp))
   if (roleplayEntries) {
     DrawerNavRow(label = "管理角色卡", onClick = onOpenCharacters) {
-      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    DrawerNavRow(label = "人格设置", onClick = onOpenPersona) {
       PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     // 酒馆里的模型入口：每段会话会记住自己用哪个模型（回来时自动装回去）。
@@ -1355,11 +1393,23 @@ private fun EmptyHint(characterName: String? = null) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, speakingId: String? = null) {
+private fun MessageBubble(
+  message: ChatMessage,
+  speakingId: String? = null,
+  tail: Boolean = false,
+  onRegenerate: () -> Unit = {},
+  onDeleteTurn: () -> Unit = {},
+) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
   } else {
-    AssistantMessage(message, speaking = message.id == speakingId)
+    AssistantMessage(
+      message = message,
+      speaking = message.id == speakingId,
+      tail = tail,
+      onRegenerate = onRegenerate,
+      onDeleteTurn = onDeleteTurn,
+    )
   }
 }
 
@@ -1384,7 +1434,13 @@ private fun UserBubble(content: String) {
 
 /** 助手消息：全宽正文（无气泡），上面依次挂思考折叠与工具卡，末尾一行操作。 */
 @Composable
-private fun AssistantMessage(message: ChatMessage, speaking: Boolean = false) {
+private fun AssistantMessage(
+  message: ChatMessage,
+  speaking: Boolean = false,
+  tail: Boolean = false,
+  onRegenerate: () -> Unit = {},
+  onDeleteTurn: () -> Unit = {},
+) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
     ProcessBlock(message)
@@ -1406,6 +1462,11 @@ private fun AssistantMessage(message: ChatMessage, speaking: Boolean = false) {
         SpeakAction(messageId = message.id, markdown = message.content, speaking = speaking)
         Spacer(Modifier.width(2.dp))
         CopyAction(text = message.content)
+        if (tail) {
+          Spacer(Modifier.width(2.dp))
+          TextAction(text = "重写", onClick = onRegenerate)
+          TextAction(text = "删这轮", onClick = onDeleteTurn)
+        }
       }
     }
   }
@@ -1434,6 +1495,23 @@ private fun SpeakAction(messageId: String, markdown: String, speaking: Boolean) 
       color = tint,
     )
   }
+}
+
+/**
+ * 纯文字操作（重写 / 删这轮）。
+ *
+ * 不给图标：这两个动作不常用，且「删」带破坏性 —— 图标在这么小的一行里认不出来，
+ * 误触比多点一步更糟。
+ */
+@Composable
+private fun TextAction(text: String, onClick: () -> Unit) {
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier =
+      Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+  )
 }
 
 /** 复制助手正文（用户点按触发；不打印、不落日志）。 */

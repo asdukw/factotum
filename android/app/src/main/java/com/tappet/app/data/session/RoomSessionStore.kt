@@ -81,6 +81,10 @@ class RoomSessionStore(
   override suspend fun messages(sessionId: String): List<StoredMessage> =
     dao.messages(sessionId).map { it.toDomain() }
 
+  override suspend fun deleteMessage(id: String) {
+    dao.deleteMessage(id)
+  }
+
   override suspend fun appendMessage(
     sessionId: String,
     role: MessageRole,

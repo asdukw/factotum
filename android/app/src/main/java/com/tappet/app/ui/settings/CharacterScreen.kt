@@ -1,5 +1,7 @@
 package com.tappet.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +42,11 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
   val appContext = LocalContext.current.applicationContext
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
+  // 系统文件选择器：不申请存储权限，拿到的是单次可读的 content:// Uri。
+  val picker =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) viewModel.import(uri)
+    }
 
   CharacterScreen(
     state = state,
@@ -49,6 +56,12 @@ fun CharacterScreen(onBack: () -> Unit, onStartChat: () -> Unit, modifier: Modif
       onStartChat()
     },
     onStop = viewModel::stop,
+    onImport = {
+      // 有的网盘/文件管理器把 png 报成 octet-stream，所以给一组，别只写 image/png
+      picker.launch(arrayOf("image/png", "image/*", "application/json", "text/plain", "application/octet-stream"))
+    },
+    onDelete = viewModel::delete,
+    onDismissMessage = viewModel::consumeMessage,
     modifier = modifier,
   )
 }
@@ -59,6 +72,9 @@ internal fun CharacterScreen(
   onBack: () -> Unit,
   onStart: (String) -> Unit,
   onStop: () -> Unit,
+  onImport: () -> Unit = {},
+  onDelete: (String) -> Unit = {},
+  onDismissMessage: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
@@ -76,7 +92,27 @@ internal fun CharacterScreen(
         }
 
         SectionLabel("角色卡")
-        CardList(cards = state.cards, activeId = state.activeId, onStart = onStart)
+        SettingsGroup {
+          SettingsRow(
+            glyph = GlyphKind.Plus,
+            title = if (state.importing) "正在读取…" else "导入角色卡",
+            subtitle = "支持 SillyTavern 的 PNG 卡或 JSON（只取人设与语气）",
+            enabled = !state.importing,
+            onClick = onImport,
+          ) {
+            ChevronRight()
+          }
+        }
+        CardList(
+          cards = state.cards,
+          activeId = state.activeId,
+          onStart = onStart,
+          onDelete = onDelete,
+        )
+
+        state.message?.let { message ->
+          ImportMessage(message = message, notes = state.notes, onDismiss = onDismissMessage)
+        }
 
         // 选中一张卡后，把「你会看到什么」摊开：开场白与场景。改不了，但能判断要不要进去。
         val preview = state.active
@@ -104,7 +140,7 @@ internal fun CharacterScreen(
         SectionLabel("还没做的")
         SettingsGroup {
           Column(Modifier.padding(16.dp)) {
-            Note("写自己的角色 / 导入社区角色卡（PNG / JSON）")
+            Note("在 App 里手写/编辑角色（现在只能导入现成的卡）")
             Note("每个角色独立记忆（现在共用一份 AGENTS.md）")
             Note("世界书按对话内容按需检索（现在只注入常驻条目与开场命中的条目）")
           }
@@ -121,6 +157,21 @@ internal fun CharacterScreen(
   }
 }
 
+/** 导入结果：成功一行 + 被丢弃字段的说明（这正是「不信任外部卡」对用户可见的部分）。 */
+@Composable
+private fun ImportMessage(message: String, notes: List<String>, onDismiss: () -> Unit) {
+  SettingsGroup {
+    Column(Modifier.padding(16.dp)) {
+      Text(message, style = MaterialTheme.typography.bodyMedium)
+      notes.forEach { note -> Note(note) }
+      if (notes.isNotEmpty() || message.startsWith("导入失败")) {
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onDismiss) { Text("知道了") }
+      }
+    }
+  }
+}
+
 /** 空列表就明说空着，别放一张假卡让人以为坏了。 */
 @Composable
 private fun EmptyCards() {
@@ -129,8 +180,8 @@ private fun EmptyCards() {
       Text("还没有角色卡", style = MaterialTheme.typography.bodyLarge)
       Spacer(Modifier.height(6.dp))
       Text(
-        text = "角色卡是数据文件（assets/roleplay/characters/*.json），导入与编辑入口还没做，" +
-          "所以这一页先空着 —— 读卡、渲染人设、注入世界设定的链路已经在跑。",
+        text = "点上面的「导入角色卡」，选一张 SillyTavern 的 PNG 卡或 .json 文件。" +
+          "导入后只取人设与语气：卡里的 system_prompt、示例对话会被丢弃。",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
@@ -139,7 +190,12 @@ private fun EmptyCards() {
 }
 
 @Composable
-private fun CardList(cards: List<CharacterCard>, activeId: String?, onStart: (String) -> Unit) {
+private fun CardList(
+  cards: List<CharacterCard>,
+  activeId: String?,
+  onStart: (String) -> Unit,
+  onDelete: (String) -> Unit,
+) {
   if (cards.isEmpty()) {
     EmptyCards()
     return
@@ -153,7 +209,13 @@ private fun CardList(cards: List<CharacterCard>, activeId: String?, onStart: (St
         subtitle = card.tagline.ifEmpty { card.tags.joinToString(" · ") },
         onClick = { onStart(card.id) },
         trailing = {
-          if (card.id == activeId) StatusBadge("扮演中", BadgeTone.Enabled) else ChevronRight()
+          if (card.id == activeId) StatusBadge("扮演中", BadgeTone.Enabled)
+          // 内置卡在 assets 里删不掉，所以只给导入的卡显示删除
+          if (card.imported) {
+            TextButton(onClick = { onDelete(card.id) }) { Text("删除") }
+          } else {
+            ChevronRight()
+          }
         },
       )
     }

@@ -1,9 +1,11 @@
 package com.tappet.app.ui.settings
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.agent.CharacterCard
+import com.tappet.app.agent.CharacterImporter
 import com.tappet.app.agent.CharacterStore
 import com.tappet.app.agent.PersonaStore
 import com.tappet.app.node.NodeRuntime
@@ -25,7 +27,10 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     /** 正在扮演的卡 id；null = 不在角色扮演。 */
     val activeId: String? = null,
     val applying: Boolean = false,
+    val importing: Boolean = false,
     val message: String? = null,
+    /** 导入时被丢掉的字段说明（system_prompt 之类），给用户看一次就够。 */
+    val notes: List<String> = emptyList(),
   ) {
     val active: CharacterCard? get() = cards.firstOrNull { it.id == activeId }
   }
@@ -63,7 +68,67 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
   }
 
   fun consumeMessage() {
-    _state.update { it.copy(message = null) }
+    _state.update { it.copy(message = null, notes = emptyList()) }
+  }
+
+  /**
+   * 导入一张卡（PNG 或 JSON）。
+   *
+   * 存下来再刷新，而不是把解析结果直接塞进内存列表：卡最终是磁盘上的数据，
+   * 只放内存会让「重启 App 后卡不见了」这种问题晚一步才被发现。
+   */
+  fun import(uri: Uri) {
+    if (_state.value.importing) return
+    _state.update { it.copy(importing = true, notes = emptyList()) }
+    viewModelScope.launch {
+      val outcome =
+        runCatching {
+          val bytes =
+            appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+              ?: throw CharacterImporter.ImportException("读不到这个文件")
+          CharacterImporter.fromBytes(bytes, displayName(uri))
+        }
+      outcome
+        .onSuccess { result ->
+          if (!CharacterStore.saveImported(appContext, result.card)) {
+            _state.update { it.copy(importing = false, message = "导入失败：写不进应用目录") }
+            return@onSuccess
+          }
+          refresh()
+          _state.update {
+            it.copy(importing = false, message = "已导入「${result.card.name}」", notes = result.notes)
+          }
+        }
+        .onFailure { error ->
+          _state.update {
+            it.copy(importing = false, message = "导入失败：${error.message ?: error::class.simpleName}")
+          }
+        }
+    }
+  }
+
+  /** 删掉一张导入的卡；正在扮演的卡被删时顺手退出角色，免得界面停在「扮演中」。 */
+  fun delete(id: String) {
+    CharacterStore.deleteImported(appContext, id)
+    if (_state.value.activeId == id) {
+      PersonaStore.clearCharacter(appContext)
+      apply("已删除「${_state.value.cards.firstOrNull { it.id == id }?.name ?: "角色"}」，已退出扮演")
+      return
+    }
+    refresh()
+    _state.update { it.copy(message = "已删除") }
+  }
+
+  private fun displayName(uri: Uri): String {
+    val projection = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME)
+    val name =
+      runCatching {
+        appContext.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+          if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+      }
+        .getOrNull()
+    return name?.substringBeforeLast('.')?.takeIf { it.isNotBlank() } ?: "未命名角色"
   }
 
   private fun apply(success: String) {

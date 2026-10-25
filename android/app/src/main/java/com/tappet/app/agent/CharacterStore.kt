@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * 角色卡里的一条世界设定（对齐 SillyTavern 的 `character_book.entries`）。
@@ -62,6 +63,14 @@ object CharacterStore {
     coerceInputValues = true
   }
 
+  /** 读盘用宽松解析，写盘用**完整字段**：`imported` / `first_mes` 这些默认值也要落下去。 */
+  private val decoder = json
+  private val encoder = Json {
+    prettyPrint = true
+    encodeDefaults = true
+    explicitNulls = false
+  }
+
   /**
    * 全部可选角色，内置的排前面。
    *
@@ -79,8 +88,34 @@ object CharacterStore {
           .sortedBy { it.id }
       }
         .getOrDefault(emptyList())
-    return builtin
+    return builtin + importedCards(context)
   }
+
+  /** 用户导入的卡放应用私有目录：跟着 App 走、卸载即清，不进 git。 */
+  private fun importedDir(context: Context): File =
+    File(context.filesDir, "roleplay/characters").apply { mkdirs() }
+
+  private fun importedCards(context: Context): List<CharacterCard> =
+    runCatching {
+      importedDir(context)
+        .listFiles { file -> file.isFile && file.name.endsWith(".json") }
+        .orEmpty()
+        .mapNotNull { file -> runCatching { decoder.decodeFromString<CharacterCard>(file.readText()) }.getOrNull() }
+        .sortedBy { it.name }
+    }
+      .getOrDefault(emptyList())
+
+  /** 存一张导入的卡（按 id 落一个文件）；返回是否写成功。 */
+  fun saveImported(context: Context, card: CharacterCard): Boolean =
+    runCatching {
+      File(importedDir(context), "${card.id}.json").writeText(encoder.encodeToString(card))
+      true
+    }
+      .getOrDefault(false)
+
+  /** 删一张导入的卡。内置卡在 assets 里，删不掉也不该删。 */
+  fun deleteImported(context: Context, id: String): Boolean =
+    runCatching { File(importedDir(context), "$id.json").delete() }.getOrDefault(false)
 
   fun byId(context: Context, id: String): CharacterCard? =
     cards(context).firstOrNull { it.id == id }

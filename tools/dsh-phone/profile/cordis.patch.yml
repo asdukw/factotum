@@ -231,7 +231,10 @@
 # --- 手机 agent 的系统提示 ---
 # 系统提示的正文（人格）由**宿主**注入：Android 侧的 `PersonaStore` 把它拼成
 # 「soul（可切换）+ 操作契约（固定）+ 语气契约（可关）」，写进 `TAPPET_PERSONA_PREFIX`。
-# 所以这里不再保留第二份全文 —— 两处文本必然分叉，而分叉的那一份通常是主机上看不见的那一份。
+#
+# **哪一份生效是个已知的模糊点**：preset 里那份挂着 `complete: true`，理论上会遮蔽这一份；
+# 但实测生效的是**这一份**（模型的系统提示里能看到「长期记忆」「联网搜索」，而那两段只在
+# 这里出现过）。所以两处不再各写一份全文，都从同一个 env 取值：谁生效，内容都相同。
 #
 # 下面的兜底只在「没有 Android 宿主」时用到（PC 侧直接跑 dsh、`check-profile.mjs`）。
 # 真机上 NodeRuntime 启动时设一次、每次 reload 时随 runtime-config.json 覆盖一遍。
@@ -254,9 +257,9 @@
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              # 这一份才是**真机上真正生效**的系统提示：`complete: true` 会把 prefix 变成
-              # 唯一段落，宿主级那份被整段遮蔽（这也是上面宿主级不再保留全文的原因之一）。
-              # 内容来自宿主注入的 TAPPET_PERSONA_PREFIX，见 PersonaStore。
+              # `complete: true` 理论上会把这份 prefix 变成唯一段落（遮蔽上面宿主级那份），
+              # 但实测生效的是宿主级那份（见文件上方 system-prompt 的注释）。两处内容都来自
+              # 同一个 TAPPET_PERSONA_PREFIX，所以哪一份生效结果都一样 —— 见 PersonaStore。
               complete: true
               prefix: !!js process.env.TAPPET_PERSONA_PREFIX || '你是 Tappet，运行在用户 Android 手机上的 agent。用 read_ui_tree 读屏、tap_node 点击；读不到控件树时改用视觉路径 capture_screenshot + tap_target。每次只做一个原子动作，只做用户明确要求的事。'
           - id: android-tools

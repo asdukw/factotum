@@ -15,9 +15,11 @@ data class Soul(
 /**
  * 人格（soul）的存储与拼装。
  *
- * **人格不决定「能做什么」，只决定「它是谁、怎么说话」**。dsh 的手机 preset 用
- * `complete: true` 挂人设 —— 那一份 prefix 就是**整个**系统提示，换人格时若不带上
- * 设备操作规则，模型会立刻忘了 `read_ui_tree` / `tap_node` 这条主路径。所以这里的分工是：
+ * **人格不决定「能做什么」，只决定「它是谁、怎么说话」**。手机 profile 里系统提示被写了两份
+ * （宿主级 `system-prompt.personaPrefix` 与 preset 里 `complete: true` 的 persona），实测生效
+ * 的是宿主级那份，preset 那份是备用路径。不管哪一份生效，那一整段 prefix 就是**整个**系统提示，
+ * 换人格时若不带上设备操作规则，模型会立刻忘了 `read_ui_tree` / `tap_node` 这条主路径。
+ * 所以两处都从同一个 env 取值，分工是：
  *
  * ```
  * 最终系统提示 = soul（可换） + 操作契约（固定） + 语气契约（可关）

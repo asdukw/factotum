@@ -52,4 +52,10 @@ data class ChatMessage(
   val thinkingStartedAt: Long? = null,
   val error: String? = null,
   val toolCalls: List<ToolCallView> = emptyList(),
+  /** 这条回复挂在哪条用户消息上（同一 anchor 的多条 = 候选）。 */
+  val anchorId: String? = null,
+  /** 这条回复在同一句提问下排第几（0 起）；没有候选时恒为 0。 */
+  val variantIndex: Int = 0,
+  /** 同一句提问下一共有几份回复。`<= 1` 表示没有可切的东西。 */
+  val variantTotal: Int = 0,
 )

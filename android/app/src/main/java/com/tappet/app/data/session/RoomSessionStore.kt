@@ -5,6 +5,7 @@ import com.tappet.app.data.db.MessageRole
 import com.tappet.app.data.db.MessageStatus
 import com.tappet.app.data.db.SessionEntity
 import com.tappet.app.data.db.SessionKind
+import com.tappet.app.data.db.SessionStoreDao
 import com.tappet.app.data.db.TappetDatabase
 import com.tappet.app.data.db.ToolCallEntity
 import com.tappet.app.data.db.ToolCallStatus
@@ -18,7 +19,7 @@ import kotlinx.coroutines.sync.withLock
 class RoomSessionStore(
   database: TappetDatabase,
   private val clock: () -> Long = System::currentTimeMillis,
-) : SessionStore {
+) : SessionStore, VariantStore by RoomVariants(database.store()) {
   private val dao = database.store()
   private val bootstrap = Mutex()
 
@@ -167,6 +168,18 @@ class RoomSessionStore(
     dao.reclassify(MessageStatus.Streaming, MessageStatus.Interrupted, clock())
 }
 
+/** 候选回答的读写实现；被 [RoomSessionStore] 委托，好让那个类不超函数上限。 */
+internal class RoomVariants(private val dao: SessionStoreDao) : VariantStore {
+  override suspend fun variants(anchorId: String): List<StoredMessage> =
+    dao.variantsOf(anchorId).map { it.toDomain() }
+
+  override suspend fun selectVariant(anchorId: String, keepId: String) = dao.selectVariant(anchorId, keepId)
+
+  override suspend fun tagVariant(id: String, anchorId: String, index: Int) = dao.tagVariant(id, anchorId, index)
+
+  override suspend fun deleteGroup(anchorId: String) = dao.deleteVariants(anchorId)
+}
+
 private fun SessionEntity.toDomain() =
   ChatSession(
     id = id,
@@ -190,6 +203,8 @@ private fun MessageEntity.toDomain() =
     error = error,
     createdAt = createdAt,
     finishedAt = finishedAt,
+    anchorId = anchorId,
+    variantIndex = variantIndex,
   )
 
 private fun ToolCallEntity.toDomain() =

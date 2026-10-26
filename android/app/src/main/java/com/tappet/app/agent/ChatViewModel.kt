@@ -12,6 +12,7 @@ import com.tappet.app.data.session.ChatSession
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.StoredMessage
 import com.tappet.app.data.session.StoredToolCall
+import com.tappet.app.data.session.variantsOrNone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -156,6 +157,14 @@ class ChatViewModel(
    */
   private val configSource: () -> AgentConfig? = { null },
 ) : ViewModel() {
+  /**
+   * 候选回答的读写。
+   *
+   * 用属性而不是构造参数：那个签名已经 7 个参数、压在 detekt 阈值上。真实现（[RoomSessionStore]）
+   * 本身就实现了 [VariantStore]，测试替身没有就退化成空实现 —— 测试里本来也不会去切候选。
+   */
+  private val variants = store.variantsOrNone()
+
   private val reasoningLabel = config.reasoningEffort ?: "默认"
 
   private val _state =
@@ -517,12 +526,31 @@ class ChatViewModel(
     val last = snapshot.messages.lastOrNull() ?: return@lambda
     if (last.role != ChatRole.Assistant || last.streaming || last.content.isBlank()) return@lambda
 
+    // 重写挂在「最后一句用户话」上：有了 candidates，旧回答就不必删 —— 两份并存、只显示选中的那份。
+    // 开场白没有对应的提问（它前面没有用户消息），那种情况仍然替换：给它编一个 anchor 只会让界面
+    // 出现「2/2」却没有用户可回退的提问。
+    val anchor = snapshot.messages.lastOrNull { it.role == ChatRole.User }?.id
+
     streamJob =
       viewModelScope.launch {
         val draft =
           runCatching {
-            store.deleteMessage(last.id)
-            store.appendMessage(sessionId, MessageRole.Assistant, "", MessageStatus.Streaming)
+            if (anchor == null) {
+              store.deleteMessage(last.id)
+              store.appendMessage(sessionId, MessageRole.Assistant, "", MessageStatus.Streaming)
+            } else {
+              val existing = variants.variants(anchor)
+              val fresh = store.appendMessage(sessionId, MessageRole.Assistant, "", MessageStatus.Streaming)
+              if (existing.isEmpty()) {
+                // 第一次重写：把眼前这条登记成第 0 份，新的排第 1 份
+                variants.tagVariant(last.id, anchor, 0)
+                variants.tagVariant(fresh.id, anchor, 1)
+              } else {
+                variants.tagVariant(fresh.id, anchor, (existing.maxOfOrNull { it.variantIndex } ?: 0) + 1)
+              }
+              variants.selectVariant(anchor, fresh.id)
+              fresh
+            }
           }
             .getOrElse { throwable ->
               reportStorageFailure(throwable)
@@ -531,7 +559,17 @@ class ChatViewModel(
         _state.update {
           it.copy(
             isStreaming = true,
-            messages = it.messages.dropLast(1) + ChatMessage(id = draft.id, role = ChatRole.Assistant, streaming = true),
+            messages =
+              it.messages.dropLast(1) +
+                ChatMessage(
+                  id = draft.id,
+                  role = ChatRole.Assistant,
+                  streaming = true,
+                  // anchor 必须带上：左右切靠它找组，漏了就是「点了没反应」（第一次真机就栽在这）
+                  anchorId = anchor,
+                  variantIndex = last.variantTotal.coerceAtLeast(1),
+                  variantTotal = last.variantTotal.coerceAtLeast(1) + 1,
+                ),
           )
         }
         // 直连通道下的重写是**真重写**：上一轮回复已经从历史里剔掉，模型看到的是「这句话还没回答」。
@@ -566,7 +604,11 @@ class ChatViewModel(
     val removed = messages.subList(from, messages.size).toList()
     if (removed.isEmpty()) return@lambda
     viewModelScope.launch {
-      runCatching { removed.forEach { store.deleteMessage(it.id) } }
+      runCatching {
+        // 被删的那条若属于一组候选，整组一起删：只删当前那份，剩下的会永远躺在库里访问不到
+        removed.mapNotNull { it.anchorId }.distinct().forEach { variants.deleteGroup(it) }
+        removed.forEach { store.deleteMessage(it.id) }
+      }
         .onSuccess { _state.update { state -> state.copy(messages = state.messages.dropLast(removed.size)) } }
         .onFailure(::reportStorageFailure)
     }
@@ -596,7 +638,10 @@ class ChatViewModel(
         ?: snapshot.messages.take(index).lastOrNull { it.role == ChatRole.User }?.content.orEmpty()
     if (prompt.isBlank()) return@lambda
     viewModelScope.launch {
-      runCatching { dropped.forEach { store.deleteMessage(it.id) } }
+      runCatching {
+        dropped.mapNotNull { it.anchorId }.distinct().forEach { variants.deleteGroup(it) }
+        dropped.forEach { store.deleteMessage(it.id) }
+      }
         .onFailure { throwable ->
           reportStorageFailure(throwable)
           return@launch
@@ -604,6 +649,38 @@ class ChatViewModel(
       _state.update { state -> state.copy(messages = state.messages.dropLast(dropped.size)) }
       onInputChange(prompt)
       send()
+    }
+  }
+
+  /**
+   * 左右切候选回答：[-1] 上一份、[1] 下一份（到头绕回）。
+   *
+   * 库里只改「哪一份被选中」这一列，然后整页重读 —— 不就地改 state：换了一份回答意味着后面
+   * 对用户可见的一切（气泡、工具卡、计数）都该跟着换，就地改迟早会漏掉一处。
+   */
+  val swipeVariant: (Int) -> Unit = delta@{ step ->
+    val snapshot = _state.value
+    if (!snapshot.ready || snapshot.isStreaming || snapshot.switchingRole) return@delta
+    val sessionId = snapshot.sessionId ?: return@delta
+    val tail = snapshot.messages.lastOrNull { it.role == ChatRole.Assistant } ?: return@delta
+    val anchor = tail.anchorId ?: return@delta
+    if (tail.variantTotal <= 1) return@delta
+    viewModelScope.launch {
+      val group =
+        runCatching { variants.variants(anchor) }
+          .getOrElse { throwable ->
+            reportStorageFailure(throwable)
+            return@launch
+          }
+      if (group.size <= 1) return@launch
+      val current = group.indexOfFirst { it.id == tail.id }.coerceAtLeast(0)
+      val target = group[Variants.step(group.size, current, step)]
+      val moved = runCatching { variants.selectVariant(anchor, target.id) }
+      if (moved.isFailure) {
+        reportStorageFailure(moved.exceptionOrNull() ?: IllegalStateException("切换候选失败"))
+        return@launch
+      }
+      loadSession(sessionId)
     }
   }
 
@@ -737,7 +814,17 @@ class ChatViewModel(
       runCatching {
         val rows = store.messages(sessionId)
         val calls = store.toolCalls(sessionId).groupBy { it.messageId }
-        rows.mapNotNull { row -> row.toChatMessage(calls[row.id].orEmpty()) }
+        // 候选计数按 anchor 查：一个会话里被重写过的轮次通常只有一两个，逐组查比一次全表扫简单
+        val groups =
+          rows.mapNotNull { it.anchorId }.distinct().associateWith { anchor -> variants.variants(anchor) }
+        rows.mapNotNull { row ->
+          val group = row.anchorId?.let { groups[it] }.orEmpty()
+          row.toChatMessage(calls[row.id].orEmpty())?.copy(
+            anchorId = row.anchorId,
+            variantIndex = group.indexOfFirst { it.id == row.id }.coerceAtLeast(0),
+            variantTotal = group.size,
+          )
+        }
       }
 
     loaded

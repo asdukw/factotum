@@ -40,6 +40,10 @@ data class StoredMessage(
   val error: String?,
   val createdAt: Long,
   val finishedAt: Long?,
+  /** 在回答哪条用户消息（空 = 没有替代品）；同一 anchor 下的多条就是「候选」。 */
+  val anchorId: String? = null,
+  /** 组内第几份。 */
+  val variantIndex: Int = 0,
 )
 
 /** 一次已落库的工具调用（挂在发起它的那条助手消息上）。 */
@@ -54,6 +58,37 @@ data class StoredToolCall(
   val startedAt: Long,
   val finishedAt: Long?,
 )
+
+/**
+ * 候选回答的读写。
+ *
+ * 单独一个接口是为了 RoomSessionStore 的**函数数**：那个类已经压在 detekt 的 20 条上限上，
+ * 三个候选方法塞进去就溢出。按能力切开之后，实现可以由一个委托对象提供，类本身的函数数不变。
+ */
+interface VariantStore {
+  /** 同一句提问下的全部候选回答（含未选中的），按 [StoredMessage.variantIndex] 排。 */
+  suspend fun variants(anchorId: String): List<StoredMessage> = emptyList()
+
+  /** 让组里只显示 [keepId] 那一份。 */
+  suspend fun selectVariant(anchorId: String, keepId: String) {}
+
+  /** 把一条已有回复登记成某条提问的第 [index] 份候选。 */
+  suspend fun tagVariant(id: String, anchorId: String, index: Int) {}
+
+  /** 整组候选一起删：只删当前那份的话，未选中的会永远留在库里，且再也访问不到。 */
+  suspend fun deleteGroup(anchorId: String) {}
+}
+
+/** 没有候选能力的替身：单测与「这套存储不认识候选」的实现直接用它。 */
+object NoVariants : VariantStore
+
+/**
+ * 取这份存储在候选上的能力；不认识候选（测试替身、老实现）时返回 [NoVariants]。
+ *
+ * 不做成构造参数是因为 ChatViewModel 的签名已经压到 detekt 的阈值上；也不并进 [SessionStore]，
+ * 因为那个接口的函数数同样卡在上限（接口阈值只有 11）。
+ */
+fun SessionStore.variantsOrNone(): VariantStore = this as? VariantStore ?: NoVariants
 
 /**
  * 会话存储的窄接口。

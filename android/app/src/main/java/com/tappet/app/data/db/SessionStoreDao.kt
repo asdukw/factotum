@@ -68,6 +68,10 @@ abstract class SessionStoreDao {
   @Query("UPDATE message SET variant_selected = (id = :keepId) WHERE anchor_id = :anchorId")
   abstract suspend fun selectVariant(anchorId: String, keepId: String)
 
+  /** 整组候选一起删（「删这轮」时用：只删选中的那份，未选中的会永远躺在库里）。 */
+  @Query("DELETE FROM message WHERE anchor_id = :anchorId")
+  abstract suspend fun deleteVariants(anchorId: String)
+
   /** 把一份已有回复登记成某个 anchor 的第 [index] 份候选（重写时第一步就是它）。 */
   @Query("UPDATE message SET anchor_id = :anchorId, variant_index = :index WHERE id = :id")
   abstract suspend fun tagVariant(id: String, anchorId: String, index: Int)

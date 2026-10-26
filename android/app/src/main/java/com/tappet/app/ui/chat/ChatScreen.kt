@@ -234,6 +234,7 @@ fun ChatScreen(
     onDeleteTurn = viewModel.deleteLastTurn,
     onRetryFrom = viewModel.retryFrom,
     onSeedGreeting = viewModel.seedGreeting,
+    onSwipeVariant = viewModel.swipeVariant,
     modifier = modifier,
   )
 }
@@ -275,6 +276,7 @@ internal fun ChatScreen(
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
   onSeedGreeting: (String) -> Unit = {},
+  onSwipeVariant: (Int) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -344,6 +346,7 @@ internal fun ChatScreen(
       onRetryFrom = onRetryFrom,
       greetings = greetings,
       onSeedGreeting = onSeedGreeting,
+      onSwipeVariant = onSwipeVariant,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
@@ -645,6 +648,7 @@ private fun ChatBody(
   onModelSwitchClick: () -> Unit,
   greetings: List<String> = emptyList(),
   onSeedGreeting: (String) -> Unit = {},
+  onSwipeVariant: (Int) -> Unit = {},
   onLeaveRoleplay: () -> Unit = {},
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
@@ -700,6 +704,7 @@ private fun ChatBody(
         onRetryFrom = onRetryFrom,
         greetings = greetings,
         onPickGreeting = onSeedGreeting,
+        onSwipeVariant = onSwipeVariant,
       )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
@@ -767,6 +772,7 @@ private fun MessageList(
   onRetryFrom: (String) -> Unit = {},
   greetings: List<String> = emptyList(),
   onPickGreeting: (String) -> Unit = {},
+  onSwipeVariant: (Int) -> Unit = {},
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
   // 而删中间一轮会让后面的对话悬在半空。
@@ -793,6 +799,7 @@ private fun MessageList(
         tail = message.id == tailId && !state.isStreaming,
         onRegenerate = onRegenerate,
         onDeleteTurn = onDeleteTurn,
+        onSwipeVariant = onSwipeVariant,
         onRetryFrom = onRetryFrom,
       )
     }
@@ -1496,6 +1503,7 @@ private fun MessageBubble(
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
+  onSwipeVariant: (Int) -> Unit = {},
 ) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
@@ -1507,7 +1515,27 @@ private fun MessageBubble(
       onRegenerate = onRegenerate,
       onDeleteTurn = onDeleteTurn,
       onRetryFrom = onRetryFrom,
+      onSwipeVariant = onSwipeVariant,
     )
+  }
+}
+
+/**
+ * 候选回答的「‹ 2/3 ›」。
+ *
+ * 只挂在最后一条助手消息上：上面那些轮次如果也允许换，换完之后**后面所有轮次**都得重建 ——
+ * 而它们当时是照着另一份回答说的。等「换到更早一轮就截断重答」做出来再放开。
+ */
+@Composable
+private fun VariantStepper(index: Int, total: Int, onStep: (Int) -> Unit) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    TextAction(text = "‹", onClick = { onStep(-1) })
+    Text(
+      text = "${index + 1}/$total",
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    TextAction(text = "›", onClick = { onStep(1) })
   }
 }
 
@@ -1539,6 +1567,7 @@ private fun AssistantMessage(
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
+  onSwipeVariant: (Int) -> Unit = {},
 ) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
@@ -1562,6 +1591,14 @@ private fun AssistantMessage(
         Spacer(Modifier.width(2.dp))
         CopyAction(text = message.content)
         if (tail) {
+          if (message.variantTotal > 1) {
+            Spacer(Modifier.width(2.dp))
+            VariantStepper(
+              index = message.variantIndex,
+              total = message.variantTotal,
+              onStep = onSwipeVariant,
+            )
+          }
           Spacer(Modifier.width(2.dp))
           TextAction(text = "重写", onClick = onRegenerate)
           TextAction(text = "删这轮", onClick = onDeleteTurn)

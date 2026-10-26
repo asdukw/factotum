@@ -86,6 +86,9 @@ object WorldBookIo {
     put("constant", entry.constant)
     put("position", entry.position)
     put("comment", "")
+    // 递归开关：ST 的字段名是驼峰、写在条目顶层；extensions 里再放一份下划线写法，两边的阅读器都能认。
+    put("preventRecursion", entry.preventRecursion)
+    put("excludeRecursion", entry.excludeRecursion)
     putJsonObject("extensions") {
       put("position", entry.position)
       put("depth", entry.depth)
@@ -99,6 +102,10 @@ object WorldBookIo {
       putJsonArray("exclude_keys") { entry.exclude.forEach { add(it) } }
       put("match_whole_words", entry.matchWholeWords)
       put("case_sensitive", entry.caseSensitive)
+      // 与上面顶层那对同义（下划线写法）：我们的阅读器顶层与 extensions 两处都读，
+      // 别的工具认哪种都不至于丢。
+      put("prevent_recursion", entry.preventRecursion)
+      put("exclude_recursion", entry.excludeRecursion)
     }
   }
 }

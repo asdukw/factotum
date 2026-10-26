@@ -9,9 +9,11 @@ import kotlin.random.Random
  * - 主关键词命中 ✔（[WorldEntry.matches]，同义词打包会拆开比）
  * - 次要关键词 / 排除词 ✔（ANY / ALL，见 [WorldEntry.secondarySatisfied]）
  * - 概率激活 ✔（[WorldEntry.probability]，用注入的 [Random]，单测可复现）
- * - 递归扫描 ✔，但**只再扫一层**：命中条目正文里出现了别的条目的关键词，就把那条一起带上。
- *   ST 可以设 2–5 层；层数一高就会出现「一条设定牵出半本书」的滚雪球，真卡里几乎都是靠
- *   作者手写关键词控制范围的，一层足够覆盖「势力 → 该势力的人」这类常见结构。
+ * - 递归扫描 ✔，层数可配（[select] 的 `depth`，默认 1）：命中条目正文里出现了别的条目的关键词，
+ *   就把那条一起带上；下一层再用这一批的正文接着找。
+ *   **默认仍是 1 层**：层数一高就会出现「一条设定牵出半本书」的滚雪球。作者可以用
+ *   [WorldEntry.preventRecursion] / [WorldEntry.excludeRecursion] 在条目上各自掐断，
+ *   这比靠调总层数更准 —— 想放手的人调到 3，不想被牵的人也牵不出来。
  * - sticky / cooldown / 定时激活 ✘：这两个都需要跨轮记忆（「上一轮激活过就留 N 轮」），
  *   而现在每轮都是纯函数现算，没有会话级状态。要做就得先有一份按会话的激活表。
  *
@@ -28,6 +30,19 @@ object WorldScan {
   const val MAX_CONSTANT_CHARS = 2_000
 
   /**
+   * 一轮检索的预算与深度。
+   *
+   * 打成一包是因为 `select` 已经贴着 detekt 的 7 参数上限：再加一个旋钮就得再改一次签名，
+   * 而这些值永远一起传、调用点几乎只用默认。
+   */
+  data class Limits(
+    val maxEntries: Int = MAX_ENTRIES,
+    val maxChars: Int = MAX_CHARS,
+    /** 递归层数：0 = 不追，1 = 追一层（默认，与历史行为一致）。 */
+    val depth: Int = 1,
+  )
+
+  /**
    * 挑出这一轮要插进聊天中间的条目（不含常驻 —— 常驻由 [constantBlock] 单独处理）。
    *
    * [text] 是关键词来源（这一轮 + 最近几条用户消息，见 [TavernPrompt.keywordSource]）。
@@ -38,15 +53,14 @@ object WorldScan {
     entries: List<WorldEntry>,
     text: String,
     random: Random = Random.Default,
-    maxEntries: Int = MAX_ENTRIES,
-    maxChars: Int = MAX_CHARS,
     tracking: WorldTracking = WorldTracking.NONE,
     turn: Int = 0,
+    limits: Limits = Limits(),
   ): List<WorldEntry> {
     if (text.isBlank()) return emptyList()
     val pool = entries.filter { !it.constant && it.content.isNotBlank() }.sortedBy { it.order }
 
-    val shelf = Shelf(maxEntries, maxChars)
+    val shelf = Shelf(limits.maxEntries, limits.maxChars)
     // 第一轮：主关键词 + 次要逻辑 + 排除词 + 概率；冷却期内的不参与（免得同一段设定被反复吸进来）
     val byKeyword =
       pool.filter { entry ->
@@ -60,14 +74,8 @@ object WorldScan {
           entry.sticking(turn, tracking.lastActivated(WorldTracking.key(entry)))
       }
       .forEach { shelf.offer(it) }
-    // 第三轮（只一层）：命中条目的正文里提到了谁，就把谁一起带上
-    val seeds = shelf.items.toList()
-    pool
-      .filter { candidate ->
-        // 已经捡到的不再捡第二次（否则同一条会出现两遍）
-        shelf.items.none { it === candidate } && seeds.any { seed -> isMentionedIn(candidate, seed, text) }
-      }
-      .forEach { shelf.offer(it) }
+    // 第三轮起：递归（见 [expand]）
+    expand(pool, shelf, limits.depth, text)
     // 只给「按关键词命中」的记账：粘住的条目不能刷新自己的计时，否则粘性会无限续期
     byKeyword.forEach { tracking.record(WorldTracking.key(it), turn) }
     return shelf.items
@@ -93,6 +101,30 @@ object WorldScan {
     }
     if (lines.size < constant.size) lines += "（其余常驻设定因篇幅省略）"
     return lines.joinToString("\n")
+  }
+
+  /**
+   * 递归扫描：命中条目的正文里提到了谁，就把谁带进来；下一层再拿这一批当来源，最多 [depth] 层。
+   *
+   * 两个细节决定它不会滚雪球：
+   * - 每层只拿**真正被收下的**条目当来源（预算装不下的不算），否则会被几条装不进去的大设定带着跑；
+   * - 已经收过的不再当候选（同一条出现两遍等于凭空多付一次 token）。
+   */
+  private fun expand(pool: List<WorldEntry>, shelf: Shelf, depth: Int, text: String) {
+    var frontier = shelf.items.filter { !it.preventRecursion }
+    var round = 0
+    while (round < depth && frontier.isNotEmpty()) {
+      val found =
+        pool.filter { candidate ->
+          shelf.items.none { it === candidate } &&
+            !candidate.excludeRecursion &&
+            frontier.any { seed -> isMentionedIn(candidate, seed, text) }
+        }
+      if (found.isEmpty()) return
+      found.forEach { shelf.offer(it) }
+      frontier = shelf.items.filter { entry -> found.any { it === entry } && !entry.preventRecursion }
+      round++
+    }
   }
 
   /** 一条条目在这一轮是否该出现在聊天中间。 */

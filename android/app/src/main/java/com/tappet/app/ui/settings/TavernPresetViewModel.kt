@@ -30,6 +30,8 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
     val editingBuiltIn: Boolean = false,
     val system: String = TavernPreset.DEFAULT_SYSTEM,
     val postHistory: String = TavernPreset.DEFAULT_POST_HISTORY,
+    /** 世界书递归层数（0–[TavernPreset.RECURSION_MAX]）。 */
+    val recursionDepth: Int = 1,
     /** 草稿与来源不一致（界面据此提示「还没保存」）。 */
     val dirty: Boolean = false,
     val preview: String = "",
@@ -76,6 +78,7 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
       it.copy(
         system = preset.system,
         postHistory = preset.postHistory,
+        recursionDepth = preset.recursionDepth,
         editingBuiltIn = preset.builtIn,
         dirty = false,
         preview = preview(preset.system, preset.postHistory),
@@ -85,6 +88,10 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
 
   fun updateSystem(text: String) =
     _state.update { it.copy(system = text, dirty = true, preview = preview(text, it.postHistory)) }
+
+  /** 递归层数只是编排参数，不影响两段正文，所以不动预览、只标脏。 */
+  fun updateRecursionDepth(depth: Int) =
+    _state.update { it.copy(recursionDepth = depth.coerceIn(0, TavernPreset.RECURSION_MAX), dirty = true) }
 
   fun updatePostHistory(text: String) =
     _state.update { it.copy(postHistory = text, dirty = true, preview = preview(it.system, text)) }
@@ -107,7 +114,13 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         TavernPresetStore.presets(appContext).firstOrNull { it.id == id }?.name ?: "我的预设"
       }
     val preset =
-      TavernPreset(id = id, name = name, system = snapshot.system, postHistory = snapshot.postHistory)
+      TavernPreset(
+        id = id,
+        name = name,
+        system = snapshot.system,
+        postHistory = snapshot.postHistory,
+        recursionDepth = snapshot.recursionDepth,
+      )
     val saved = TavernPresetStore.save(appContext, preset)
     if (!saved) {
       _state.update { it.copy(message = "保存失败：存不进应用私有目录") }
@@ -137,6 +150,7 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         name = "我的预设 ${TavernPresetStore.presets(appContext).count { !it.builtIn } + 1}",
         system = snapshot.system,
         postHistory = snapshot.postHistory,
+        recursionDepth = snapshot.recursionDepth,
       )
     if (!TavernPresetStore.save(appContext, preset)) {
       _state.update { it.copy(message = "另存失败：存不进应用私有目录") }

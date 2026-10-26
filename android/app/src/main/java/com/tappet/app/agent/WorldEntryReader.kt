@@ -38,6 +38,10 @@ object WorldEntryReader {
       secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
       // 副词与排除词也是两处都认：ST 写顶层，我们自己导出的写在 extensions
       secondaryLogic = SecondaryLogic.fromRaw(extInt(extensions, entry, 0, "selectiveLogic", "selective_logic")),
+      // ST 把这两个开关写在条目顶层，但也有导出工具塞进 extensions —— 两处都读，
+      // 与 selectiveLogic / exclude 同一套做法（见 `WorldEntryReader` 的说明）。
+      preventRecursion = extBool(extensions, entry, false, "preventRecursion", "prevent_recursion"),
+      excludeRecursion = extBool(extensions, entry, false, "excludeRecursion", "exclude_recursion"),
       exclude =
         (
           readKeys(entry, "exclude_keys", "excludeKeys") +

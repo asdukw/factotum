@@ -63,7 +63,7 @@ object TavernPrompt {
     val tail = state.tail
     // 先按预算裁历史：裁完再算关键词，否则命中的条目可能来自一段已经被丢掉的对话
     val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }).turns
-    val hits = hits(card, keywordSource(history), random, state.tracking, state.turn)
+    val hits = hits(card, keywordSource(history), random, state.tracking, state.turn, preset.recursionDepth)
     state.onHits(hits)
     // 第一轮 = 还没有任何助手回复。调用时这一轮的用户消息已经落库并进了 [turns]，
     // 所以不能拿 history.isEmpty() 判断 —— 那会让开场白永远出不来。
@@ -231,5 +231,7 @@ object TavernPrompt {
     random: Random = Random.Default,
     tracking: WorldTracking = WorldTracking.NONE,
     turn: Int = 0,
-  ): List<WorldEntry> = WorldScan.select(card.world, text, random, tracking = tracking, turn = turn)
+    depth: Int = 1,
+  ): List<WorldEntry> =
+    WorldScan.select(card.world, text, random, tracking = tracking, turn = turn, limits = WorldScan.Limits(depth = depth))
 }

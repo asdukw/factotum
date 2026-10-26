@@ -28,9 +28,21 @@ data class TavernPreset(
   val postHistory: String,
   /** 内置预设：不可删，可复制成自定义。 */
   val builtIn: Boolean = false,
+  /**
+   * 世界书的递归层数：命中的条目正文里提到了谁，就再带上谁，最多几层。
+   *
+   * 0 = 不递归，1 = 一层（默认，也是历史行为），最多 [RECURSION_MAX] 层。
+   * 给的是「这张卡」的旋钮，不是全 App 的：设定密到能牵出半本书的卡该调低，
+   * 一层就够的卡调高也没意义 —— 具体哪条能被牵，作者用条目上的
+   * `preventRecursion` / `excludeRecursion` 各自掐，比总开关更准。
+   */
+  val recursionDepth: Int = 1,
 ) {
   companion object {
     const val DEFAULT_ID = "builtin.default"
+
+    /** 递归上限。再高就会出现「一条设定牵出半本书」，而代价是每轮多带几百 token。 */
+    const val RECURSION_MAX = 3
 
     /** 系统模板。刻意保留每一段的位置，让用户能照着改而不是从空白开始。 */
     val DEFAULT_SYSTEM =

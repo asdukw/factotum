@@ -115,6 +115,23 @@ private fun LazyListScope.presetEditor(state: TavernPresetViewModel.UiState, vie
     )
   }
   item {
+    // 递归层数：这条旋钮只在「设定里还会提到别的设定」的卡上有用，所以紧挨着两段正文放，
+    // 并写清代价 —— 层数一高，一轮可能带进四五条互相牵连的设定。
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f)) {
+        Text("世界书递归层数", style = MaterialTheme.typography.bodyMedium)
+        Text(
+          "命中的设定正文里提到别的设定，最多再追几层。0 = 不追。层数高会让一轮带进更多设定。",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      TextButton(onClick = { viewModel.updateRecursionDepth(state.recursionDepth - 1) }) { Text("−") }
+      Text("${state.recursionDepth}", style = MaterialTheme.typography.bodyMedium)
+      TextButton(onClick = { viewModel.updateRecursionDepth(state.recursionDepth + 1) }) { Text("＋") }
+    }
+  }
+  item {
     Text(SLOT_HELP, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }
   item {

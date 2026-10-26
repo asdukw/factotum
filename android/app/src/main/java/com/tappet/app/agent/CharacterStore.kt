@@ -69,6 +69,20 @@ data class WorldEntry(
   val matchWholeWords: Boolean = false,
   /** 关键词区分大小写，对齐 ST 的 `caseSensitive`（默认关）。 */
   val caseSensitive: Boolean = false,
+  /**
+   * 这条的正文**不再被拿去牵出别的条目**，对齐 ST 的 `preventRecursion`。
+   *
+   * 用在「设定里提到某个泛称」的条目上：一段介绍学院的正文会同时提到「校规」「宿舍」「社团」，
+   * 不掐断就会一次带进半本书，把剧情挤出去。
+   */
+  val preventRecursion: Boolean = false,
+  /**
+   * 这条**不会被别人的正文牵出来**，对齐 ST 的 `excludeRecursion`。
+   *
+   * 与 [preventRecursion] 方向相反：前者管「我能不能牵别人」，这条管「别人能不能牵我」。
+   * 卡作者用它保护那些「只在明确提到时才该出现」的条目（比如真相、结局条件）。
+   */
+  val excludeRecursion: Boolean = false,
 ) {
   /**
    * 这组关键词是否命中 [text]。

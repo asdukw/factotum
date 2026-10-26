@@ -41,6 +41,10 @@ data class WorldEntry(
   val exclude: List<String> = emptyList(),
   /** 命中后的激活概率（百分比）。0 = 永不插入，100 = 必插。 */
   val probability: Int = 100,
+  /** 命中之后还继续保留几轮（0 = 不粘）。 */
+  val sticky: Int = 0,
+  /** 命中之后几轮内不再按关键词重新激活（0 = 不冷却）。粘住的条目仍然会出现在上下文里。 */
+  val cooldown: Int = 0,
 ) {
   /**
    * 这组关键词是否命中 [text]。
@@ -67,6 +71,12 @@ data class WorldEntry(
       secondaryLogic == SecondaryLogic.ANY -> secondary.any { it.matchesKey(text) }
       else -> secondary.all { it.matchesKey(text) }
     }
+
+  /** 是否在冷却期：上一轮激活过，且距上次还不到冷却轮数。 */
+  fun cooling(turn: Int, lastTurn: Int?): Boolean = cooldown > 0 && lastTurn != null && turn - lastTurn <= cooldown
+
+  /** 是否还在粘性期：上一轮激活过，且距上次不超过粘住的轮数。 */
+  fun sticking(turn: Int, lastTurn: Int?): Boolean = sticky > 0 && lastTurn != null && turn - lastTurn <= sticky
 
   /** 排除词命中任何一条就整条不要。 */
   fun excluded(text: String): Boolean = exclude.any { it.matchesKey(text) }

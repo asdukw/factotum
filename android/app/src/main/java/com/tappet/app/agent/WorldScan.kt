@@ -40,21 +40,36 @@ object WorldScan {
     random: Random = Random.Default,
     maxEntries: Int = MAX_ENTRIES,
     maxChars: Int = MAX_CHARS,
+    tracking: WorldTracking = WorldTracking.NONE,
+    turn: Int = 0,
   ): List<WorldEntry> {
     if (text.isBlank()) return emptyList()
     val pool = entries.filter { !it.constant && it.content.isNotBlank() }.sortedBy { it.order }
 
     val shelf = Shelf(maxEntries, maxChars)
-    // 第一轮：主关键词 + 次要逻辑 + 排除词 + 概率
-    pool.filter { accepts(it, text, random) }.forEach { shelf.offer(it) }
-    // 第二轮（只一层）：命中条目的正文里提到了谁，就把谁一起带上
+    // 第一轮：主关键词 + 次要逻辑 + 排除词 + 概率；冷却期内的不参与（免得同一段设定被反复吸进来）
+    val byKeyword =
+      pool.filter { entry ->
+        !entry.cooling(turn, tracking.lastActivated(WorldTracking.key(entry))) && accepts(entry, text, random)
+      }
+    byKeyword.forEach { shelf.offer(it) }
+    // 粘性：上一轮按关键词激活过、还在粘性期内，这一轮即使没提关键词也留着
+    pool
+      .filter { entry ->
+        byKeyword.none { it === entry } &&
+          entry.sticking(turn, tracking.lastActivated(WorldTracking.key(entry)))
+      }
+      .forEach { shelf.offer(it) }
+    // 第三轮（只一层）：命中条目的正文里提到了谁，就把谁一起带上
     val seeds = shelf.items.toList()
     pool
       .filter { candidate ->
-        // 已经在第一轮捡到的不再捡第二次（否则同一条会出现两遍）
+        // 已经捡到的不再捡第二次（否则同一条会出现两遍）
         shelf.items.none { it === candidate } && seeds.any { seed -> isMentionedIn(candidate, seed, text) }
       }
       .forEach { shelf.offer(it) }
+    // 只给「按关键词命中」的记账：粘住的条目不能刷新自己的计时，否则粘性会无限续期
+    byKeyword.forEach { tracking.record(WorldTracking.key(it), turn) }
     return shelf.items
   }
 

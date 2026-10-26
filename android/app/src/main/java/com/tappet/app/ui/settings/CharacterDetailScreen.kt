@@ -312,6 +312,8 @@ private fun entryLabel(entry: WorldEntry): String {
   }
   if (entry.exclude.isNotEmpty()) parts += "排除 ${entry.exclude.joinToString("、")}"
   if (entry.probability < 100) parts += "${entry.probability}% 概率"
+  if (entry.sticky > 0) parts += "粘 ${entry.sticky} 轮"
+  if (entry.cooldown > 0) parts += "冷却 ${entry.cooldown} 轮"
   parts += "深度 ${entry.depth}"
   return parts.joinToString(" · ")
 }

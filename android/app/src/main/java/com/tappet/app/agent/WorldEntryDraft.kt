@@ -17,6 +17,9 @@ object WorldEntryDraft {
   /** 关键词上限：再多也塞不进一轮的预算，而且界面会变成一堵墙。 */
   const val MAX_KEYS = 24
 
+  /** 粘住 / 冷却的轮数上限：超过 20 轮基本等于「永远在」或「永远不再」，不如直接改常驻。 */
+  const val MAX_STICKY = 20
+
   const val MIN_DEPTH = 1
   const val MAX_DEPTH = 12
 
@@ -52,6 +55,8 @@ object WorldEntryDraft {
     val depth: Int = 4,
     val probability: Int = 100,
     val logicAll: Boolean = false,
+    val sticky: Int = 0,
+    val cooldown: Int = 0,
   )
 
   /**
@@ -69,6 +74,8 @@ object WorldEntryDraft {
       secondaryLogic = if (draft.logicAll) SecondaryLogic.ALL else SecondaryLogic.ANY,
       exclude = parseKeys(draft.exclude),
       probability = clampProbability(draft.probability),
+      sticky = draft.sticky.coerceIn(0, MAX_STICKY),
+      cooldown = draft.cooldown.coerceIn(0, MAX_STICKY),
     )
 
   /** 条目是否值得存：常驻只要有正文，按需还要有关键词。 */

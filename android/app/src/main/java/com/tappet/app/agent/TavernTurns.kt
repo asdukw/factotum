@@ -1,5 +1,6 @@
 package com.tappet.app.agent
 
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -20,6 +21,13 @@ class TavernTurns(
    * 换卡就换写法，不用每张卡手动切一次。参数是角色 id，null 表示当前不是角色扮演。
    */
   private val preset: (String?) -> TavernPreset = { TavernPreset.DEFAULT },
+  /**
+   * 世界书的跨轮记忆（sticky / cooldown）。参数是会话 id —— 激活记录按会话隔离，
+   * 同一个角色在两个会话里各自算各自的轮次。
+   */
+  private val tracking: (String) -> WorldTracking = { WorldTracking.NONE },
+  /** 会话轮次自增并返回；测试与不关心 sticky 的路径用默认的 0。 */
+  private val nextTurn: (String) -> Int = { 0 },
 ) {
   val enabled: Boolean get() = channel() != null
 
@@ -40,7 +48,31 @@ class TavernTurns(
         .map { TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content) }
         .toList()
     if (history.isEmpty()) return null
-    val messages = TavernPrompt.build(card, memory(card.id), history, preset(card.id))
+    val turn = nextTurn(sessionId)
+    val messages =
+      TavernPrompt.build(
+        card = card,
+        memory = memory(card.id),
+        turns = history,
+        preset = preset(card.id),
+        state =
+          TavernPrompt.TurnState(turn = turn, tracking = tracking(sessionId), onHits = { hits -> logWorld(sessionId, turn, hits) }),
+      )
     return channel.stream(TavernRequest(sessionId, messages))
+  }
+
+  /**
+   * 记一行「这一轮带了哪几条设定」。
+   *
+   * sticky / cooldown 是**跨轮**行为，界面上看不见 —— 用户只会觉得「这条设定怎么还在」或者
+   * 「怎么突然没了」。判定对错只能靠这行日志：同一句话连发两轮，第二轮里带的条目应该一样或更少。
+   */
+  private fun logWorld(sessionId: String, turn: Int, hits: List<WorldEntry>) {
+    val names = hits.joinToString("|") { it.keys.firstOrNull() ?: "常驻" }
+    Log.d(TAG, "tavern world session=$sessionId turn=$turn hits=${hits.size} [$names]")
+  }
+
+  private companion object {
+    const val TAG = "TappetAgent"
   }
 }

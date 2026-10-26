@@ -51,9 +51,12 @@ object TavernPrompt {
     preset: TavernPreset = TavernPreset.DEFAULT,
     /** 概率激活用的随机源；单测传固定种子，线上用默认。 */
     random: Random = Random.Default,
+    /** 跨轮状态（轮次 + sticky/cooldown 记忆 + 命中回调）；不传就是「每轮都是新的一轮」。 */
+    state: TurnState = TurnState(),
   ): List<TavernMessage> {
     val history = turns.filter { it.content.isNotBlank() }
-    val hits = hits(card, keywordSource(history), random)
+    val hits = hits(card, keywordSource(history), random, state.tracking, state.turn)
+    state.onHits(hits)
     // 第一轮 = 还没有任何助手回复。调用时这一轮的用户消息已经落库并进了 [turns]，
     // 所以不能拿 history.isEmpty() 判断 —— 那会让开场白永远出不来。
     val firstTurn = history.none { it.role == TavernMessage.ASSISTANT }
@@ -122,11 +125,23 @@ object TavernPrompt {
     history.filter { it.role == TavernMessage.USER }.map { it.content }.takeLast(LOOK_BACK).joinToString("\n")
 
   /**
-   * 按关键词挑出要带的条目。
+   * 一轮的跨轮状态。
    *
-   * 与 ST 的差距写在明处：这里只有「关键词包含」+ 条数/字数上限，没有递归扫描、逻辑与或、
-   * 概率激活、sticky/cooldown —— 那些要等世界书编辑器做出来再说，先把「能按需插进中间」跑通。
+   * 打成一个包是因为 `build` 的参数已经到 6 个了（detekt 卡在 8），而这三样永远一起传；
+   * [onHits] 是给调用方记账/打日志用的，单测里默认什么都不做。
    */
-  internal fun hits(card: CharacterCard, text: String, random: Random = Random.Default): List<WorldEntry> =
-    WorldScan.select(card.world, text, random)
+  data class TurnState(
+    val turn: Int = 0,
+    val tracking: WorldTracking = WorldTracking.NONE,
+    val onHits: (List<WorldEntry>) -> Unit = {},
+  )
+
+  /** 按关键词挑出要带的条目（编排细节全在 [WorldScan]）。 */
+  internal fun hits(
+    card: CharacterCard,
+    text: String,
+    random: Random = Random.Default,
+    tracking: WorldTracking = WorldTracking.NONE,
+    turn: Int = 0,
+  ): List<WorldEntry> = WorldScan.select(card.world, text, random, tracking = tracking, turn = turn)
 }

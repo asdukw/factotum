@@ -139,4 +139,61 @@ class WorldScanTest {
 
     assertTrue(WorldScan.select(entries, "   ").isEmpty())
   }
+
+  /** 内存版跟踪：单测里模拟「上一轮激活过」。 */
+  private class FakeTracking : WorldTracking {
+    private val marks = HashMap<String, Int>()
+
+    override fun lastActivated(key: String): Int? = marks[key]
+
+    override fun record(key: String, turn: Int) {
+      marks[key] = turn
+    }
+  }
+
+  @Test
+  fun stickyEntryStaysForItsWindowAfterTheKeywordIsGone() {
+    val tracking = FakeTracking()
+    val entries = listOf(entry(listOf("学府"), "校规细则").copy(sticky = 2))
+
+    assertEquals(1, WorldScan.select(entries, "学府在哪", Random(1), tracking = tracking, turn = 1).size)
+    // 第 2 轮没提关键词，但还在粘性期内
+    assertEquals(1, WorldScan.select(entries, "今天天气不错", Random(1), tracking = tracking, turn = 3).size)
+    // 第 4 轮已经超出 2 轮窗口
+    assertTrue(WorldScan.select(entries, "今天天气不错", Random(1), tracking = tracking, turn = 4).isEmpty())
+  }
+
+  @Test
+  fun cooldownBlocksReactivationUntilItExpires() {
+    val tracking = FakeTracking()
+    val entries = listOf(entry(listOf("学府"), "校规").copy(cooldown = 2))
+
+    assertEquals(1, WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 1).size)
+    assertTrue("冷却期内同一句话不该再吸进来", WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 2).isEmpty())
+    assertEquals(1, WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 4).size)
+  }
+
+  @Test
+  fun stickyEntryDoesNotRefreshItsOwnTimer() {
+    val tracking = FakeTracking()
+    val entries = listOf(entry(listOf("学府"), "校规").copy(sticky = 3))
+
+    WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 1)
+    // 这一轮是被粘住的，不该把「上次激活」刷成 2；否则粘性永远续期
+    assertEquals(1, WorldScan.select(entries, "无关的话", Random(1), tracking = tracking, turn = 2).size)
+    assertTrue(WorldScan.select(entries, "无关的话", Random(1), tracking = tracking, turn = 5).isEmpty())
+  }
+
+  @Test
+  fun stickyKeepsEntryVisibleWhileItIsCooling() {
+    val tracking = FakeTracking()
+    val entries = listOf(entry(listOf("学府"), "校规").copy(sticky = 3, cooldown = 5))
+
+    WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 1)
+    assertEquals(
+      "冷却挡的是「再被关键词拉进来」，不是「已经在场的」",
+      1,
+      WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 2).size,
+    )
+  }
 }

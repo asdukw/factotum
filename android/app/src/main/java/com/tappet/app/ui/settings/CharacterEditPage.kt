@@ -48,6 +48,8 @@ private data class WorldDraft(
   val allSecondary: Boolean = false,
   val depth: Int = 4,
   val probability: Int = 100,
+  val sticky: Int = 0,
+  val cooldown: Int = 0,
 )
 
 /**
@@ -222,6 +224,12 @@ private fun AdvancedFields(entry: WorldDraft, onUpdate: (WorldDraft) -> Unit) {
   StepperRow(label = "触发概率", value = entry.probability, range = 0..100, step = 10, suffix = "%") { next ->
     onUpdate(entry.copy(probability = next))
   }
+  StepperRow(label = "粘住几轮", value = entry.sticky, range = 0..20, suffix = " 轮") { next ->
+    onUpdate(entry.copy(sticky = next))
+  }
+  StepperRow(label = "冷却几轮", value = entry.cooldown, range = 0..20, suffix = " 轮") { next ->
+    onUpdate(entry.copy(cooldown = next))
+  }
 }
 
 /** 数字步进行：深度 / 概率这种小范围整数，加减比键盘输入快，也不会输进非法值。 */
@@ -256,6 +264,8 @@ private fun worldDrafts(card: CharacterCard): SnapshotStateList<WorldDraft> =
           allSecondary = entry.secondaryLogic == SecondaryLogic.ALL,
           depth = entry.depth,
           probability = entry.probability,
+          sticky = entry.sticky,
+          cooldown = entry.cooldown,
         ),
       )
     }
@@ -289,6 +299,8 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
           depth = draft.depth,
           probability = draft.probability,
           logicAll = draft.allSecondary,
+          sticky = draft.sticky,
+          cooldown = draft.cooldown,
         ),
       )
     entry.takeIf { WorldEntryDraft.isSavable(it) }

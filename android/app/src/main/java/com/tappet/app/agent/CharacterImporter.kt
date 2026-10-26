@@ -200,18 +200,21 @@ object CharacterImporter {
         order = entry["insertion_order"]?.jsonPrimitive?.intOrNull ?: 0,
         // `constant` 在 v2 规范里是「每轮都注入」；`enabled: false` 的条目直接跳过
         constant = entry["constant"]?.jsonPrimitive?.booleanOrNull == true,
-        // 深度/概率在 v3 卡里放在 extensions 里，v2 卡偶尔放在顶层 —— 两处都认
-        depth = extensions?.get("depth")?.jsonPrimitive?.intOrNull ?: entry["depth"]?.jsonPrimitive?.intOrNull ?: 4,
+        // 编排参数在 v3 卡里放在 extensions 里，v2 卡偶尔放在顶层 —— 两处都认
+        depth = extInt(extensions, entry, "depth", 4),
         secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
         secondaryLogic = SecondaryLogic.fromRaw(entry["selectiveLogic"]?.jsonPrimitive?.intOrNull),
         exclude = readKeys(entry, "exclude_keys", "excludeKeys"),
-        probability =
-          extensions?.get("probability")?.jsonPrimitive?.intOrNull
-            ?: entry["probability"]?.jsonPrimitive?.intOrNull
-            ?: 100,
+        probability = extInt(extensions, entry, "probability", 100),
+        sticky = extInt(extensions, entry, "sticky", 0),
+        cooldown = extInt(extensions, entry, "cooldown", 0),
       ).takeIf { entry["enabled"]?.jsonPrimitive?.booleanOrNull != false }
     }
   }
+
+  /** 读一个整型编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
+  private fun extInt(extensions: JsonObject?, entry: JsonObject, name: String, fallback: Int): Int =
+    extensions?.get(name)?.jsonPrimitive?.intOrNull ?: entry[name]?.jsonPrimitive?.intOrNull ?: fallback
 
   /** 读一组关键词：数组取每项，单字符串当一条；空串丢掉（真卡里偶有空元素）。 */
   private fun readKeys(entry: JsonObject, vararg names: String): List<String> =

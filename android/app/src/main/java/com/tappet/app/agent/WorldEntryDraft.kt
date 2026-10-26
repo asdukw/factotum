@@ -57,6 +57,11 @@ object WorldEntryDraft {
     val logicAll: Boolean = false,
     val sticky: Int = 0,
     val cooldown: Int = 0,
+    val position: Int = WorldEntry.POSITION_DEPTH,
+    val role: Int = WorldEntry.ROLE_SYSTEM,
+    val useProbability: Boolean = true,
+    val matchWholeWords: Boolean = false,
+    val caseSensitive: Boolean = false,
   )
 
   /**
@@ -76,7 +81,33 @@ object WorldEntryDraft {
       probability = clampProbability(draft.probability),
       sticky = draft.sticky.coerceIn(0, MAX_STICKY),
       cooldown = draft.cooldown.coerceIn(0, MAX_STICKY),
+      position = clampPosition(draft.position),
+      role = clampRole(draft.role),
+      useProbability = draft.useProbability,
+      matchWholeWords = draft.matchWholeWords,
+      caseSensitive = draft.caseSensitive,
     )
+
+  /** 只认三种落点；卡里写别的数字（老版本 ST 有 2/3）一律回到「按深度」。 */
+  fun clampPosition(position: Int): Int =
+    when (position) {
+      WorldEntry.POSITION_BEFORE,
+      WorldEntry.POSITION_AFTER,
+      WorldEntry.POSITION_DEPTH,
+      -> position
+
+      else -> WorldEntry.POSITION_DEPTH
+    }
+
+  fun clampRole(role: Int): Int =
+    when (role) {
+      WorldEntry.ROLE_USER,
+      WorldEntry.ROLE_ASSISTANT,
+      WorldEntry.ROLE_SYSTEM,
+      -> role
+
+      else -> WorldEntry.ROLE_SYSTEM
+    }
 
   /** 条目是否值得存：常驻只要有正文，按需还要有关键词。 */
   fun isSavable(entry: WorldEntry): Boolean =

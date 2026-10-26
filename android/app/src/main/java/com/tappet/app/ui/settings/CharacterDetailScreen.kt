@@ -1,5 +1,6 @@
 package com.tappet.app.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -161,6 +163,7 @@ internal fun CharacterDetailScreen(
         ProseSection("性格与说话方式", card.personality)
         ProseSection("开场场景", card.scenario)
         ProseSection("开场白", card.firstMes)
+        GreetingSection(card)
 
         WorldSection(card)
 
@@ -311,11 +314,49 @@ private fun entryLabel(entry: WorldEntry): String {
     parts += "还需$joiner${entry.secondary.joinToString("、")}"
   }
   if (entry.exclude.isNotEmpty()) parts += "排除 ${entry.exclude.joinToString("、")}"
-  if (entry.probability < 100) parts += "${entry.probability}% 概率"
+  if (entry.useProbability && entry.probability < 100) parts += "${entry.probability}% 概率"
   if (entry.sticky > 0) parts += "粘 ${entry.sticky} 轮"
   if (entry.cooldown > 0) parts += "冷却 ${entry.cooldown} 轮"
-  parts += "深度 ${entry.depth}"
+  if (entry.matchWholeWords) parts += "整词"
+  if (entry.caseSensitive) parts += "区分大小写"
+  when (entry.position) {
+    WorldEntry.POSITION_BEFORE -> parts += "插在人设之前"
+    WorldEntry.POSITION_AFTER -> parts += "插在人设之后"
+    else -> parts += "深度 ${entry.depth} · ${roleLabel(entry.role)}"
+  }
   return parts.joinToString(" · ")
+}
+
+/** 深度条目的口吻，只在标签里出现，所以直接写死三个词。 */
+private fun roleLabel(role: Int): String =
+  when (role) {
+    WorldEntry.ROLE_USER -> "user"
+    WorldEntry.ROLE_ASSISTANT -> "assistant"
+    else -> "system"
+  }
+
+/**
+ * 备用开场白：v3 的 `alternate_greetings`，一张卡常用它区分不同场景（第一次见面 / 已经相识…）。
+ *
+ * 这里只读展示 —— 开场白是卡作者的文案，改它应该回卡里改；能选的是「这次用哪一条」，
+ * 那件事放在空会话的页面上（选完就当第一条助手消息落库）。
+ */
+@Composable
+private fun GreetingSection(card: CharacterCard) {
+  if (card.alternateGreetings.isEmpty()) return
+  SectionLabel("备用开场白 · ${card.alternateGreetings.size} 条")
+  SettingsGroup {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      card.alternateGreetings.forEachIndexed { index, text ->
+        Text(
+          text = "${index + 2}. ${text.trim().lines().take(3).joinToString("\n")}",
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 3,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+    }
+  }
 }
 
 /**

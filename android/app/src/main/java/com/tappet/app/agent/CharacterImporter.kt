@@ -176,6 +176,7 @@ object CharacterImporter {
         personality = personality,
         scenario = data["scenario"]?.string().orEmpty().trim(),
         firstMes = (data["first_mes"] ?: data["first_message"])?.string().orEmpty().trim(),
+        alternateGreetings = readGreetings(data),
         world = readWorld(data),
         creator = data["creator"]?.string().orEmpty().trim(),
         license = "",
@@ -208,9 +209,26 @@ object CharacterImporter {
         probability = extInt(extensions, entry, "probability", 100),
         sticky = extInt(extensions, entry, "sticky", 0),
         cooldown = extInt(extensions, entry, "cooldown", 0),
+        position = extInt(extensions, entry, "position", WorldEntry.POSITION_DEPTH),
+        role = extInt(extensions, entry, "role", WorldEntry.ROLE_SYSTEM),
+        useProbability = extBool(extensions, entry, "useProbability", true),
+        matchWholeWords = extBool(extensions, entry, "matchWholeWords", false),
+        caseSensitive = extBool(extensions, entry, "caseSensitive", false),
       ).takeIf { entry["enabled"]?.jsonPrimitive?.booleanOrNull != false }
     }
   }
+
+  /** 备用开场白：v3 里是 `alternate_greetings` 数组，个别卡写成顶层 `alternateGreetings`。 */
+  private fun readGreetings(data: JsonObject): List<String> =
+    (data["alternate_greetings"] ?: data["alternateGreetings"])
+      ?.let { element -> if (element is JsonArray) element else JsonArray(listOf(element)) }
+      ?.mapNotNull { (it as? JsonPrimitive)?.content?.trim() }
+      ?.filter { it.isNotEmpty() }
+      ?: emptyList()
+
+  /** 读一个布尔编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
+  private fun extBool(extensions: JsonObject?, entry: JsonObject, name: String, fallback: Boolean): Boolean =
+    extensions?.get(name)?.jsonPrimitive?.booleanOrNull ?: entry[name]?.jsonPrimitive?.booleanOrNull ?: fallback
 
   /** 读一个整型编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
   private fun extInt(extensions: JsonObject?, entry: JsonObject, name: String, fallback: Int): Int =

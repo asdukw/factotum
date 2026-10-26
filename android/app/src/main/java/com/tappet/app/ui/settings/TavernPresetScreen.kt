@@ -174,5 +174,6 @@ private fun PresetRow(
 }
 
 private const val SLOT_HELP =
-  "可用变量：{{char}} {{user}} {{description}} {{personality}} {{scenario}} {{first_mes}} {{world}} {{memory}}；" +
+  "可用变量：{{char}} {{user}} {{description}} {{personality}} {{scenario}} {{first_mes}} " +
+    "{{world}} {{world_before}} {{world_after}} {{memory}}；" +
     "条件块 {{#变量}}…{{/变量}} 在变量为空时整段不出现（{{#first}} 只在第一轮出现，{{#lore}} 在有世界书命中时出现）。"

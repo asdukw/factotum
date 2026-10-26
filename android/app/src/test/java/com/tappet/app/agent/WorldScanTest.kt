@@ -196,4 +196,42 @@ class WorldScanTest {
       WorldScan.select(entries, "学府", Random(1), tracking = tracking, turn = 2).size,
     )
   }
+
+  @Test
+  fun matchWholeWordsKeepsCorpOutOfCorporate() {
+    val entry = entry(listOf("corp"), "公司区的通行证").copy(matchWholeWords = true)
+
+    assertTrue("整词匹配：corp 在句子里该命中", WorldScan.select(listOf(entry), "meet me at the corp gate", Random(1)).isNotEmpty())
+    assertTrue(
+      "整词匹配：corporate 不该被 corp 命中",
+      WorldScan.select(listOf(entry), "corporate housing is far", Random(1)).isEmpty(),
+    )
+  }
+
+  @Test
+  fun chineseKeysIgnoreWholeWordMatching() {
+    // 中文没有词边界：给「学府」加边界等于永远不命中，所以整词开关对中文不生效
+    val entry = entry(listOf("学府"), "校规细则").copy(matchWholeWords = true)
+    assertTrue(WorldScan.select(listOf(entry), "第一学府在哪", Random(1)).isNotEmpty())
+  }
+
+  @Test
+  fun caseSensitiveCanBeTurnedOn() {
+    val loose = entry(listOf("Alice"), "她住在钟楼").copy(caseSensitive = false)
+    val strict = entry(listOf("Alice"), "她住在钟楼").copy(caseSensitive = true)
+
+    assertTrue(WorldScan.select(listOf(loose), "alice 是谁", Random(1)).isNotEmpty())
+    assertTrue(WorldScan.select(listOf(strict), "alice 是谁", Random(1)).isEmpty())
+    assertTrue(WorldScan.select(listOf(strict), "Alice 是谁", Random(1)).isNotEmpty())
+  }
+
+  @Test
+  fun useProbabilityFalseIgnoresThePercentage() {
+    // 卡里写「必插」但带着 0% 的概率值：以前会被抽掉，现在就当 100%
+    val entry = entry(listOf("学府"), "校规细则").copy(probability = 0, useProbability = false)
+    repeat(20) { assertTrue(WorldScan.select(listOf(entry), "学府", Random(it)).isNotEmpty()) }
+    // 反过来：开关打开时 0% 就是永不
+    val never = entry(listOf("学府"), "校规细则").copy(probability = 0, useProbability = true)
+    assertTrue(WorldScan.select(listOf(never), "学府", Random(1)).isEmpty())
+  }
 }

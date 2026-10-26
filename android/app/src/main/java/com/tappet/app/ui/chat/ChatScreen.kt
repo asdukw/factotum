@@ -233,6 +233,7 @@ fun ChatScreen(
     onRegenerate = viewModel.regenerate,
     onDeleteTurn = viewModel.deleteLastTurn,
     onRetryFrom = viewModel.retryFrom,
+    onSeedGreeting = viewModel.seedGreeting,
     modifier = modifier,
   )
 }
@@ -273,6 +274,7 @@ internal fun ChatScreen(
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
+  onSeedGreeting: (String) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
   modifier: Modifier = Modifier,
@@ -282,6 +284,7 @@ internal fun ChatScreen(
   val scope = rememberCoroutineScope()
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
+  val greetings = rememberGreetings(state)
 
   HideKeyboardWhileStreaming(streaming = state.isStreaming, keyboard = keyboard, focus = focus)
 
@@ -339,6 +342,8 @@ internal fun ChatScreen(
       onRegenerate = onRegenerate,
       onDeleteTurn = onDeleteTurn,
       onRetryFrom = onRetryFrom,
+      greetings = greetings,
+      onSeedGreeting = onSeedGreeting,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
@@ -605,6 +610,28 @@ private fun isReadableAnswer(message: ChatMessage, pendingId: String?): Boolean 
     message.content.isNotBlank() &&
     message.error == null
 
+/**
+ * 空会话里可用的开场白（v3 的 `alternate_greetings`）。
+ *
+ * 只在一条消息都没有时读卡：选完开场白它就落成第一条助手消息，之后再点「换一条」会把已经
+ * 发生的对话改掉。读过之后按「有没有消息」缓存，发第一句话时自然失效。
+ */
+@Composable
+private fun rememberGreetings(state: ChatUiState): List<String> {
+  val cardContext = LocalContext.current.applicationContext
+  return remember(state.activeCharacterId, state.messages.isEmpty()) {
+    if (!state.messages.isEmpty()) {
+      emptyList()
+    } else {
+      // 展开 {{user}} / {{char}}：这里既当预览也当落库的正文，留着花括号会直接显示给用户
+      state.activeCharacterId
+        ?.let { id -> CharacterStore.byId(cardContext, id) }
+        ?.let { card -> card.greetings.map { CharacterStore.renderText(it, card) } }
+        .orEmpty()
+    }
+  }
+}
+
 @Composable
 private fun ChatBody(
   state: ChatUiState,
@@ -616,6 +643,8 @@ private fun ChatBody(
   onNewSession: () -> Unit,
   onOpenSessions: () -> Unit,
   onModelSwitchClick: () -> Unit,
+  greetings: List<String> = emptyList(),
+  onSeedGreeting: (String) -> Unit = {},
   onLeaveRoleplay: () -> Unit = {},
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
@@ -669,6 +698,8 @@ private fun ChatBody(
         onRegenerate = onRegenerate,
         onDeleteTurn = onDeleteTurn,
         onRetryFrom = onRetryFrom,
+        greetings = greetings,
+        onPickGreeting = onSeedGreeting,
       )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
@@ -734,6 +765,8 @@ private fun MessageList(
   onRegenerate: () -> Unit,
   onDeleteTurn: () -> Unit,
   onRetryFrom: (String) -> Unit = {},
+  greetings: List<String> = emptyList(),
+  onPickGreeting: (String) -> Unit = {},
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
   // 而删中间一轮会让后面的对话悬在半空。
@@ -745,7 +778,13 @@ private fun MessageList(
     verticalArrangement = Arrangement.spacedBy(18.dp),
   ) {
     if (state.messages.isEmpty()) {
-      item { EmptyHint(characterName = state.activeCharacterName) }
+      item {
+        EmptyHint(
+          characterName = state.activeCharacterName,
+          greetings = greetings,
+          onPickGreeting = onPickGreeting,
+        )
+      }
     }
     items(items = state.messages, key = { it.id }) { message ->
       MessageBubble(
@@ -1390,7 +1429,11 @@ private fun SessionRow(
 }
 
 @Composable
-private fun EmptyHint(characterName: String? = null) {
+private fun EmptyHint(
+  characterName: String? = null,
+  greetings: List<String> = emptyList(),
+  onPickGreeting: (String) -> Unit = {},
+) {
   Column(
     modifier = Modifier.fillMaxWidth().padding(top = 96.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1419,6 +1462,29 @@ private fun EmptyHint(characterName: String? = null) {
       textAlign = TextAlign.Center,
       modifier = Modifier.padding(top = 8.dp),
     )
+    if (greetings.isNotEmpty()) {
+      Text(
+        text = if (greetings.size == 1) "或者从她写的开场白开始" else "选一条开场白开始（共 ${greetings.size} 条）",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 22.dp, bottom = 10.dp),
+      )
+      greetings.forEachIndexed { index, text ->
+        Text(
+          text = text.trim().lines().take(3).joinToString("\n"),
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 3,
+          overflow = TextOverflow.Ellipsis,
+          modifier =
+            Modifier.fillMaxWidth()
+              .padding(horizontal = 8.dp, vertical = 4.dp)
+              .clip(RoundedCornerShape(14.dp))
+              .clickable { onPickGreeting(text) }
+              .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+              .padding(14.dp),
+        )
+      }
+    }
   }
 }
 

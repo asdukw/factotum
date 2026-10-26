@@ -15,6 +15,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tappet.app.agent.CharacterCard
 import com.tappet.app.agent.SecondaryLogic
@@ -50,6 +52,11 @@ private data class WorldDraft(
   val probability: Int = 100,
   val sticky: Int = 0,
   val cooldown: Int = 0,
+  val position: Int = WorldEntry.POSITION_DEPTH,
+  val role: Int = WorldEntry.ROLE_SYSTEM,
+  val useProbability: Boolean = true,
+  val matchWholeWords: Boolean = false,
+  val caseSensitive: Boolean = false,
 )
 
 /**
@@ -230,6 +237,43 @@ private fun AdvancedFields(entry: WorldDraft, onUpdate: (WorldDraft) -> Unit) {
   StepperRow(label = "冷却几轮", value = entry.cooldown, range = 0..20, suffix = " 轮") { next ->
     onUpdate(entry.copy(cooldown = next))
   }
+  ChoiceRow(
+    label = "插在哪儿",
+    options = listOf(WorldEntry.POSITION_BEFORE to "人设之前", WorldEntry.POSITION_AFTER to "人设之后", WorldEntry.POSITION_DEPTH to "按深度"),
+    selected = entry.position,
+  ) { next -> onUpdate(entry.copy(position = next)) }
+  if (entry.position == WorldEntry.POSITION_DEPTH) {
+    ChoiceRow(
+      label = "以谁的口吻",
+      options = listOf(WorldEntry.ROLE_SYSTEM to "system", WorldEntry.ROLE_USER to "user", WorldEntry.ROLE_ASSISTANT to "assistant"),
+      selected = entry.role,
+    ) { next -> onUpdate(entry.copy(role = next)) }
+  }
+  SwitchRow(label = "按概率抽签", checked = entry.useProbability) { onUpdate(entry.copy(useProbability = it)) }
+  SwitchRow(label = "关键词整词匹配（只对英文生效）", checked = entry.matchWholeWords) { onUpdate(entry.copy(matchWholeWords = it)) }
+  SwitchRow(label = "关键词区分大小写", checked = entry.caseSensitive) { onUpdate(entry.copy(caseSensitive = it)) }
+}
+
+/** 三选一：位置 / 角色这种选项少又必须看得见的，用一排按钮而不是下拉菜单。 */
+@Composable
+private fun ChoiceRow(label: String, options: List<Pair<Int, String>>, selected: Int, onPick: (Int) -> Unit) {
+  Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    options.forEach { (value, text) ->
+      TextButton(onClick = { onPick(value) }) {
+        Text(text, fontWeight = if (value == selected) FontWeight.SemiBold else FontWeight.Normal)
+      }
+    }
+  }
+}
+
+/** 开关行：布尔编排参数用它，比「点一下切换」的按钮能看出当前状态。 */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+  Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    Switch(checked = checked, onCheckedChange = onChange)
+  }
 }
 
 /** 数字步进行：深度 / 概率这种小范围整数，加减比键盘输入快，也不会输进非法值。 */
@@ -266,6 +310,11 @@ private fun worldDrafts(card: CharacterCard): SnapshotStateList<WorldDraft> =
           probability = entry.probability,
           sticky = entry.sticky,
           cooldown = entry.cooldown,
+          position = entry.position,
+          role = entry.role,
+          useProbability = entry.useProbability,
+          matchWholeWords = entry.matchWholeWords,
+          caseSensitive = entry.caseSensitive,
         ),
       )
     }
@@ -301,6 +350,11 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
           logicAll = draft.allSecondary,
           sticky = draft.sticky,
           cooldown = draft.cooldown,
+          position = draft.position,
+          role = draft.role,
+          useProbability = draft.useProbability,
+          matchWholeWords = draft.matchWholeWords,
+          caseSensitive = draft.caseSensitive,
         ),
       )
     entry.takeIf { WorldEntryDraft.isSavable(it) }

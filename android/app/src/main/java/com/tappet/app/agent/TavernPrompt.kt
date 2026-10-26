@@ -60,19 +60,74 @@ object TavernPrompt {
     // 第一轮 = 还没有任何助手回复。调用时这一轮的用户消息已经落库并进了 [turns]，
     // 所以不能拿 history.isEmpty() 判断 —— 那会让开场白永远出不来。
     val firstTurn = history.none { it.role == TavernMessage.ASSISTANT }
-    val values = values(card, memory, firstTurn, hasLore = hits.isNotEmpty())
+    val values = values(card, memory, firstTurn, hasLore = hits.isNotEmpty()) + blocks(hits, card)
 
     val out = ArrayList<TavernMessage>(history.size + hits.size + 2)
-    out += TavernMessage(TavernMessage.SYSTEM, renderPreset(preset.system, values))
+    out += TavernMessage(TavernMessage.SYSTEM, systemMessage(preset, values))
     out += history
-    // 从最深的一处往近处插：先插远的，后面按原索引算的近处位置不会被挤偏。
-    hits.sortedByDescending { it.depth }.forEach { entry ->
-      val at = (out.size - entry.depth.coerceIn(1, MAX_DEPTH)).coerceIn(1, out.size)
-      out.add(at, TavernMessage(TavernMessage.SYSTEM, loreBlock(entry, card)))
-    }
+    // 只有「按深度」的条目进聊天中间：人设之前/之后的两种已经并进上面那条系统消息了
+    placeInChat(out, hits, card)
     out += TavernMessage(TavernMessage.SYSTEM, renderPreset(preset.postHistory, values))
     return out
   }
+
+  /**
+   * 系统消息：模板渲染之后，把「人设之前 / 人设之后」两块接到该在的位置。
+   *
+   * 模板里有 `{{world_before}}` / `{{world_after}}` 就由模板决定落点（默认预设就是）；
+   * 用户自己的老预设没有这两个变量时，退化成「系统消息开头 / 结尾」—— 与其静默丢掉这些设定，
+   * 不如位置差一点并在界面上说明。
+   */
+  private fun systemMessage(preset: TavernPreset, values: Map<String, String>): String {
+    val rendered = renderPreset(preset.system, values)
+    val before = values["world_before"].orEmpty()
+    val after = values["world_after"].orEmpty()
+    val head = if (before.isNotBlank() && !preset.system.contains("{{world_before}}")) "$before\n\n$rendered" else rendered
+    return if (after.isNotBlank() && !preset.system.contains("{{world_after}}")) "$head\n\n$after" else head
+  }
+
+  /** 把「按深度」的条目插进 [out] 的聊天段。从最深的一处往近处插，先插远的不会被后面挤偏。 */
+  private fun placeInChat(out: MutableList<TavernMessage>, hits: List<WorldEntry>, card: CharacterCard) {
+    hits
+      .filter { it.position == WorldEntry.POSITION_DEPTH }
+      .sortedByDescending { it.depth }
+      .forEach { entry ->
+        val at = (out.size - entry.depth.coerceIn(1, MAX_DEPTH)).coerceIn(1, out.size)
+        out.add(at, TavernMessage(roleOf(entry), loreBlock(entry, card)))
+      }
+  }
+
+  /** 条目以谁的口吻出现：ST 的 `role` 数字，认不出的按 system。 */
+  private fun roleOf(entry: WorldEntry): String =
+    when (entry.role) {
+      WorldEntry.ROLE_USER -> TavernMessage.USER
+      WorldEntry.ROLE_ASSISTANT -> TavernMessage.ASSISTANT
+      else -> TavernMessage.SYSTEM
+    }
+
+  /**
+   * 「人设之前 / 之后」两块内容，作为模板变量 `{{world_before}}` / `{{world_after}}`。
+   *
+   * 这两块与深度条目共用同一轮的条数预算（[WorldScan.MAX_ENTRIES]）—— 一张卡里这两种通常
+   * 各只有一两条；再单独开一份预算，会让「挑几条」变成两套数字，调起来更难对。
+   */
+  private fun blocks(hits: List<WorldEntry>, card: CharacterCard): Map<String, String> {
+    fun block(position: Int): String {
+      var budget = MAX_BLOCK_CHARS
+      val lines = ArrayList<String>()
+      for (entry in hits.filter { it.position == position }.sortedBy { it.order }) {
+        val text = loreBlock(entry, card)
+        if (text.length > budget) break
+        budget -= text.length
+        lines += text
+      }
+      return lines.joinToString("\n\n")
+    }
+    return mapOf("world_before" to block(WorldEntry.POSITION_BEFORE), "world_after" to block(WorldEntry.POSITION_AFTER))
+  }
+
+  /** 「人设之前 / 之后」合计的字符预算，量级与常驻块相当。 */
+  internal const val MAX_BLOCK_CHARS = 1_200
 
   /** 深度超过这个数就等于「放到最开头」，没有意义。 */
   internal const val MAX_DEPTH = 12

@@ -211,4 +211,50 @@ class TavernPromptTest {
     assertFalse(all.contains("{{"))
     assertFalse(all.contains("}}"))
   }
+
+  @Test
+  fun entriesPlacedBeforeOrAfterTheCardGoIntoTheSystemBlockNotTheChat() {
+    val c =
+      card(
+        world =
+          listOf(
+            WorldEntry(keys = listOf("校规"), content = "校规第一条：夜里不许留在教学楼。", position = WorldEntry.POSITION_BEFORE),
+            WorldEntry(keys = listOf("校规"), content = "纠察队可以破例。", position = WorldEntry.POSITION_AFTER),
+          ),
+      )
+    val messages = TavernPrompt.build(c, memory = "", turns = turns("user" to "校规是什么"))
+
+    val system = messages.first().content
+    assertTrue("人设之前的条目要进系统消息", system.contains("校规第一条"))
+    assertTrue("人设之后的条目也要进系统消息", system.contains("纠察队可以破例"))
+    // 而且只能出现一次：再按深度插一份就是重复注入
+    assertEquals(1, messages.count { it.content.contains("校规第一条") })
+    assertEquals(1, messages.count { it.content.contains("纠察队可以破例") })
+  }
+
+  @Test
+  fun depthEntriesUseTheRoleFromTheCard() {
+    val c =
+      card(
+        world =
+          listOf(
+            WorldEntry(keys = listOf("雨"), content = "外面在下雨。", role = WorldEntry.ROLE_USER),
+            WorldEntry(keys = listOf("雨"), content = "雨声很轻。", role = WorldEntry.ROLE_ASSISTANT),
+          ),
+      )
+    val messages = TavernPrompt.build(c, memory = "", turns = turns("user" to "下雨了吗"))
+
+    assertTrue(messages.any { it.role == TavernMessage.USER && it.content.contains("外面在下雨") })
+    assertTrue(messages.any { it.role == TavernMessage.ASSISTANT && it.content.contains("雨声很轻") })
+  }
+
+  @Test
+  fun presetWithoutMarkersStillGetsTheBlocks() {
+    val c =
+      card(world = listOf(WorldEntry(keys = listOf("校规"), content = "校规第一条：夜里不许留在教学楼。", position = WorldEntry.POSITION_BEFORE)))
+    val bare = TavernPreset(id = "bare", name = "无 marker", system = "你扮演{{char}}。", postHistory = "")
+    val messages = TavernPrompt.build(c, memory = "", turns = turns("user" to "校规是什么"), preset = bare)
+
+    assertTrue("模板没写 {{world_before}} 时不能静默丢掉这条设定", messages.first().content.contains("校规第一条"))
+  }
 }

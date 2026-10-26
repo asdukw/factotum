@@ -45,6 +45,30 @@ data class WorldEntry(
   val sticky: Int = 0,
   /** 命中之后几轮内不再按关键词重新激活（0 = 不冷却）。粘住的条目仍然会出现在上下文里。 */
   val cooldown: Int = 0,
+  /**
+   * 插在哪儿，对齐 ST 的 `extensions.position`：0 = 角色定义之前、1 = 角色定义之后、
+   * 4 = 按 [depth] 插进聊天中间。
+   *
+   * 默认取 4 而不是 ST 的 0：已经导入的卡大多没写这个字段，而它们现在都是按深度插进聊天里的；
+   * 改默认值会把它们一次性全挪进系统消息 —— 行为变了，界面上还看不出来。
+   */
+  val position: Int = POSITION_DEPTH,
+  /** 深度插入时这条内容以谁的口吻出现（对齐 ST 的 `role`：0 system / 1 user / 2 assistant）。 */
+  val role: Int = ROLE_SYSTEM,
+  /**
+   * 是否按 [probability] 抽签，对齐 ST 的 `useProbability`。
+   *
+   * 以前没读这个开关：卡里写了「必插」却带着 70% 的值，我们会真的漏掉 30% —— 而且随机失败无法复现。
+   */
+  val useProbability: Boolean = true,
+  /**
+   * 关键词必须整词命中，对齐 ST 的 `matchWholeWords`。
+   *
+   * 只对拉丁词有效：中文没有词边界，`学府` 两侧加边界等于永远不命中，所以中文仍按子串走。
+   */
+  val matchWholeWords: Boolean = false,
+  /** 关键词区分大小写，对齐 ST 的 `caseSensitive`（默认关）。 */
+  val caseSensitive: Boolean = false,
 ) {
   /**
    * 这组关键词是否命中 [text]。
@@ -62,7 +86,19 @@ data class WorldEntry(
       .asSequence()
       .map { it.trim() }
       .filter { it.isMeaningfulKey() }
-      .any { text.contains(it, ignoreCase = true) }
+      .any { it.hits(text) }
+
+  /** 单条关键词的命中判定：整词 / 大小写两个开关只对拉丁词生效（中文没有词边界）。 */
+  private fun String.hits(text: String): Boolean {
+    if (matchWholeWords && any { it.code !in CJK_RANGE }) {
+      val options = if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+      return Regex("(?<![\\p{L}\\p{N}])${Regex.escape(this)}(?![\\p{L}\\p{N}])", options).containsMatchIn(text)
+    }
+    return text.contains(this, ignoreCase = !caseSensitive)
+  }
+
+  /** 实际生效的概率：`useProbability = false` 时概率形同虚设。 */
+  val effectiveProbability: Int get() = if (useProbability) probability else 100
 
   /** 次要关键词是否满足（[secondary] 为空时视为满足）。 */
   fun secondarySatisfied(text: String): Boolean =
@@ -91,7 +127,20 @@ data class WorldEntry(
     return this[0].code in CJK_RANGE
   }
 
-  private companion object {
+  companion object {
+    /** 人设之前（ST `position: 0`）。 */
+    const val POSITION_BEFORE = 0
+
+    /** 人设之后（ST `position: 1`）。 */
+    const val POSITION_AFTER = 1
+
+    /** 按深度插进聊天中间（ST `position: 4`，也就是 @D）。 */
+    const val POSITION_DEPTH = 4
+
+    const val ROLE_SYSTEM = 0
+    const val ROLE_USER = 1
+    const val ROLE_ASSISTANT = 2
+
     /** 卡里见过的分隔写法：`·` 用来分组同义词，其余是列表标点。 */
     val KEY_SEPARATORS = Regex("[,，、·/|｜；;]+")
 
@@ -141,12 +190,18 @@ data class CharacterCard(
   val personality: String = "",
   val scenario: String = "",
   @SerialName("first_mes") val firstMes: String = "",
+  /** 备用开场白（v3 的 `alternate_greetings`）。卡常用不同开场白区分场景，以前只留第一条。 */
+  @SerialName("alternate_greetings") val alternateGreetings: List<String> = emptyList(),
   val world: List<WorldEntry> = emptyList(),
   val creator: String = "",
   val license: String = "",
   /** 用户导入的卡放在这里（内置卡为 false），用于界面上区分与删除。 */
   val imported: Boolean = false,
-)
+) {
+  /** 所有可选开场白：第一条永远是 [firstMes]，后面是备用。空串不算。 */
+  val greetings: List<String>
+    get() = (listOf(firstMes) + alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
+}
 
 /**
  * 角色卡的读取与渲染。

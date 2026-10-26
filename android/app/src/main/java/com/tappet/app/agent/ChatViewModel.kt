@@ -1,5 +1,6 @@
 package com.tappet.app.agent
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tappet.app.data.db.MessageRole
@@ -241,6 +242,28 @@ class ChatViewModel(
             activeCharacterName = name ?: state.activeCharacterName,
           )
         }
+      }
+    }
+  }
+
+  /**
+   * 用一条开场白开始这个会话：当成第一条助手消息落库。
+   *
+   * 以前开场白只活在系统提示里（模板变量 `{{first_mes}}`），会话列表上一条消息都没有；v3 卡带多条
+   * 备用开场白时更没地方挑。落库之后它就是普通历史 —— 重写/删这轮照常用，而且 `firstTurn` 自然
+   * 变成 false，系统提示里不会再塞一遍开场白。
+   */
+  val seedGreeting: (String) -> Unit = { text ->
+    val snapshot = _state.value
+    val sessionId = snapshot.sessionId
+    // 开场白只能落在空会话上：已经有消息的会话再塞一条，历史就凭空多出个人说过的话。
+    val emptySession = snapshot.ready && !snapshot.isStreaming && snapshot.messages.isEmpty()
+    Log.d("TappetAgent", "seed greeting chars=${text.length}")
+    if (emptySession && sessionId != null && text.isNotBlank()) {
+      viewModelScope.launch {
+        runCatching { store.appendMessage(sessionId, MessageRole.Assistant, text.trim(), MessageStatus.Complete) }
+          .onFailure { reportStorageFailure(it) }
+        loadSession(sessionId)
       }
     }
   }

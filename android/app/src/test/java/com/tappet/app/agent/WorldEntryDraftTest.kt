@@ -93,4 +93,37 @@ class WorldEntryDraftTest {
 
     assertEquals(WorldEntryDraft.MAX_CONTENT, entry.content.length)
   }
+
+  @Test
+  fun unknownPositionsFallBackToDepth() {
+    // ST 老版本有 2/3（作者注释之类的落点），我们只认三种，其余回到「按深度」
+    assertEquals(WorldEntry.POSITION_DEPTH, WorldEntryDraft.clampPosition(2))
+    assertEquals(WorldEntry.POSITION_DEPTH, WorldEntryDraft.clampPosition(99))
+    assertEquals(WorldEntry.POSITION_BEFORE, WorldEntryDraft.clampPosition(0))
+    assertEquals(WorldEntry.POSITION_AFTER, WorldEntryDraft.clampPosition(1))
+  }
+
+  @Test
+  fun buildKeepsPositionRoleAndMatchFlags() {
+    val entry =
+      WorldEntryDraft.build(
+        WorldEntryDraft.Draft(
+          primary = "校规",
+          content = "夜里不许留在教学楼。",
+          position = WorldEntry.POSITION_BEFORE,
+          role = WorldEntry.ROLE_USER,
+          useProbability = false,
+          matchWholeWords = true,
+          caseSensitive = true,
+        ),
+      )
+
+    assertEquals(WorldEntry.POSITION_BEFORE, entry.position)
+    assertEquals(WorldEntry.ROLE_USER, entry.role)
+    assertFalse(entry.useProbability)
+    assertTrue(entry.matchWholeWords)
+    assertTrue(entry.caseSensitive)
+    // useProbability=false 时概率形同虚设，实际生效的永远是 100
+    assertEquals(100, entry.copy(probability = 30).effectiveProbability)
+  }
 }

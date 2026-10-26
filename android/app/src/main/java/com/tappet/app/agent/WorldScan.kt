@@ -103,9 +103,9 @@ object WorldScan {
   private fun isMentionedIn(candidate: WorldEntry, seed: WorldEntry, text: String): Boolean =
     candidate.matches(seed.content) && !candidate.excluded(text)
 
-  /** 概率判定。100 必中、0 必不中，其余按比例。 */
+  /** 概率判定。100 必中、0 必不中，其余按比例；`useProbability = false` 的条目当作必中。 */
   private fun rolls(entry: WorldEntry, random: Random): Boolean {
-    val probability = entry.probability.coerceIn(0, 100)
+    val probability = entry.effectiveProbability.coerceIn(0, 100)
     return probability >= 100 || (probability > 0 && random.nextInt(100) < probability)
   }
 

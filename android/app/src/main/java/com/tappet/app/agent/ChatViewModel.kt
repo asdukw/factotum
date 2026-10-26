@@ -297,6 +297,19 @@ class ChatViewModel(
       uiFlushMs = UI_FLUSH_INTERVAL_MS,
     )
 
+  /**
+   * 「现在就总结」：手动写一条前情提要（门槛降到 2 条，见 [SessionRecap.summarizeNow]）。
+   *
+   * 结果直接塞进界面状态，不必等下一轮 —— 用户按下按钮就该看见东西。
+   */
+  val recapNow: () -> Unit = {
+    val sessionId = _state.value.sessionId
+    val recap = roleplay.recap
+    if (sessionId != null && recap != null && !_state.value.isStreaming) {
+      recap.summarizeNow(sessionId) { text -> _state.update { it.copy(sessionRecap = text) } }
+    }
+  }
+
   /** 从任意一条消息开支线（见 [Branching]）：原会话不动，历史抄进一段新会话。 */
   val branching =
     Branching(

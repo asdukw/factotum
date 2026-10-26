@@ -286,6 +286,7 @@ private fun bubbleActions(viewModel: ChatViewModel) =
     swipe = viewModel.variantsSwitch.swipe,
     continueReply = viewModel.replies.continueReply,
     fork = viewModel.branching.fork,
+    recapNow = viewModel.recapNow,
   )
 
 /**
@@ -302,6 +303,8 @@ internal data class BubbleActions(
   val swipe: (Int) -> Unit = {},
   val continueReply: () -> Unit = {},
   val fork: (String) -> Unit = {},
+  /** 手动写一条前情提要（见 `SessionRecap.summarizeNow`）。 */
+  val recapNow: () -> Unit = {},
 )
 
 /**
@@ -793,6 +796,10 @@ private fun ChatBody(
       }
     }
 
+    // 前情提要只出现在扮演会话里：日常对话没有「记忆」这回事，摆一行只会让人以为有。
+    if (state.activeCharacterId != null) {
+      SessionRecapBar(recap = state.sessionRecap, canWrite = state.messages.isNotEmpty(), onSummarize = actions.recapNow)
+    }
     SessionVarsBar(state.sessionVars)
 
     ChatInputBar(
@@ -809,6 +816,58 @@ private fun ChatBody(
       onMicClick = onMicClick,
       onImpersonate = onImpersonate.takeIf { state.tavernDirect && !state.writingLine },
       writingLine = state.writingLine,
+    )
+  }
+}
+
+/**
+ * 前情提要：自动总结写下的那段回忆（`SessionRecap`）。
+ *
+ * 没有提要及时摆一个「记一下这段」的入口，而不是整行藏起来 —— 自动那套要聊到 12 条才动，
+ * 而「我想让模型记住这一场」往往就发生在刚聊完的时候。
+ */
+@Composable
+private fun SessionRecapBar(recap: String?, canWrite: Boolean, onSummarize: () -> Unit) {
+  if (recap == null && !canWrite) return
+  var open by remember { mutableStateOf(false) }
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = if (recap == null) "还没有前情提要" else "前情提要 · ${recap.lineSequence().first().take(28)}",
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
+    TextAction(text = if (recap == null) "记一下这段" else "看全文", onClick = { open = true })
+  }
+  if (open) {
+    AlertDialog(
+      onDismissRequest = { open = false },
+      title = { Text("前情提要") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            recap ?: "还没有。聊过几句之后点下面的按钮，模型会把这一段压成几句话记住。",
+            style = MaterialTheme.typography.bodySmall,
+          )
+          Text(
+            "它每轮都会跟着「记忆」一起进提示词，所以别写太长。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      },
+      confirmButton = { TextButton(onClick = { open = false }) { Text("知道了") } },
+      dismissButton = {
+        TextButton(onClick = {
+          open = false
+          onSummarize()
+        }) { Text("现在就总结") }
+      },
     )
   }
 }

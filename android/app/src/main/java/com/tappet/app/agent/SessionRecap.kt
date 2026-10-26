@@ -29,19 +29,50 @@ class SessionRecap(
     start { runCatching { run(sessionId) }.onFailure { Log.w(TAG, "recap failed: ${it.message}") } }
   }
 
-  suspend fun run(sessionId: String) {
-    val session = store.session(sessionId) ?: return
+  /**
+   * 用户按「现在就总结」：门槛降到 2 条，其余规则不变。
+   *
+   * 手动触发是必要的出口 —— 自动那套要聊到 12 条才动，而「我想让模型记住这一段」往往
+   * 就发生在刚聊完一场戏的时候。回调拿到的是新提要，界面直接显示，不必等下一轮。
+   */
+  fun summarizeNow(sessionId: String, onDone: (String) -> Unit) {
+    start {
+      runCatching { run(sessionId, manual = true) }
+        .onSuccess { text -> if (text != null) onDone(text) }
+        .onFailure { Log.w(TAG, "manual recap failed: ${it.message}") }
+    }
+  }
+
+  /** 返回写进去的提要；没写（条数不够 / 模型空回）就是 null。 */
+  suspend fun run(sessionId: String, manual: Boolean = false): String? {
+    val session = store.session(sessionId) ?: return null
     val rows = store.messages(sessionId).filter { it.content.isNotBlank() }
     val from = session.summaryUpto?.let { upto -> rows.indexOfFirst { it.id == upto } } ?: -1
-    val plan = RecapPlan.of(rows.drop(from + 1), session.summary) ?: return
+    // 手动模式下「留几条原文」也一起放宽：聊了四句就说「记住这段」是很常见的用法，
+    // 留着 6 条原文的话，那片历史里根本没有可压的东西。
+    val plan =
+      RecapPlan.of(
+        pending = rows.drop(from + 1),
+        old = session.summary,
+        minMessages = if (manual) MANUAL_MIN_MESSAGES else RecapPlan.MIN_MESSAGES,
+        keepRecent = if (manual) MANUAL_KEEP_RECENT else RecapPlan.KEEP_RECENT,
+      ) ?: return null
     val text = complete(sessionId, SYSTEM, plan.transcript)
-    if (text.isBlank()) return
-    admin.setSummary(sessionId, text.take(RecapPlan.MAX_SUMMARY_CHARS), plan.uptoId)
-    Log.d(TAG, "recap session=$sessionId messages=${plan.count} chars=${text.length}")
+    if (text.isBlank()) return null
+    val kept = text.take(RecapPlan.MAX_SUMMARY_CHARS)
+    admin.setSummary(sessionId, kept, plan.uptoId)
+    Log.d(TAG, "recap session=$sessionId manual=$manual messages=${plan.count} chars=${kept.length}")
+    return kept
   }
 
   companion object {
     private const val TAG = "TappetAgent"
+
+    /** 手动总结的最低条数：一条消息（可能还是空的）没什么可压的。 */
+    const val MANUAL_MIN_MESSAGES = 2
+
+    /** 手动总结时保留的原文条数（自动那套是 6）：手动的场合本来就更短。 */
+    const val MANUAL_KEEP_RECENT = 2
 
     const val SYSTEM =
       "你在替一段角色扮演对话写「前情提要」。用 3–5 句中文、第三人称、陈述句，写清：谁是谁、" +
@@ -72,9 +103,14 @@ object RecapPlan {
    * 取「未总结里除最近 [KEEP_RECENT] 条之外的全部」去压，压到哪条就把 `uptoId` 记在那条上 ——
    * 下一次从它之后接着算，不会重复压同一段。
    */
-  fun of(pending: List<StoredMessage>, old: String?): Plan? {
-    if (pending.size <= MIN_MESSAGES) return null
-    val slice = pending.dropLast(KEEP_RECENT)
+  fun of(
+    pending: List<StoredMessage>,
+    old: String?,
+    minMessages: Int = MIN_MESSAGES,
+    keepRecent: Int = KEEP_RECENT,
+  ): Plan? {
+    if (pending.size <= minMessages) return null
+    val slice = pending.dropLast(keepRecent)
     if (slice.isEmpty()) return null
     // 从后往前装：越靠近现在的对话越重要，字符不够时丢最早的那几条
     val lines = ArrayList<String>(slice.size)

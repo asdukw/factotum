@@ -69,6 +69,25 @@ class RecapPlanTest {
   }
 
   @Test
+  fun `manual summarizing accepts a much shorter conversation`() {
+    val short = conversation(4)
+    assertNull("自动门槛不动", RecapPlan.of(short, null))
+    val manual =
+      RecapPlan.of(
+        short,
+        null,
+        minMessages = SessionRecap.MANUAL_MIN_MESSAGES,
+        keepRecent = SessionRecap.MANUAL_KEEP_RECENT,
+      )!!
+    assertEquals("手动只留 2 条原文，其余都压", 4 - SessionRecap.MANUAL_KEEP_RECENT, manual.count)
+  }
+
+  @Test
+  fun `manual mode still refuses a single line`() {
+    assertNull(RecapPlan.of(conversation(1), null, minMessages = SessionRecap.MANUAL_MIN_MESSAGES))
+  }
+
+  @Test
   fun `roles are labelled so the summary can tell who did what`() {
     val plan = RecapPlan.of(conversation(20), null)!!
     assertTrue(plan.transcript.contains("用户：第 1 句"))

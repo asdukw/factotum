@@ -81,6 +81,13 @@ data class SessionEntity(
    * 卡被删了则退化成「已删除的角色」，历史记录仍然读得出来。
    */
   @ColumnInfo(name = "character_id") val characterId: String? = null,
+  /**
+   * 群聊：这轮在场的所有角色卡 id（JSON 数组）。单角色会话为 null，读出来就是 `[characterId]`。
+   *
+   * 为什么不塞进 `character_id`：那个字段决定「归到哪个角色名下」，而群聊的归属仍然只有一张主卡
+   * （列表里得有个位置）。两件事混在一列，删主卡时整段群聊就会变成孤儿。
+   */
+  @ColumnInfo(name = "character_ids") val characterIds: String? = null,
 )
 
 /**

@@ -46,6 +46,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
@@ -106,6 +107,7 @@ import com.tappet.app.agent.ChatRole
 import com.tappet.app.agent.ChatUiState
 import com.tappet.app.agent.ChatViewModel
 import com.tappet.app.agent.DshStreamer
+import com.tappet.app.agent.GroupCast
 import com.tappet.app.agent.HttpTavernChannel
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
@@ -235,16 +237,38 @@ fun ChatScreen(
     onOpenCharacterDetail = onOpenCharacterDetail,
     onSwitchModel = viewModel.modelSwitch::switch,
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
-    onRegenerate = viewModel.regenerate,
-    onDeleteTurn = viewModel.deleteLastTurn,
-    onRetryFrom = viewModel.retryFrom,
     onSeedGreeting = viewModel.seedGreeting,
-    onSwipeVariant = viewModel.variantsSwitch.swipe,
-    onContinue = viewModel.replies.continueReply,
     onImpersonate = viewModel.replies.impersonate,
+    onStartGroup = viewModel.roleplayActions::newGroup,
+    actions = bubbleActions(viewModel),
     modifier = modifier,
   )
 }
+
+/** ViewModel 那边的五个气泡动作绑成一包（包装层只是转发，不在这里写业务）。 */
+private fun bubbleActions(viewModel: ChatViewModel) =
+  BubbleActions(
+    regenerate = viewModel.regenerate,
+    deleteTurn = viewModel.deleteLastTurn,
+    retryFrom = viewModel.retryFrom,
+    swipe = viewModel.variantsSwitch.swipe,
+    continueReply = viewModel.replies.continueReply,
+  )
+
+/**
+ * 气泡上的五个动作。
+ *
+ * 打成一包是因为它们**永远一起传**：五个独立参数要从 ViewModel 一路抄到气泡，
+ * 每多一层就多五行样板（而 ChatScreen 那一串已经贴着 detekt 的 80 行上限）。
+ * 真要加第六个动作时，也是在这一个类里加一行，不会动到任何调用点的参数列表。
+ */
+internal data class BubbleActions(
+  val regenerate: () -> Unit = {},
+  val deleteTurn: () -> Unit = {},
+  val retryFrom: (String) -> Unit = {},
+  val swipe: (Int) -> Unit = {},
+  val continueReply: () -> Unit = {},
+)
 
 /**
  * 消费「去哪个会话」的交接意图。
@@ -279,15 +303,12 @@ internal fun ChatScreen(
   onOpenSettings: () -> Unit = {},
   onOpenCharacters: () -> Unit = {},
   onOpenCharacterDetail: (String) -> Unit = {},
-  onRegenerate: () -> Unit = {},
-  onDeleteTurn: () -> Unit = {},
-  onRetryFrom: (String) -> Unit = {},
   onSeedGreeting: (String) -> Unit = {},
-  onSwipeVariant: (Int) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
-  onContinue: () -> Unit = {},
   onImpersonate: () -> Unit = {},
+  onStartGroup: (List<String>) -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
@@ -306,6 +327,9 @@ internal fun ChatScreen(
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
   val sheet = remember { ModelSheet() }
+
+  // 群聊选择器：状态与对话框都在 GroupPickerHost 里（它要盖在抽屉之上，抽屉一关人还在）
+  val groupPicker = remember { GroupPickerHost() }
   LaunchedEffect(state.switchingModel) { sheet.settle(state.switchingModel, state.switchError) }
 
   // 抽屉里也能打开模型切换：酒馆里换模型是常见动作（便宜的跑日常、好的跑角色），
@@ -338,6 +362,10 @@ internal fun ChatScreen(
         onOpenSettings = closeThen(scope, drawerState, onOpenSettings),
         onOpenCharacterDetail = closeThen(scope, drawerState) { id -> onOpenCharacterDetail(id) },
         onOpenModelSwitch = openModelSwitch,
+        onNewGroup = {
+          scope.launch { drawerState.close() }
+          groupPicker.open = true
+        },
       )
     },
   ) {
@@ -350,14 +378,10 @@ internal fun ChatScreen(
       onStop = onStop,
       onNewSession = onNewSession,
       onLeaveRoleplay = onLeaveRoleplay,
-      onRegenerate = onRegenerate,
-      onDeleteTurn = onDeleteTurn,
-      onRetryFrom = onRetryFrom,
       greetings = greetings,
       onSeedGreeting = onSeedGreeting,
-      onSwipeVariant = onSwipeVariant,
-      onContinue = onContinue,
       onImpersonate = onImpersonate,
+      actions = actions,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
@@ -365,6 +389,8 @@ internal fun ChatScreen(
       },
     )
   }
+
+  groupPicker.Render(groups = state.roleplayGroups, onStartGroup = onStartGroup)
 
   if (sheet.open) {
     ModelSwitchSheet(
@@ -661,13 +687,9 @@ private fun ChatBody(
   onModelSwitchClick: () -> Unit,
   greetings: List<String> = emptyList(),
   onSeedGreeting: (String) -> Unit = {},
-  onSwipeVariant: (Int) -> Unit = {},
   onLeaveRoleplay: () -> Unit = {},
-  onRegenerate: () -> Unit = {},
-  onDeleteTurn: () -> Unit = {},
-  onRetryFrom: (String) -> Unit = {},
-  onContinue: () -> Unit = {},
   onImpersonate: () -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
 ) {
   // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
@@ -714,13 +736,9 @@ private fun ChatBody(
         state = state,
         listState = listState,
         speakingId = voiceState?.messageId,
-        onRegenerate = onRegenerate,
-        onDeleteTurn = onDeleteTurn,
-        onRetryFrom = onRetryFrom,
         greetings = greetings,
         onPickGreeting = onSeedGreeting,
-        onSwipeVariant = onSwipeVariant,
-        onContinue = onContinue,
+        actions = actions,
         canContinue = state.tavernDirect && !state.isStreaming,
       )
 
@@ -786,13 +804,9 @@ private fun MessageList(
   state: ChatUiState,
   listState: LazyListState,
   speakingId: String?,
-  onRegenerate: () -> Unit,
-  onDeleteTurn: () -> Unit,
-  onRetryFrom: (String) -> Unit = {},
   greetings: List<String> = emptyList(),
   onPickGreeting: (String) -> Unit = {},
-  onSwipeVariant: (Int) -> Unit = {},
-  onContinue: () -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
@@ -818,11 +832,7 @@ private fun MessageList(
         message = message,
         speakingId = speakingId,
         tail = message.id == tailId && !state.isStreaming,
-        onRegenerate = onRegenerate,
-        onDeleteTurn = onDeleteTurn,
-        onSwipeVariant = onSwipeVariant,
-        onRetryFrom = onRetryFrom,
-        onContinue = onContinue,
+        actions = actions,
         canContinue = canContinue,
       )
     }
@@ -1127,6 +1137,7 @@ private fun RoleplayList(
   enabled: Boolean,
   onOpenRoleplay: (String) -> Unit,
   onNewRoleplaySession: (String) -> Unit,
+  onNewGroup: () -> Unit = {},
   onOpenSession: (String) -> Unit,
   onRequestDelete: (ChatSession) -> Unit,
   onOpenCharacters: () -> Unit,
@@ -1146,6 +1157,26 @@ private fun RoleplayList(
     return
   }
   LazyColumn(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    // 群聊入口放在列表最上面：它是「开一场新的」，不是某张卡名下的动作 ——
+    // 塞进某张卡的行里，用户会以为是给那张卡加台词。
+    item(key = "new-group") {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled) { onNewGroup() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text("＋ 群聊", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(8.dp))
+        Text(
+          text = "挑两张卡，让它们同场",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
     if (switchingRole) {
       item(key = "switching") {
         Text(
@@ -1241,6 +1272,7 @@ private fun SessionDrawer(
   onOpenSession: (String) -> Unit,
   onDeleteSession: (String) -> Unit,
   onNewRoleplaySession: (String) -> Unit,
+  onNewGroup: () -> Unit = {},
   onOpenRoleplay: (String) -> Unit,
   onOpenCharacters: () -> Unit,
   onOpenSettings: () -> Unit,
@@ -1287,6 +1319,7 @@ private fun SessionDrawer(
             enabled = enabled,
             onOpenRoleplay = onOpenRoleplay,
             onNewRoleplaySession = onNewRoleplaySession,
+            onNewGroup = onNewGroup,
             onOpenSession = onOpenSession,
             onRequestDelete = { pendingDelete = it },
             onOpenCharacters = onOpenCharacters,
@@ -1523,11 +1556,7 @@ private fun MessageBubble(
   message: ChatMessage,
   speakingId: String? = null,
   tail: Boolean = false,
-  onRegenerate: () -> Unit = {},
-  onDeleteTurn: () -> Unit = {},
-  onRetryFrom: (String) -> Unit = {},
-  onSwipeVariant: (Int) -> Unit = {},
-  onContinue: () -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
 ) {
   if (message.role == ChatRole.User) {
@@ -1537,11 +1566,7 @@ private fun MessageBubble(
       message = message,
       speaking = message.id == speakingId,
       tail = tail,
-      onRegenerate = onRegenerate,
-      onDeleteTurn = onDeleteTurn,
-      onRetryFrom = onRetryFrom,
-      onSwipeVariant = onSwipeVariant,
-      onContinue = onContinue,
+      actions = actions,
       canContinue = canContinue,
     )
   }
@@ -1591,11 +1616,7 @@ private fun AssistantMessage(
   message: ChatMessage,
   speaking: Boolean = false,
   tail: Boolean = false,
-  onRegenerate: () -> Unit = {},
-  onDeleteTurn: () -> Unit = {},
-  onRetryFrom: (String) -> Unit = {},
-  onSwipeVariant: (Int) -> Unit = {},
-  onContinue: () -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
 ) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1631,22 +1652,22 @@ private fun AssistantMessage(
             VariantStepper(
               index = message.variantIndex,
               total = message.variantTotal,
-              onStep = onSwipeVariant,
+              onStep = actions.swipe,
             )
           }
           // 续写只在直连通道下出现：dsh 那边做不到「接着写」，给个按不动的按钮比不给更糟
           if (canContinue) {
             Spacer(Modifier.width(2.dp))
-            TextAction(text = "续写", onClick = onContinue)
+            TextAction(text = "续写", onClick = actions.continueReply)
           }
           Spacer(Modifier.width(2.dp))
-          TextAction(text = "重写", onClick = onRegenerate)
-          TextAction(text = "删这轮", onClick = onDeleteTurn)
+          TextAction(text = "重写", onClick = actions.regenerate)
+          TextAction(text = "删这轮", onClick = actions.deleteTurn)
         } else {
           // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，
           // 删了它会让后面悬空。给的是「从此处重来」—— 连同后面的一起丢掉，回到这句话重新回答。
           Spacer(Modifier.width(2.dp))
-          TextAction(text = "从此处重来", onClick = { onRetryFrom(message.id) })
+          TextAction(text = "从此处重来", onClick = { actions.retryFrom(message.id) })
         }
         // token 计数贴在末尾：它是「这一条花了多少上下文」，不是这句话的一部分，
         // 所以用最轻的字重与最旁边的位置，不抢正文的注意力。
@@ -1848,6 +1869,80 @@ private fun ChatInputBar(
         }
       }
     }
+  }
+}
+
+/**
+ * 群聊选择器的开合与勾选状态。
+ *
+ * 合成一个 holder 的理由与 [ModelSheet] 相同：`open` 与 `picked` 必须一起复位 ——
+ * 分成两个 remember 时，任何一条「只关了对话框」的路径都会把上次勾的人留在下一次。
+ *
+ * 不做「先建群再拉人」：群聊的上下文从第一条消息起就是多人的，事后拉人会让前面那些
+ * 单人戏突然多出一个「一直在场却没说话」的角色，模型会去解释他为什么不说话。
+ *
+ * 上限 [GroupCast.MAX] 是硬的：勾满之后其余项置灰，而不是勾上再提示超限。
+ */
+private class GroupPickerHost {
+  var open by mutableStateOf(false)
+  var picked by mutableStateOf<List<String>>(emptyList())
+
+  private fun close() {
+    open = false
+    picked = emptyList()
+  }
+
+  @Composable
+  fun Render(groups: List<RoleplayGroup>, onStartGroup: (List<String>) -> Unit) {
+    if (!open) return
+    val choices = groups.filter { !it.orphan }
+    AlertDialog(
+      onDismissRequest = { close() },
+      title = { Text("群聊：挑几个角色") },
+      text = {
+        Column {
+          Text(
+            text = "选 2–${GroupCast.MAX} 张。每轮只会有一个角色说话，用「名字：」开头。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Spacer(Modifier.height(10.dp))
+          LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+            items(items = choices, key = { it.characterId }) { group ->
+              val checked = group.characterId in picked
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = checked || picked.size < GroupCast.MAX) {
+                      picked = if (checked) picked - group.characterId else picked + group.characterId
+                    }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Checkbox(
+                  checked = checked,
+                  onCheckedChange = { picked = if (checked) picked - group.characterId else picked + group.characterId },
+                  enabled = checked || picked.size < GroupCast.MAX,
+                )
+                Text(group.name, style = MaterialTheme.typography.bodyMedium)
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            val ids = picked
+            close()
+            if (ids.size >= 2) onStartGroup(ids)
+          },
+          enabled = picked.size >= 2,
+        ) { Text("开始（${picked.size}）") }
+      },
+      dismissButton = { TextButton(onClick = { close() }) { Text("取消") } },
+    )
   }
 }
 

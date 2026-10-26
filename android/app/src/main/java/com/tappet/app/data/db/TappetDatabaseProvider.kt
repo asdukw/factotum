@@ -82,13 +82,26 @@ object TappetDatabaseProvider {
       }
     }
 
+  /**
+   * 4 → 5：会话加 `character_ids`（群聊在场的所有卡）。
+   *
+   * 只加一列、允许为空：老会话读出来 characterIds 是空的，代码按 `[characterId]` 处理，
+   * 行为与升级前完全一致 —— 不需要在这条迁移里回填任何东西。
+   */
+  private val MIGRATION_4_5 =
+    object : Migration(4, 5) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `character_ids` TEXT")
+      }
+    }
+
   fun open(context: Context): TappetDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, TappetDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

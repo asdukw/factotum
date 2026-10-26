@@ -44,15 +44,23 @@ class TavernTurns(
    * 重写时调用方已经把上一轮回复移除，所以这里拿到的历史天然就是「不含被重写的那句」。
    *
    * [tail] 是这一轮的补充指令（续写 / 替我写），只进请求、不落库，见 [TavernDirectives]。
+   *
+   * [cast] 是群聊在场的所有卡 id（含主卡）。多于一张时按 [GroupCast] 合成一张临时卡，
+   * 并把群聊规则接在 [tail] 后面 —— 编排层不知道为什么有几个人，它只需要一张卡。
    */
   fun stream(
     sessionId: String,
     characterId: String?,
     turns: List<ChatMessage>,
     tail: String? = null,
+    cast: List<String> = emptyList(),
   ): Flow<AgentStreamEvent>? {
     val channel = channel() ?: return null
-    val card = cards().firstOrNull { it.id == characterId } ?: return null
+    val ids = (listOfNotNull(characterId) + cast).distinct()
+    val castCards = ids.mapNotNull { id -> cards().firstOrNull { it.id == id } }.take(GroupCast.MAX)
+    if (castCards.isEmpty()) return null
+    val grouped = castCards.size > 1
+    val card = if (grouped) GroupCast.merge(castCards) else castCards.first()
     val history =
       turns
         .asSequence()
@@ -61,6 +69,7 @@ class TavernTurns(
         .toList()
     if (history.isEmpty()) return null
     val turn = nextTurn(sessionId)
+    if (grouped) Log.d(TAG, "tavern group session=$sessionId cast=${castCards.size}")
     val table = TavernVars(vars.load(sessionId))
     val messages =
       TavernPrompt.build(
@@ -74,7 +83,8 @@ class TavernTurns(
             tracking = tracking(sessionId),
             onHits = { hits -> logWorld(sessionId, turn, hits) },
             vars = table,
-            tail = tail,
+            // 群聊规则永远在最后：续写/替我写是「这一轮怎么接」，规则是「谁来说」，后者更硬
+            tail = if (grouped) listOfNotNull(GroupCast.rule(castCards), tail).joinToString("\n\n") else tail,
           ),
       )
     // 只记长度与「有没有残留花括号」：宏没生效时正文照样好看，唯一能看出来的机器信号

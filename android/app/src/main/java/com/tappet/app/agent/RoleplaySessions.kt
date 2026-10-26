@@ -39,6 +39,7 @@ fun groupRoleplaySessions(
           name = "已删除的角色",
           tagline = "卡片已不在库里，历史仍可查看",
           sessions = list.sortedByDescending { it.updatedAt },
+          orphan = true,
         )
       }
   // 收藏的排前面，顺序按收藏先后（pinned 列表本身就是「最近收藏在前」）；
@@ -71,6 +72,27 @@ class RoleplaySessions(
   fun new(characterId: String) {
     scope.launch {
       runCatching { store.createSession(title = null, kind = SessionKind.Roleplay, characterId = characterId) }
+        .onSuccess(open)
+        .onFailure(reportFailure)
+    }
+  }
+
+  /**
+   * 开一段群聊：在场的是 [characterIds] 里这些卡。
+   *
+   * 先建会话再补名单（不是一次写进去）：`createSession` 的签名是所有会话类型的公共入口，
+   * 为了让群聊多一个参数，会让每个调用点都多一个「不关心时传什么」。主卡取第一个，
+   * 于是侧栏里它仍然归在第一个角色名下 —— 群聊也得有个位置。
+   */
+  fun newGroup(characterIds: List<String>) {
+    val ids = characterIds.distinct().take(GroupCast.MAX)
+    if (ids.size < 2) return
+    scope.launch {
+      runCatching {
+        val session = store.createSession(title = null, kind = SessionKind.Roleplay, characterId = ids.first())
+        store.setSessionCharacters(session.id, ids)
+        store.session(session.id) ?: session
+      }
         .onSuccess(open)
         .onFailure(reportFailure)
     }

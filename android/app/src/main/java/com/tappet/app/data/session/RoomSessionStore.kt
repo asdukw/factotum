@@ -166,6 +166,9 @@ class RoomSessionStore(
   override suspend fun markStreamingAsInterrupted(): Int =
     // 半截回复保留；会话时间戳不因这次改判往前跳，所以不走 touchSession。
     dao.reclassify(MessageStatus.Streaming, MessageStatus.Interrupted, clock())
+
+  override suspend fun setSessionCharacters(sessionId: String, ids: List<String>) =
+    dao.setSessionCharacters(sessionId, ids.filter { it.isNotBlank() }.joinToString(","))
 }
 
 /** 候选回答的读写实现；被 [RoomSessionStore] 委托，好让那个类不超函数上限。 */
@@ -188,6 +191,7 @@ private fun SessionEntity.toDomain() =
     createdAt = createdAt,
     updatedAt = updatedAt,
     characterId = characterId,
+    characterIds = characterIds.orEmpty().split(',').filter { it.isNotBlank() },
     model = model,
   )
 

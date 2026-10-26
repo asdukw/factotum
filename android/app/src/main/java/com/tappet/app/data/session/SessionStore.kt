@@ -16,6 +16,12 @@ data class ChatSession(
   /** 酒馆会话绑定的角色卡；日常会话为 null。 */
   val characterId: String? = null,
   /**
+   * 群聊在场的**所有**卡 id（含 [characterId] 那张）。单角色会话为空。
+   *
+   * 用逗号分隔存一行：卡 id 是 UUIDv7，不会含逗号；为几个短串引一层 JSON 反而多一处可能解析失败。
+   */
+  val characterIds: List<String> = emptyList(),
+  /**
    * 这段会话上次用的模型 id；没选过（或一直跟着全局走）为 null。
    *
    * 运行时同一时刻只有一个模型，所以这不是「每个会话并行用不同模型」，而是「回到这段
@@ -26,6 +32,12 @@ data class ChatSession(
 ) {
   /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
   val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
+
+  /** 这场戏里的全部角色；单角色会话就是他自己。 */
+  val cast: List<String> get() = characterIds.ifEmpty { listOfNotNull(characterId) }
+
+  /** 群聊（两个人以上）。 */
+  val isGroup: Boolean get() = cast.size > 1
 }
 
 /** 一条已落库的消息。 */
@@ -164,6 +176,9 @@ interface SessionStore {
 
   /** 记下这段会话在用的模型（切模型时写，进会话时据此装回去）。 */
   suspend fun setSessionModel(sessionId: String, model: String?) {}
+
+  /** 记下群聊在场的所有卡；单角色会话不调用。 */
+  suspend fun setSessionCharacters(sessionId: String, ids: List<String>) {}
 
   /** 第一条用户消息写下去时顺手起个标题；已经有标题就不动。 */
   suspend fun setTitleIfEmpty(sessionId: String, title: String)

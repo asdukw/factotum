@@ -40,6 +40,10 @@ abstract class SessionStoreDao {
   @Query("UPDATE session SET title = :title WHERE id = :id AND title IS NULL")
   abstract suspend fun titleIfEmpty(id: String, title: String)
 
+  /** 群聊在场的所有卡（逗号分隔）。单角色会话不写这一列。 */
+  @Query("UPDATE session SET character_ids = :ids WHERE id = :id")
+  abstract suspend fun setSessionCharacters(id: String, ids: String?)
+
   @Query("UPDATE session SET model = :model WHERE id = :id")
   abstract suspend fun setModel(id: String, model: String?)
 

@@ -51,6 +51,12 @@ data class RoleplayGroup(
   val sessions: List<ChatSession>,
   /** 收藏（置顶）：侧栏排在最前，行首带一个记号。 */
   val pinned: Boolean = false,
+  /**
+   * 卡已经不在库里的一行（「已删除的角色」）。
+   *
+   * 群聊选择器要把它排除掉：拿一个不存在的 id 建群，只会得到一段谁都演不了的空会话。
+   */
+  val orphan: Boolean = false,
 ) {
   val latest: ChatSession? get() = sessions.firstOrNull()
   val isEmpty: Boolean get() = sessions.isEmpty()
@@ -113,6 +119,8 @@ data class ChatUiState(
   /** 当前会话绑定的角色（日常会话为 null）。 */
   val activeCharacterId: String? = null,
   val activeCharacterName: String? = null,
+  /** 群聊在场的所有卡 id（含主卡）；单角色会话为空。 */
+  val characterIds: List<String> = emptyList(),
   /** 正在切角色（要重载运行时，1–2 秒）。 */
   val switchingRole: Boolean = false,
   /** 当前会话能不能走直连酒馆通道（决定「续写 / 替我写」出不出现）。 */
@@ -246,7 +254,7 @@ class ChatViewModel(
       update = { transform -> _state.update(transform) },
       start = { block -> streamJob = viewModelScope.launch { block() } },
       open = { sessionId, characterId, tail ->
-        roleplay.tavern?.stream(sessionId, characterId, _state.value.messages, tail)
+        roleplay.tavern?.stream(sessionId, characterId, _state.value.messages, tail, _state.value.characterIds)
       },
       continueInto = { sessionId, messageId, base ->
         streamInto(sessionId, messageId, wire = "", tavern = true, base = base, tail = TavernDirectives.CONTINUE)
@@ -306,7 +314,17 @@ class ChatViewModel(
         val pins = runCatching { roleplay.pins() }.getOrDefault(emptyList())
         val groups = groupRoleplaySessions(sessions, cards, pins)
         _state.update { state ->
-          val name = groups.firstOrNull { group -> group.characterId == state.activeCharacterId }?.name
+          // 群聊的名字是「在场的所有人」，不能被这一条列表刷新改回主卡名 ——
+          // 侧栏按主卡分组，而顶栏要说清这一场有几个人。
+          val name =
+            if (state.characterIds.size > 1) {
+              state.characterIds
+                .mapNotNull { id -> groups.firstOrNull { it.characterId == id }?.name }
+                .joinToString(" / ")
+                .ifBlank { null }
+            } else {
+              groups.firstOrNull { group -> group.characterId == state.activeCharacterId }?.name
+            }
           state.copy(
             sessions = sessions,
             roleplayGroups = groups,
@@ -420,7 +438,13 @@ class ChatViewModel(
     // 酒馆通道自己拿整段历史（含刚落库的这一问）；拼不出来（卡被删、没配提供商）就退回 dsh。
     val direct =
       if (tavern) {
-        roleplay.tavern?.stream(sessionId, _state.value.activeCharacterId, _state.value.messages, tail)
+        roleplay.tavern?.stream(
+          sessionId,
+          _state.value.activeCharacterId,
+          _state.value.messages,
+          tail,
+          _state.value.characterIds,
+        )
       } else {
         null
       }
@@ -671,10 +695,14 @@ class ChatViewModel(
     loadSession(session.id)
     _state.update { state ->
       // 名字从角色表里取，不从会话标题取：标题是「第一句话」，不是卡名。
-      val name = state.roleplayGroups.firstOrNull { it.characterId == target }?.name
+      // 群聊把在场的名字连起来（「A / B」），顶栏一眼能看出这一场有几个人。
+      val members = session.cast.mapNotNull { id -> state.roleplayGroups.firstOrNull { it.characterId == id }?.name }
+      val name =
+        if (members.size > 1) members.joinToString(" / ") else state.roleplayGroups.firstOrNull { it.characterId == target }?.name
       state.copy(
         activeCharacterId = target,
         activeCharacterName = name,
+        characterIds = session.cast,
         // 直连通道在「换了提供商 / 没配 key」时是空的，此时续写与替我写都做不到（见下面两个动作）
         tavernDirect = roleplay.tavern?.enabled == true,
       )

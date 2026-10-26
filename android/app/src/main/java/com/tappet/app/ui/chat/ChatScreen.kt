@@ -903,9 +903,11 @@ private fun SessionVarsBar(vars: Map<String, String>, onEdit: (String, String) -
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
+        // 点标签本身就打开对话框：只有 1 个变量时没有「＋N」可点，那样这段状态就永远改不了。
         modifier =
           Modifier.clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable { expanded = true }
             .padding(horizontal = 8.dp, vertical = 3.dp),
       )
     }

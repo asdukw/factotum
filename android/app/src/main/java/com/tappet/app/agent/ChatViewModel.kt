@@ -119,6 +119,8 @@ data class ChatUiState(
   /** 当前会话绑定的角色（日常会话为 null）。 */
   val activeCharacterId: String? = null,
   val activeCharacterName: String? = null,
+  /** 这个会话的变量（卡里 `{{setvar}}` 写下的东西），空表示还没有。 */
+  val sessionVars: Map<String, String> = emptyMap(),
   /** 群聊在场的所有卡 id（含主卡）；单角色会话为空。 */
   val characterIds: List<String> = emptyList(),
   /** 正在切角色（要重载运行时，1–2 秒）。 */
@@ -465,7 +467,16 @@ class ChatViewModel(
       turn.failure = throwable
     } finally {
       withContext(NonCancellable) { turn.finish() }
+      // 这一轮可能写了变量（卡里的 {{setvar}}）：界面上的状态块得跟着动，
+      // 否则用户会看着「好感 3」聊了半天却发现一直没涨。
+      refreshVars(sessionId)
     }
+  }
+
+  /** 把会话变量读进界面状态；没有直连通道时什么都不做。 */
+  private suspend fun refreshVars(sessionId: String) {
+    val table = roleplay.tavern?.varsOf(sessionId) ?: return
+    _state.update { it.copy(sessionVars = table) }
   }
 
   /**
@@ -788,6 +799,7 @@ class ChatViewModel(
         }
       }
       .onFailure { throwable -> reportStorageFailure(throwable) }
+    refreshVars(sessionId)
   }
 
   private fun reportStorageFailure(throwable: Throwable) {

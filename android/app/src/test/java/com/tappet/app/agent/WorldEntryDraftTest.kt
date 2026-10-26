@@ -58,7 +58,7 @@ class WorldEntryDraftTest {
           exclude = "别说了",
           depth = 2,
           probability = 60,
-          logicAll = true,
+          logic = SecondaryLogic.ALL,
         ),
       )
 

@@ -37,6 +37,14 @@ class TavernTurns(
   val enabled: Boolean get() = channel() != null
 
   /**
+   * 这个会话现在的变量快照（界面上的「状态」小块就是它）。
+   *
+   * 只读、不改：变量由卡里的 `{{setvar}}` 在一轮轮里写，用户看见的必须是**实际生效的那一份**，
+   * 而不是界面自己算的。读不到（没有变量存储）就给空表。
+   */
+  suspend fun varsOf(sessionId: String): Map<String, String> = vars.load(sessionId)
+
+  /**
    * 拼这一轮。返回 null 表示这项能力此刻不可用（没通道 / 卡被删了），调用方退回 dsh。
    *
    * [turns] 直接给界面上的整段历史。**空的**草稿在这一层被滤掉（内容为空 = 还没开始写），

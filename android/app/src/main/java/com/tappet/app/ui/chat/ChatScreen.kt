@@ -659,8 +659,10 @@ private fun isReadableAnswer(message: ChatMessage, pendingId: String?): Boolean 
 @Composable
 private fun rememberGreetings(state: ChatUiState): List<String> {
   val cardContext = LocalContext.current.applicationContext
-  return remember(state.activeCharacterId, state.messages.isEmpty()) {
-    if (!state.messages.isEmpty()) {
+  return remember(state.activeCharacterId, state.messages.isEmpty(), state.characterIds) {
+    if (!state.messages.isEmpty() || state.characterIds.size > 1) {
+      // 群聊里没有开场白：开场白是「一个人对你说第一句」，两个人都在场时它没有主语 ——
+      // 给主卡的开场白会变成 Aki 自说自话，另一个人还没出现就已经落后一句话。
       emptyList()
     } else {
       // 展开 {{user}} / {{char}} 与宏：这里既当预览也当落库的正文，留着花括号会直接显示给用户。
@@ -757,6 +759,8 @@ private fun ChatBody(
       }
     }
 
+    SessionVarsBar(state.sessionVars)
+
     ChatInputBar(
       value = state.input,
       isStreaming = state.isStreaming,
@@ -774,6 +778,65 @@ private fun ChatBody(
     )
   }
 }
+
+/**
+ * 会话变量：卡里 `{{setvar}}` 写下的东西（`好感 3`、`时间 夜` 这种）。
+ *
+ * 以前它们只在 prompt 里生效，界面上完全看不见 —— 卡作者设计了「好感度」，
+ * 玩家却要自己去猜它现在是多少。这里只显示、不提供编辑：变量是卡自己的状态机，
+ * 手改一次就等于绕过了卡的全部条件分支（要改戏，用户可以直接说一句）。
+ *
+ * 最多铺三条，其余折成「＋N」：变量名是卡作者起的，可能很长，横向铺开会把输入框挤走。
+ */
+@Composable
+private fun SessionVarsBar(vars: Map<String, String>) {
+  if (vars.isEmpty()) return
+  var expanded by remember { mutableStateOf(false) }
+  val entries = vars.entries.toList()
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    entries.take(SHOWN_VARS).forEach { (key, value) ->
+      Text(
+        text = "$key $value",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier =
+          Modifier.clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+      )
+    }
+    if (entries.size > SHOWN_VARS) {
+      TextAction(text = "＋${entries.size - SHOWN_VARS}", onClick = { expanded = true })
+    }
+  }
+  if (expanded) {
+    AlertDialog(
+      onDismissRequest = { expanded = false },
+      title = { Text("这一场的状态") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          entries.forEach { (key, value) ->
+            Row {
+              Text(key, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Spacer(Modifier.width(10.dp))
+              Text(value, style = MaterialTheme.typography.bodySmall)
+            }
+          }
+        }
+      },
+      confirmButton = { TextButton(onClick = { expanded = false }) { Text("知道了") } },
+    )
+  }
+}
+
+/** 状态条上最多铺几个变量（其余折进「＋N」）。 */
+private const val SHOWN_VARS = 3
 
 /**
  * 模型面板的三个开关合成一个 holder。
@@ -1515,7 +1578,9 @@ private fun EmptyHint(
     Text(
       // 酒馆里不该出现「说出要手机做什么」：那是干活用的开场，跟扮演是两件事。
       text =
-        if (characterName != null) {
+        if (characterName != null && greetings.isEmpty()) {
+          "先说一句就行 —— 开场由你这句定调。"
+        } else if (characterName != null) {
           "先说一句就行 —— 开场由这张卡自己写。"
         } else {
           "说出要手机做什么，例如「打开设置看看电池电量」。\n任务会实时操作手机界面，工具调用会逐张出现。"

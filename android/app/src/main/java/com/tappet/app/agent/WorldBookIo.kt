@@ -95,7 +95,7 @@ object WorldBookIo {
       put("sticky", entry.sticky)
       put("cooldown", entry.cooldown)
       // ST 的四种副词语义里我们只实现 AND_ANY(0) 与 AND_ALL(3)
-      put("selectiveLogic", if (entry.secondaryLogic == SecondaryLogic.ALL) 3 else 0)
+      put("selectiveLogic", entry.secondaryLogic.raw())
       putJsonArray("exclude_keys") { entry.exclude.forEach { add(it) } }
       put("match_whole_words", entry.matchWholeWords)
       put("case_sensitive", entry.caseSensitive)

@@ -47,7 +47,7 @@ private data class WorldDraft(
   val constant: Boolean,
   val secondary: String = "",
   val exclude: String = "",
-  val allSecondary: Boolean = false,
+  val logic: SecondaryLogic = SecondaryLogic.ANY,
   val depth: Int = 4,
   val probability: Int = 100,
   val sticky: Int = 0,
@@ -216,8 +216,10 @@ private fun AdvancedFields(entry: WorldDraft, onUpdate: (WorldDraft) -> Unit) {
     singleLine = true,
     hint = "主词命中只代表话题沾边；填了这里就要同时命中才注入",
   ) { value -> onUpdate(entry.copy(secondary = value)) }
-  TextButton(onClick = { onUpdate(entry.copy(allSecondary = !entry.allSecondary)) }) {
-    Text(if (entry.allSecondary) "次要关键词：全部命中" else "次要关键词：任一命中")
+  // 点一下轮换四种语义（ST 的 selectiveLogic）：全中 / 任一 / 不全中 / 全不中。
+  // 「非」语义看着像「永远不出现」，但它其实是卡作者控制「别在某种场合提这件事」的手段。
+  TextButton(onClick = { onUpdate(entry.copy(logic = entry.logic.next())) }) {
+    Text("次要关键词：${entry.logic.label()}")
   }
   Field(
     label = "排除词",
@@ -305,7 +307,7 @@ private fun worldDrafts(card: CharacterCard): SnapshotStateList<WorldDraft> =
           constant = entry.constant,
           secondary = entry.secondary.joinToString("、"),
           exclude = entry.exclude.joinToString("、"),
-          allSecondary = entry.secondaryLogic == SecondaryLogic.ALL,
+          logic = entry.secondaryLogic,
           depth = entry.depth,
           probability = entry.probability,
           sticky = entry.sticky,
@@ -347,7 +349,7 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
           exclude = draft.exclude,
           depth = draft.depth,
           probability = draft.probability,
-          logicAll = draft.allSecondary,
+          logic = draft.logic,
           sticky = draft.sticky,
           cooldown = draft.cooldown,
           position = draft.position,

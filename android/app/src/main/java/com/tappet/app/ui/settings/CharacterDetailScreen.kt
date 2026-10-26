@@ -314,8 +314,7 @@ private fun entryLabel(entry: WorldEntry): String {
   val parts = ArrayList<String>()
   parts += entry.keys.joinToString("、").ifBlank { "无关键词" }
   if (entry.secondary.isNotEmpty()) {
-    val joiner = if (entry.secondaryLogic == SecondaryLogic.ALL) " 且 " else " 或 "
-    parts += "还需$joiner${entry.secondary.joinToString("、")}"
+    parts += "还需${entry.secondaryLogic.joiner()}${entry.secondary.joinToString("、")}"
   }
   if (entry.exclude.isNotEmpty()) parts += "排除 ${entry.exclude.joinToString("、")}"
   if (entry.useProbability && entry.probability < 100) parts += "${entry.probability}% 概率"
@@ -330,6 +329,20 @@ private fun entryLabel(entry: WorldEntry): String {
   }
   return parts.joinToString(" · ")
 }
+
+/**
+ * 次要关键词在标签里的连接词。
+ *
+ * 单独一只（而不是写在 [entryLabel] 里）是为了让那个函数留在 detekt 的圈复杂度阈值内 ——
+ * 世界书每加一个字段，它就会多一条分支。
+ */
+private fun SecondaryLogic.joiner(): String =
+  when (this) {
+    SecondaryLogic.ANY -> " 或 "
+    SecondaryLogic.ALL -> " 且 "
+    SecondaryLogic.NOT_ALL -> " 不全有 "
+    SecondaryLogic.NOT_ANY -> " 全无 "
+  }
 
 /** 深度条目的口吻，只在标签里出现，所以直接写死三个词。 */
 private fun roleLabel(role: Int): String =

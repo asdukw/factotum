@@ -100,12 +100,14 @@ data class WorldEntry(
   /** 实际生效的概率：`useProbability = false` 时概率形同虚设。 */
   val effectiveProbability: Int get() = if (useProbability) probability else 100
 
-  /** 次要关键词是否满足（[secondary] 为空时视为满足）。 */
+  /** 次要关键词是否满足（[secondary] 为空时视为满足）。四种语义见 [SecondaryLogic]。 */
   fun secondarySatisfied(text: String): Boolean =
     when {
       secondary.isEmpty() -> true
       secondaryLogic == SecondaryLogic.ANY -> secondary.any { it.matchesKey(text) }
-      else -> secondary.all { it.matchesKey(text) }
+      secondaryLogic == SecondaryLogic.ALL -> secondary.all { it.matchesKey(text) }
+      secondaryLogic == SecondaryLogic.NOT_ALL -> !secondary.all { it.matchesKey(text) }
+      else -> secondary.none { it.matchesKey(text) }
     }
 
   /** 是否在冷却期：上一轮激活过，且距上次还不到冷却轮数。 */
@@ -152,22 +154,51 @@ data class WorldEntry(
   }
 }
 
-/** 次要关键词的判定方式。对齐 ST 的 `selectiveLogic`，但我们只留两种：任一命中 / 全部命中。 */
+/**
+ * 次要关键词的判定方式，对齐 ST 的 `selectiveLogic` 四种。
+ *
+ * 以前只留了 ANY / ALL，并且把数字 3 当成 ALL —— 那是个真 bug：ST 的编号是
+ * 0=AND_ANY、1=AND_ALL、2=NOT_ALL、3=NOT_ANY，于是「**不**包含全部次要词才插入」的条目
+ * 被读成「必须包含全部」，语义正好反了；而写 AND_ALL 的卡被读成 ANY，条件又松了一档。
+ * 两种错都看不出来 —— 条目照样出现，只是出现得比作者设计的更多或更少。
+ */
 @Serializable
 enum class SecondaryLogic {
   ANY,
   ALL,
+  NOT_ALL,
+  NOT_ANY,
   ;
 
+  /** 界面上的说法（编辑页与详情页共用一套措辞，免得两处各叫一个名字）。 */
+  fun label(): String =
+    when (this) {
+      ANY -> "任一命中"
+      ALL -> "全部命中"
+      NOT_ALL -> "不全命中"
+      NOT_ANY -> "全不命中"
+    }
+
+  /** 点一下轮换到下一种：一个按钮循环四种，比四个单选按钮省地方。 */
+  fun next(): SecondaryLogic = entries[(ordinal + 1) % entries.size]
+
+  /** 写回 ST 的数字（导出时用，见 [WorldBookIo]）。 */
+  fun raw(): Int =
+    when (this) {
+      ANY -> 0
+      ALL -> 1
+      NOT_ALL -> 2
+      NOT_ANY -> 3
+    }
+
   companion object {
-    /**
-     * 从 ST 的 `selectiveLogic` 数字映射。
-     *
-     * ST 有四种：0=AND_ANY、3=AND_ALL，另两种是「非」语义。非语义在真卡里几乎不见，
-     * 而且容易把条目变成「永远不出现」 —— 这里统一退化成 ANY，并在导入提示里说明，
-     * 而不是悄悄丢掉一半行为。
-     */
-    fun fromRaw(raw: Int?): SecondaryLogic = if (raw == 3) ALL else ANY
+    fun fromRaw(raw: Int?): SecondaryLogic =
+      when (raw) {
+        1 -> ALL
+        2 -> NOT_ALL
+        3 -> NOT_ANY
+        else -> ANY
+      }
   }
 }
 

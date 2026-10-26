@@ -95,13 +95,25 @@ object TappetDatabaseProvider {
       }
     }
 
+  /**
+   * 5 → 6：会话加 `parent_id`（支线指向它分出来的那段主线）。
+   *
+   * 同样只加一列、允许为空：老会话都是主线，读出来是 null，侧栏顺序与升级前一致。
+   */
+  private val MIGRATION_5_6 =
+    object : Migration(5, 6) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `parent_id` TEXT")
+      }
+    }
+
   fun open(context: Context): TappetDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, TappetDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

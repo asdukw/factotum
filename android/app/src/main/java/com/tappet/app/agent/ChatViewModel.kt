@@ -278,6 +278,9 @@ class ChatViewModel(
   /** 对单条消息的界面态改写（正文 / 推理 / 思考计时），见 [TurnMarks]。 */
   private val marks = TurnMarks { transform -> _state.update(transform) }
 
+  /** 工具调用卡片的三处改写（见 [ToolCallMarks]）。 */
+  private val toolMarks = ToolCallMarks(store, { _state.value }, { transform -> _state.update(transform) })
+
   /**
    * 一轮响应要用的宿主动作。在这里一次性绑好（而不是每轮现拼），
    * 因为 [StreamTurn] 只需要这一包引用，绑定点只有一处，加字段时只会漏一处。
@@ -290,12 +293,23 @@ class ChatViewModel(
       markThinkingMs = { id, ms -> marks.markThinkingMs(id, ms) },
       flush = { id, content, reasoning, status, error -> flush(id, content, reasoning, status, error) },
       finishStream = { id, error -> marks.finishStream(id, error) },
-      startToolCall = { messageId, sessionId, event -> startToolCall(messageId, sessionId, event) },
-      finishToolCall = { messageId, event -> finishToolCall(messageId, event) },
-      finishRunningToolCalls = { messageId -> finishRunningToolCalls(messageId) },
+      startToolCall = { messageId, sessionId, event -> toolMarks.start(messageId, sessionId, event) },
+      finishToolCall = { messageId, event -> toolMarks.finish(messageId, event) },
+      finishRunningToolCalls = { messageId -> toolMarks.finishRunning(messageId) },
       timing = timing,
       uiFlushMs = UI_FLUSH_INTERVAL_MS,
     )
+
+  private val sessionVars = SessionVars(
+    tavern = roleplay.tavern,
+    update = { transform -> _state.update(transform) },
+    start = { block -> viewModelScope.launch { block() } },
+  )
+
+  /** 手改一个会话变量（见 [SessionVars.set]）。 */
+  val setSessionVar: (String, String) -> Unit = { name, value ->
+    sessionVars.set(_state.value.sessionId, name, value)
+  }
 
   /**
    * 「现在就总结」：手动写一条前情提要（门槛降到 2 条，见 [SessionRecap.summarizeNow]）。
@@ -504,16 +518,10 @@ class ChatViewModel(
       withContext(NonCancellable) { turn.finish() }
       // 这一轮可能写了变量（卡里的 {{setvar}}）：界面上的状态块得跟着动，
       // 否则用户会看着「好感 3」聊了半天却发现一直没涨。
-      refreshVars(sessionId)
+      sessionVars.refresh(sessionId)
       // 每轮结束后看一眼要不要写前情提要：放在 finally 里，失败了也不会伤到这一轮的回复
       roleplay.recap?.maybeSummarize(sessionId)
     }
-  }
-
-  /** 把会话变量读进界面状态；没有直连通道时什么都不做。 */
-  private suspend fun refreshVars(sessionId: String) {
-    val table = roleplay.tavern?.varsOf(sessionId) ?: return
-    _state.update { it.copy(sessionVars = table) }
   }
 
   /**
@@ -839,7 +847,7 @@ class ChatViewModel(
         }
       }
       .onFailure { throwable -> reportStorageFailure(throwable) }
-    refreshVars(sessionId)
+    sessionVars.refresh(sessionId)
   }
 
   private fun reportStorageFailure(throwable: Throwable) {
@@ -848,89 +856,6 @@ class ChatViewModel(
         ready = false,
         storageError = throwable.message ?: throwable.javaClass.simpleName,
       )
-    }
-  }
-
-  /** 记下工具调用开始：先上屏，再落库（落库失败只影响重启后的卡片）。 */
-  private suspend fun startToolCall(messageId: String, sessionId: String, event: AgentStreamEvent.ToolCallStarted) {
-    val callId = event.callId?.takeIf { it.isNotBlank() } ?: Uuids.v7()
-    val card = ToolCallView(id = callId, name = event.name, arguments = event.arguments)
-    _state.update { state ->
-      state.copy(
-        messages =
-          state.messages.map { message ->
-            if (message.id == messageId) message.copy(toolCalls = message.toolCalls + card) else message
-          },
-      )
-    }
-    // 这里必须等落库完成：紧接着的 tool/result 会按 callId 去更新同一行，
-    // 异步插入会让「完成」先于「开始」，卡片的收尾状态就丢了。
-    runCatching { store.appendToolCall(callId, sessionId, messageId, event.name, event.arguments) }
-  }
-
-  /** 工具调用收尾：dsh 的结果帧只带 callId，缺失时退化成「最后一个还在跑的那张卡」。 */
-  private suspend fun finishToolCall(messageId: String, event: AgentStreamEvent.ToolCallFinished) {
-    val target =
-      _state.value.messages
-        .firstOrNull { it.id == messageId }
-        ?.toolCalls
-        ?.lastOrNull { event.callId == null || it.id == event.callId }
-        ?: return
-    val state = if (event.ok) ToolCallState.Ok else ToolCallState.Failed
-    _state.update { snapshot ->
-      snapshot.copy(
-        messages =
-          snapshot.messages.map { message ->
-            if (message.id != messageId) {
-              message
-            } else {
-              message.copy(
-                toolCalls =
-                  message.toolCalls.map { call ->
-                    if (call.id == target.id) call.copy(result = event.result, state = state) else call
-                  },
-              )
-            }
-          },
-      )
-    }
-    runCatching {
-      store.finishToolCall(
-        id = target.id,
-        result = event.result,
-        status = if (event.ok) ToolCallStatus.Ok else ToolCallStatus.Failed,
-      )
-    }
-  }
-
-  /** 流被停掉 / 出错时，把这张消息上还在「执行中」的卡片落成失败，避免刷新后一直转圈。 */
-  private suspend fun finishRunningToolCalls(messageId: String) {
-    val running =
-      _state.value.messages
-        .firstOrNull { it.id == messageId }
-        ?.toolCalls
-        ?.filter { it.state == ToolCallState.Running }
-        .orEmpty()
-    if (running.isEmpty()) return
-    _state.update { snapshot ->
-      snapshot.copy(
-        messages =
-          snapshot.messages.map { message ->
-            if (message.id != messageId) {
-              message
-            } else {
-              message.copy(
-                toolCalls =
-                  message.toolCalls.map { call ->
-                    if (call.state == ToolCallState.Running) call.copy(state = ToolCallState.Failed) else call
-                  },
-              )
-            }
-          },
-      )
-    }
-    running.forEach { call ->
-      runCatching { store.finishToolCall(call.id, call.result, ToolCallStatus.Failed) }
     }
   }
 

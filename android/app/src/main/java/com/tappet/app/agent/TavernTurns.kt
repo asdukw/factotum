@@ -64,6 +64,15 @@ class TavernTurns(
   suspend fun varsOf(sessionId: String): Map<String, String> = vars.load(sessionId)
 
   /**
+   * 手改一个变量（界面上的「这一场的状态」）。
+   *
+   * 只覆盖这一个键，其余原样回存：`save` 是整表覆盖，读-改-写才能不把别的变量抹掉。
+   */
+  suspend fun setVar(sessionId: String, name: String, value: String) {
+    vars.save(sessionId, vars.load(sessionId) + (name to value))
+  }
+
+  /**
    * 拼这一轮。返回 null 表示这项能力此刻不可用（没通道 / 卡被删了），调用方退回 dsh。
    *
    * [turns] 直接给界面上的整段历史。**空的**草稿在这一层被滤掉（内容为空 = 还没开始写），

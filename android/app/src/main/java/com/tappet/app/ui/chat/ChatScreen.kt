@@ -287,6 +287,7 @@ private fun bubbleActions(viewModel: ChatViewModel) =
     continueReply = viewModel.replies.continueReply,
     fork = viewModel.branching.fork,
     recapNow = viewModel.recapNow,
+    editVar = viewModel.setSessionVar,
   )
 
 /**
@@ -305,6 +306,8 @@ internal data class BubbleActions(
   val fork: (String) -> Unit = {},
   /** 手动写一条前情提要（见 `SessionRecap.summarizeNow`）。 */
   val recapNow: () -> Unit = {},
+  /** 手改一个会话变量（卡写错了局的唯一出口）。 */
+  val editVar: (String, String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -800,7 +803,7 @@ private fun ChatBody(
     if (state.activeCharacterId != null) {
       SessionRecapBar(recap = state.sessionRecap, canWrite = state.messages.isNotEmpty(), onSummarize = actions.recapNow)
     }
-    SessionVarsBar(state.sessionVars)
+    SessionVarsBar(state.sessionVars, onEdit = actions.editVar)
 
     ChatInputBar(
       value = state.input,
@@ -876,15 +879,17 @@ private fun SessionRecapBar(recap: String?, canWrite: Boolean, onSummarize: () -
  * 会话变量：卡里 `{{setvar}}` 写下的东西（`好感 3`、`时间 夜` 这种）。
  *
  * 以前它们只在 prompt 里生效，界面上完全看不见 —— 卡作者设计了「好感度」，
- * 玩家却要自己去猜它现在是多少。这里只显示、不提供编辑：变量是卡自己的状态机，
- * 手改一次就等于绕过了卡的全部条件分支（要改戏，用户可以直接说一句）。
+ * 玩家却要自己去猜它现在是多少。点开「这一场的状态」可以改值：变量是卡自己的状态机，
+ * 手改一次等于绕过卡的条件分支，所以对话框里写明了这一点 —— 但卡写错数字/自己写死循环时，
+ * 这是唯一能救回这段会话的出口。
  *
  * 最多铺三条，其余折成「＋N」：变量名是卡作者起的，可能很长，横向铺开会把输入框挤走。
  */
 @Composable
-private fun SessionVarsBar(vars: Map<String, String>) {
+private fun SessionVarsBar(vars: Map<String, String>, onEdit: (String, String) -> Unit = { _, _ -> }) {
   if (vars.isEmpty()) return
   var expanded by remember { mutableStateOf(false) }
+  var drafts by remember(vars) { mutableStateOf(vars) }
   val entries = vars.entries.toList()
   Row(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
@@ -914,16 +919,38 @@ private fun SessionVarsBar(vars: Map<String, String>) {
       title = { Text("这一场的状态") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          entries.forEach { (key, value) ->
-            Row {
-              Text(key, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-              Spacer(Modifier.width(10.dp))
-              Text(value, style = MaterialTheme.typography.bodySmall)
+          entries.forEach { (key, _) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Text(
+                key,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(84.dp),
+              )
+              OutlinedTextField(
+                value = drafts[key].orEmpty(),
+                onValueChange = { next -> drafts = drafts + (key to next) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+              )
             }
           }
+          Text(
+            "手改会绕过卡自己的条件分支（比如「好感 ≥ 5 才留你」）。只在卡写错了、" +
+              "或者你想跳到另一种局面时用。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
       },
-      confirmButton = { TextButton(onClick = { expanded = false }) { Text("知道了") } },
+      confirmButton = {
+        TextButton(onClick = {
+          drafts.forEach { (key, value) -> if (value != vars[key]) onEdit(key, value) }
+          expanded = false
+        }) { Text("保存") }
+      },
+      dismissButton = { TextButton(onClick = { expanded = false }) { Text("取消") } },
     )
   }
 }
@@ -1354,7 +1381,7 @@ private fun RoleplayList(
           onDetail = { onOpenCharacterDetail(group.characterId) },
         )
       }
-      items(items = group.sessions, key = { it.id }) { session ->
+      items(items = orderedSessions(group.sessions), key = { it.id }) { session ->
         SessionRow(
           session = session,
           selected = session.id == currentId,
@@ -1613,6 +1640,26 @@ private fun SessionList(
   }
 }
 
+/**
+ * 侧栏顺序：主线在前，它的支线紧跟在这条主线后面。
+ *
+ * 不按时间混排：支线往往比主线新，混排之后会在列表里把主线顶下去，看起来像两条不相干的历史。
+ * 主线被删掉的支线仍然排在最后 —— 否则那些历史在界面上等于消失了。
+ */
+private fun orderedSessions(sessions: List<ChatSession>): List<ChatSession> {
+  val branches = sessions.filter { it.parentId != null }.groupBy { it.parentId }
+  val placed = mutableSetOf<String>()
+  val out = mutableListOf<ChatSession>()
+  sessions.filter { it.parentId == null }.forEach { root ->
+    out += root
+    branches[root.id].orEmpty().forEach { branch ->
+      if (placed.add(branch.id)) out += branch
+    }
+  }
+  sessions.filter { it.parentId != null && it.id !in placed }.forEach { out += it }
+  return out
+}
+
 @Composable
 private fun SessionRow(
   session: ChatSession,
@@ -1621,18 +1668,25 @@ private fun SessionRow(
   onOpen: () -> Unit,
   onDelete: () -> Unit,
 ) {
+  val isBranch = session.parentId != null
   Surface(
     color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
     shape = RoundedCornerShape(12.dp),
     modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onOpen),
   ) {
     Row(
-      modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+      // 支线缩进一格并加个转折符：侧栏要能一眼看出「这几条是从上面那段分出来的」。
+      modifier = Modifier.padding(start = if (isBranch) 32.dp else 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(
-        text = session.title?.takeIf { it.isNotBlank() } ?: "新会话",
-        style = MaterialTheme.typography.bodyMedium,
+        text =
+          if (isBranch) {
+            "↳ ${session.title?.takeIf { it.isNotBlank() } ?: "新会话"}"
+          } else {
+            session.title?.takeIf { it.isNotBlank() } ?: "新会话"
+          },
+        style = if (isBranch) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f),

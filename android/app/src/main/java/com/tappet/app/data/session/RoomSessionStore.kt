@@ -53,12 +53,14 @@ class RoomSessionStore(
     title: String?,
     kind: SessionKind,
     characterId: String?,
-  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId) }
+    parentId: String?,
+  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId, parentId) }
 
   private suspend fun newSessionLocked(
     title: String?,
     kind: SessionKind = SessionKind.Chat,
     characterId: String? = null,
+    parentId: String? = null,
   ): ChatSession {
     val now = clock()
     val entity =
@@ -69,6 +71,7 @@ class RoomSessionStore(
         createdAt = now,
         updatedAt = now,
         characterId = characterId,
+        parentId = parentId,
       )
     dao.insertSession(entity)
     return entity.toDomain()
@@ -205,6 +208,7 @@ private fun SessionEntity.toDomain() =
     updatedAt = updatedAt,
     characterId = characterId,
     characterIds = characterIds.orEmpty().split(',').filter { it.isNotBlank() },
+    parentId = parentId,
     summary = summary?.takeIf { it.isNotBlank() },
     summaryUpto = summaryUpto,
     model = model,

@@ -88,6 +88,13 @@ data class SessionEntity(
    * （列表里得有个位置）。两件事混在一列，删主卡时整段群聊就会变成孤儿。
    */
   @ColumnInfo(name = "character_ids") val characterIds: String? = null,
+  /**
+   * 这条会话是从哪一段分出来的（支线）；主线为 null。
+   *
+   * 只记「根」：支线的支线仍然指向原来那段主线，不建树 —— 侧栏只要能把它们排在
+   * 主线下面并标明是支线就够了，真正的消息树是另一件事。
+   */
+  @ColumnInfo(name = "parent_id") val parentId: String? = null,
 )
 
 /**

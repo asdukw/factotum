@@ -33,6 +33,8 @@ data class ChatSession(
   val summary: String? = null,
   /** 提要盖到哪条消息为止；下一轮从这里之后接着总结。 */
   val summaryUpto: String? = null,
+  /** 这条会话是从哪一段分出来的（支线），主线为 null。 */
+  val parentId: String? = null,
 ) {
   /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
   val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
@@ -160,6 +162,7 @@ interface SessionStore {
     title: String?,
     kind: SessionKind,
     characterId: String?,
+    parentId: String? = null,
   ): ChatSession = createSession(title)
 
   /** 全部会话，最近更新在前；用于原生会话列表。 */

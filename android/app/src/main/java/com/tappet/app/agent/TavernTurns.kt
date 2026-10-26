@@ -28,27 +28,40 @@ class TavernTurns(
   private val tracking: (String) -> WorldTracking = { WorldTracking.NONE },
   /** 会话轮次自增并返回；测试与不关心 sticky 的路径用默认的 0。 */
   private val nextTurn: (String) -> Int = { 0 },
+  /**
+   * 会话变量的存续。读进来交给 [TavernPrompt] 渲染，这一轮里被 `{{setvar}}` 写过才回存 ——
+   * 每轮都写一次会让「变量没变」也产生一次磁盘写入，而变量表里通常是十几条常量。
+   */
+  private val vars: VarsStore = VarsStore.NONE,
 ) {
   val enabled: Boolean get() = channel() != null
 
   /**
    * 拼这一轮。返回 null 表示这项能力此刻不可用（没通道 / 卡被删了），调用方退回 dsh。
    *
-   * [turns] 直接给界面上的整段历史：正在流式的那条草稿会被丢掉 —— 它还没有内容，
-   * 带上等于给模型递一条空消息。重写时调用方已经把上一轮回复移除，所以这里拿到的
-   * 历史天然就是「不含被重写的那句」，不需要额外的回滚概念。
+   * [turns] 直接给界面上的整段历史。**空的**草稿在这一层被滤掉（内容为空 = 还没开始写），
+   * 但有内容的「正在写」那条要留下 —— 续写就是往同一条里追加，模型必须先看见自己写过什么。
+   * 重写时调用方已经把上一轮回复移除，所以这里拿到的历史天然就是「不含被重写的那句」。
+   *
+   * [tail] 是这一轮的补充指令（续写 / 替我写），只进请求、不落库，见 [TavernDirectives]。
    */
-  fun stream(sessionId: String, characterId: String?, turns: List<ChatMessage>): Flow<AgentStreamEvent>? {
+  fun stream(
+    sessionId: String,
+    characterId: String?,
+    turns: List<ChatMessage>,
+    tail: String? = null,
+  ): Flow<AgentStreamEvent>? {
     val channel = channel() ?: return null
     val card = cards().firstOrNull { it.id == characterId } ?: return null
     val history =
       turns
         .asSequence()
-        .filter { !it.streaming && it.error == null && it.content.isNotBlank() }
+        .filter { it.error == null && it.content.isNotBlank() }
         .map { TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content) }
         .toList()
     if (history.isEmpty()) return null
     val turn = nextTurn(sessionId)
+    val table = TavernVars(vars.load(sessionId))
     val messages =
       TavernPrompt.build(
         card = card,
@@ -56,8 +69,25 @@ class TavernTurns(
         turns = history,
         preset = preset(card.id),
         state =
-          TavernPrompt.TurnState(turn = turn, tracking = tracking(sessionId), onHits = { hits -> logWorld(sessionId, turn, hits) }),
+          TavernPrompt.TurnState(
+            turn = turn,
+            tracking = tracking(sessionId),
+            onHits = { hits -> logWorld(sessionId, turn, hits) },
+            vars = table,
+            tail = tail,
+          ),
       )
+    // 只记长度与「有没有残留花括号」：宏没生效时正文照样好看，唯一能看出来的机器信号
+    // 就是还有 `{{` 活着（那说明它没被任何一层认领）。不记正文。
+    Log.d(
+      TAG,
+      "tavern prompt messages=${messages.size} chars=${messages.sumOf { it.content.length }} " +
+        "macrosLeft=${messages.any { it.content.contains("{{") }} vars=${table.snapshot().size}",
+    )
+    if (table.dirty) {
+      vars.save(sessionId, table.snapshot())
+      Log.d(TAG, "tavern vars session=$sessionId count=${table.snapshot().size}")
+    }
     return channel.stream(TavernRequest(sessionId, messages))
   }
 

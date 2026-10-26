@@ -115,6 +115,10 @@ data class ChatUiState(
   val activeCharacterName: String? = null,
   /** 正在切角色（要重载运行时，1–2 秒）。 */
   val switchingRole: Boolean = false,
+  /** 当前会话能不能走直连酒馆通道（决定「续写 / 替我写」出不出现）。 */
+  val tavernDirect: Boolean = false,
+  /** 「替我写」正在跑：输入框不能同时被手动编辑，否则回来的那句话会把刚打的字冲掉。 */
+  val writingLine: Boolean = false,
 ) {
   val canSend: Boolean
     get() = ready && input.isNotBlank() && !isStreaming
@@ -123,7 +127,15 @@ data class ChatUiState(
   val canSwitchSession: Boolean
     get() = ready && !isStreaming && !switchingRole
 
-  /** 是否在酒馆会话里（顶栏据此显示角色名与「退出」）。 */
+  /**
+   * 现在能不能起一个新动作（发消息 / 重写 / 续写 / 替我写要的条件是同一组）。
+   *
+   * 写成属性而不是每处手抄四个布尔：漏掉一个就是「点了没反应」，而这类静默失败
+   * 在真机上极难定位（重写与续写都栽过一次）。
+   */
+  val idle: Boolean
+    get() = ready && !isStreaming && !switchingRole && !writingLine
+
   val inRoleplay: Boolean
     get() = activeCharacterId != null
 }
@@ -221,6 +233,56 @@ class ChatViewModel(
       store = store,
       groups = { _state.value.roleplayGroups },
       open = { session -> viewModelScope.launch { switchTo(session) } },
+      reportFailure = ::reportStorageFailure,
+    )
+
+  /**
+   * 续写与替我写。抽到 [ReplyExtras] 是因为这个类已经贴着 LargeClass 阈值；
+   * 停止键要能取消它们，所以协程统一从这里起、job 还是记在 [streamJob] 上。
+   */
+  val replies =
+    ReplyExtras(
+      snapshot = { _state.value },
+      update = { transform -> _state.update(transform) },
+      start = { block -> streamJob = viewModelScope.launch { block() } },
+      open = { sessionId, characterId, tail ->
+        roleplay.tavern?.stream(sessionId, characterId, _state.value.messages, tail)
+      },
+      continueInto = { sessionId, messageId, base ->
+        streamInto(sessionId, messageId, wire = "", tavern = true, base = base, tail = TavernDirectives.CONTINUE)
+      },
+      onTyped = ::onInputChange,
+    )
+
+  /** 对单条消息的界面态改写（正文 / 推理 / 思考计时），见 [TurnMarks]。 */
+  private val marks = TurnMarks { transform -> _state.update(transform) }
+
+  /**
+   * 一轮响应要用的宿主动作。在这里一次性绑好（而不是每轮现拼），
+   * 因为 [StreamTurn] 只需要这一包引用，绑定点只有一处，加字段时只会漏一处。
+   */
+  private val turnHost =
+    TurnHost(
+      appendText = { id, text, replace -> marks.appendText(id, text, replace) },
+      markReasoning = { id, text -> marks.markReasoning(id, text) },
+      markThinkingStarted = { id, at -> marks.markThinkingStarted(id, at) },
+      markThinkingMs = { id, ms -> marks.markThinkingMs(id, ms) },
+      flush = { id, content, reasoning, status, error -> flush(id, content, reasoning, status, error) },
+      finishStream = { id, error -> marks.finishStream(id, error) },
+      startToolCall = { messageId, sessionId, event -> startToolCall(messageId, sessionId, event) },
+      finishToolCall = { messageId, event -> finishToolCall(messageId, event) },
+      finishRunningToolCalls = { messageId -> finishRunningToolCalls(messageId) },
+      timing = timing,
+      uiFlushMs = UI_FLUSH_INTERVAL_MS,
+    )
+
+  /** 候选回答的左右切（见 [VariantSwitcher]）。 */
+  val variantsSwitch =
+    VariantSwitcher(
+      snapshot = { _state.value },
+      variants = variants,
+      start = { block -> viewModelScope.launch { block() } },
+      reload = { sessionId -> loadSession(sessionId) },
       reportFailure = ::reportStorageFailure,
     )
 
@@ -343,11 +405,30 @@ class ChatViewModel(
    * 都要落库、都要节流、都要在异常里把状态收尾。复制一份的下场是两处行为慢慢分叉。
    *
    * [wire] 是**真正发出去**的文本（可能带着世界书资料），界面与库里存的是调用方给的那份。
+   * [base] 是这条消息**已经有的**正文（续写时用来接上去，不能从零开始写，否则前半段会被覆盖）。
+   * [tail] 只进这一轮请求的补充指令，见 [TavernDirectives]。
    */
-  private suspend fun streamInto(sessionId: String, draftId: String, wire: String, tavern: Boolean = false) {
-    val turn = TurnRun(sessionId, draftId)
+  private suspend fun streamInto(
+    sessionId: String,
+    draftId: String,
+    wire: String,
+    tavern: Boolean = false,
+    base: String = "",
+    tail: String? = null,
+  ) {
+    val turn = StreamTurn(sessionId, draftId, base, turnHost)
     // 酒馆通道自己拿整段历史（含刚落库的这一问）；拼不出来（卡被删、没配提供商）就退回 dsh。
-    val direct = if (tavern) roleplay.tavern?.stream(sessionId, _state.value.activeCharacterId, _state.value.messages) else null
+    val direct =
+      if (tavern) {
+        roleplay.tavern?.stream(sessionId, _state.value.activeCharacterId, _state.value.messages, tail)
+      } else {
+        null
+      }
+    // 带指令却拿不到直连通道：退回 dsh 会把那条指令当成用户说的话发出去，宁可不发。
+    if (tavern && direct == null && tail != null) {
+      _state.update { it.copy(isStreaming = false) }
+      return
+    }
     try {
       (direct ?: streamer.stream(sessionId, wire)).collect { event -> turn.handle(event) }
     } catch (cancellation: CancellationException) {
@@ -360,140 +441,6 @@ class ChatViewModel(
       turn.failure = throwable
     } finally {
       withContext(NonCancellable) { turn.finish() }
-    }
-  }
-
-  /**
-   * 一轮响应的可变状态与收帧逻辑。
-   *
-   * 抽成类不是为了复用，而是为了**把 `when` 的每个分支收成一个小函数** —— 七个分支挤在
-   * 一个函数里，改一处要读一百行，复杂度也压不下来。这里的状态只活在一轮之内。
-   */
-  private inner class TurnRun(
-    private val sessionId: String,
-    private val draftId: String,
-  ) {
-    val content = StringBuilder()
-    val reasoning = StringBuilder()
-    var failure: Throwable? = null
-    var stopped = false
-    private var statusOnly = false
-
-    // 增量合并：UI 最多每 UI_FLUSH_INTERVAL_MS 刷一次 —— token 级帧很多，
-    // 逐帧重算 Markdown 太贵；DB 那边另有 timing.flushIntervalMs 的节流。
-    private var lastFlush = timing.clock()
-    private var lastUiFlush = timing.clock()
-
-    // 本步起点：StepFinal 只替换**这一步**追加的文本（多步回答的前几步不能被吃掉）。
-    private var stepStart = 0
-    private var reasoningStepStart = 0
-
-    // 思考时长：第一次推理增量起算，第一条正文到达时结算（只活在这一轮，不入库）
-    private var thinkingStartedAt: Long? = null
-
-    suspend fun handle(event: AgentStreamEvent) {
-      when (event) {
-        is AgentStreamEvent.ReasoningDelta -> onReasoning(event)
-        is AgentStreamEvent.Status -> onStatus(event.text)
-        is AgentStreamEvent.ToolCallStarted -> startToolCall(draftId, sessionId, event)
-        is AgentStreamEvent.ToolCallFinished -> finishToolCall(draftId, event)
-        is AgentStreamEvent.TextDelta -> onTextDelta(event)
-        is AgentStreamEvent.StepFinal -> onStepFinal(event)
-        AgentStreamEvent.Completed -> Unit
-      }
-    }
-
-    private suspend fun onReasoning(event: AgentStreamEvent.ReasoningDelta) {
-      if (thinkingStartedAt == null) {
-        val started = timing.clock()
-        thinkingStartedAt = started
-        // 界面据此把「思考中 1.2 秒」实时往上走；结算时换成 thinkingMs。
-        markThinkingStarted(draftId, started)
-      }
-      if (event.startsStep) reasoningStepStart = reasoning.length
-      reasoning.append(event.text)
-      val now = timing.clock()
-      if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
-        lastUiFlush = now
-        markReasoning(draftId, reasoning.toString())
-      }
-      throttleFlush(now)
-    }
-
-    private suspend fun onStatus(text: String) {
-      statusOnly = true
-      content.clear()
-      content.append(text)
-      appendText(draftId, text, replace = true)
-    }
-
-    private suspend fun onTextDelta(event: AgentStreamEvent.TextDelta) {
-      settleThinking()
-      // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
-      if (statusOnly) {
-        statusOnly = false
-        content.clear()
-      }
-      if (event.startsStep) stepStart = content.length
-      content.append(event.text)
-      val now = timing.clock()
-      if (event.startsStep || now - lastUiFlush >= UI_FLUSH_INTERVAL_MS) {
-        lastUiFlush = now
-        // UI 镜像直接取缓冲快照：坐标与缓冲永远一致，不必推理增量拼接的边界。
-        appendText(draftId, content.toString(), replace = true)
-      }
-      throttleFlush(now)
-    }
-
-    private suspend fun onStepFinal(event: AgentStreamEvent.StepFinal) {
-      settleThinking()
-      // 增量只是先给眼睛看的；这一步的成品到了就**只替换本步**追加的部分。
-      event.reasoning?.let { full ->
-        reasoning.setLength(reasoningStepStart.coerceAtMost(reasoning.length))
-        reasoning.append(full)
-        markReasoning(draftId, reasoning.toString())
-      }
-      event.text?.let { full ->
-        content.setLength(stepStart.coerceAtMost(content.length))
-        content.append(full)
-        appendText(draftId, content.toString(), replace = true)
-      }
-      lastUiFlush = timing.clock()
-      lastFlush = lastUiFlush
-      flush(draftId, content, reasoning, MessageStatus.Streaming, error = null)
-    }
-
-    /** 节流落库：增量可能每帧都来，200ms 一次已足够「进程被杀也不丢太多」。 */
-    private suspend fun throttleFlush(now: Long) {
-      if (now - lastFlush < timing.flushIntervalMs) return
-      lastFlush = now
-      flush(draftId, content, reasoning, MessageStatus.Streaming, error = null)
-    }
-
-    private fun settleThinking() {
-      val started = thinkingStartedAt ?: return
-      thinkingStartedAt = null
-      markThinkingMs(draftId, (timing.clock() - started).coerceAtLeast(0))
-    }
-
-    /** 收尾：定状态、把最后的缓冲对齐到界面与库，再把还挂着的工具卡落成中断态。 */
-    suspend fun finish() {
-      val status =
-        when {
-          stopped -> MessageStatus.Stopped
-          failure != null -> MessageStatus.Error
-          else -> MessageStatus.Complete
-        }
-      val error = failure?.let { it.message ?: it.javaClass.simpleName }
-      // 收尾前把 UI 与本地缓冲对齐：增量是合并刷新的（≤50ms），最后几个字可能还没上屏
-      if (content.isNotEmpty()) appendText(draftId, content.toString(), replace = true)
-      if (reasoning.isNotEmpty()) markReasoning(draftId, reasoning.toString())
-      flush(draftId, content, reasoning, status, error)
-      // 这一轮没跑完就被停/出错时，把还挂在「执行中」的工具卡落成中断态。
-      if (stopped || failure != null) finishRunningToolCalls(draftId)
-      // 思考中被打断也要结算时长，否则界面会永远停在「思考中」。
-      settleThinking()
-      finishStream(draftId, error)
     }
   }
 
@@ -652,38 +599,6 @@ class ChatViewModel(
     }
   }
 
-  /**
-   * 左右切候选回答：[-1] 上一份、[1] 下一份（到头绕回）。
-   *
-   * 库里只改「哪一份被选中」这一列，然后整页重读 —— 不就地改 state：换了一份回答意味着后面
-   * 对用户可见的一切（气泡、工具卡、计数）都该跟着换，就地改迟早会漏掉一处。
-   */
-  val swipeVariant: (Int) -> Unit = delta@{ step ->
-    val snapshot = _state.value
-    if (!snapshot.ready || snapshot.isStreaming || snapshot.switchingRole) return@delta
-    val sessionId = snapshot.sessionId ?: return@delta
-    val tail = snapshot.messages.lastOrNull { it.role == ChatRole.Assistant } ?: return@delta
-    val anchor = tail.anchorId ?: return@delta
-    if (tail.variantTotal <= 1) return@delta
-    viewModelScope.launch {
-      val group =
-        runCatching { variants.variants(anchor) }
-          .getOrElse { throwable ->
-            reportStorageFailure(throwable)
-            return@launch
-          }
-      if (group.size <= 1) return@launch
-      val current = group.indexOfFirst { it.id == tail.id }.coerceAtLeast(0)
-      val target = group[Variants.step(group.size, current, step)]
-      val moved = runCatching { variants.selectVariant(anchor, target.id) }
-      if (moved.isFailure) {
-        reportStorageFailure(moved.exceptionOrNull() ?: IllegalStateException("切换候选失败"))
-        return@launch
-      }
-      loadSession(sessionId)
-    }
-  }
-
   /** 中止本次流式响应，已收到的内容保留（库里记为 Stopped）。 */
   val stop: () -> Unit = { streamJob?.cancel() }
 
@@ -757,7 +672,12 @@ class ChatViewModel(
     _state.update { state ->
       // 名字从角色表里取，不从会话标题取：标题是「第一句话」，不是卡名。
       val name = state.roleplayGroups.firstOrNull { it.characterId == target }?.name
-      state.copy(activeCharacterId = target, activeCharacterName = name)
+      state.copy(
+        activeCharacterId = target,
+        activeCharacterName = name,
+        // 直连通道在「换了提供商 / 没配 key」时是空的，此时续写与替我写都做不到（见下面两个动作）
+        tavernDirect = roleplay.tavern?.enabled == true,
+      )
     }
   }
 
@@ -949,80 +869,6 @@ class ChatViewModel(
       error = error,
       finishedAt = if (status == MessageStatus.Streaming) null else timing.clock(),
     )
-  }
-
-  /** 记录思考时长（毫秒）；界面显示「思考了 3.8 秒」。清掉起点，实时计时停止。 */
-  private fun markThinkingMs(assistantId: String, ms: Long) {
-    _state.update { state ->
-      state.copy(
-        messages =
-          state.messages.map { message ->
-            if (message.id == assistantId) message.copy(thinkingMs = ms, thinkingStartedAt = null) else message
-          },
-      )
-    }
-  }
-
-  /** 记录思考开始时间；界面据此实时显示「思考中 X 秒」。 */
-  private fun markThinkingStarted(assistantId: String, at: Long) {
-    _state.update { state ->
-      state.copy(
-        messages =
-          state.messages.map { message ->
-            if (message.id == assistantId) message.copy(thinkingStartedAt = at) else message
-          },
-      )
-    }
-  }
-
-  private fun markReasoning(assistantId: String, reasoning: String) {
-    _state.update { state ->
-      state.copy(
-        messages =
-          state.messages.map { message ->
-            if (message.id == assistantId) {
-              message.copy(reasoning = reasoning.ifBlank { null }, thinking = message.content.isEmpty())
-            } else {
-              message
-            }
-          },
-      )
-    }
-  }
-
-  private fun appendText(assistantId: String, text: String, replace: Boolean = false) {
-    _state.update { state ->
-      state.copy(
-        messages =
-          state.messages.map { message ->
-            if (message.id == assistantId) {
-              message.copy(
-                content = if (replace) text else message.content + text,
-                streaming = true,
-                thinking = false,
-              )
-            } else {
-              message
-            }
-          },
-      )
-    }
-  }
-
-  private fun finishStream(assistantId: String, error: String?) {
-    _state.update { state ->
-      state.copy(
-        isStreaming = false,
-        messages =
-          state.messages.map { message ->
-            if (message.id == assistantId) {
-              message.copy(streaming = false, thinking = false, error = error)
-            } else {
-              message
-            }
-          },
-      )
-    }
   }
 
   private companion object {

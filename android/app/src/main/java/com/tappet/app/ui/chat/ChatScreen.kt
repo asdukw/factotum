@@ -110,12 +110,16 @@ import com.tappet.app.agent.HttpTavernChannel
 import com.tappet.app.agent.LlmPreset
 import com.tappet.app.agent.ModelChoice
 import com.tappet.app.agent.PersonaStore
+import com.tappet.app.agent.PrefsVarsStore
 import com.tappet.app.agent.PrefsWorldTracking
 import com.tappet.app.agent.RoleplayBinding
 import com.tappet.app.agent.RoleplayGroup
 import com.tappet.app.agent.SessionHandoff
+import com.tappet.app.agent.TavernMacros
 import com.tappet.app.agent.TavernPresetStore
 import com.tappet.app.agent.TavernTurns
+import com.tappet.app.agent.TavernVars
+import com.tappet.app.agent.Tokens
 import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
 import com.tappet.app.agent.UserQuestionHub
@@ -186,6 +190,7 @@ fun ChatScreen(
               memory = { id -> CharacterMemory.notes(appContext, id) },
               preset = { id -> TavernPresetStore.forCard(appContext, id) },
               tracking = { sessionId -> PrefsWorldTracking(appContext, sessionId) },
+              vars = PrefsVarsStore(appContext),
               nextTurn = { sessionId -> PrefsWorldTracking.nextTurn(appContext, sessionId) },
             ),
           // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
@@ -234,7 +239,9 @@ fun ChatScreen(
     onDeleteTurn = viewModel.deleteLastTurn,
     onRetryFrom = viewModel.retryFrom,
     onSeedGreeting = viewModel.seedGreeting,
-    onSwipeVariant = viewModel.swipeVariant,
+    onSwipeVariant = viewModel.variantsSwitch.swipe,
+    onContinue = viewModel.replies.continueReply,
+    onImpersonate = viewModel.replies.impersonate,
     modifier = modifier,
   )
 }
@@ -279,6 +286,8 @@ internal fun ChatScreen(
   onSwipeVariant: (Int) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
+  onContinue: () -> Unit = {},
+  onImpersonate: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
@@ -347,6 +356,8 @@ internal fun ChatScreen(
       greetings = greetings,
       onSeedGreeting = onSeedGreeting,
       onSwipeVariant = onSwipeVariant,
+      onContinue = onContinue,
+      onImpersonate = onImpersonate,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
@@ -626,10 +637,12 @@ private fun rememberGreetings(state: ChatUiState): List<String> {
     if (!state.messages.isEmpty()) {
       emptyList()
     } else {
-      // 展开 {{user}} / {{char}}：这里既当预览也当落库的正文，留着花括号会直接显示给用户
+      // 展开 {{user}} / {{char}} 与宏：这里既当预览也当落库的正文，留着花括号会直接显示给用户。
+      // 开场白里的宏用**空变量表**渲染：它没有会话上下文（会话还是空的），
+      // 所以开场白里的 {{setvar}} 不会留下痕迹 —— 那种写操作要在正式的一轮里做才有效。
       state.activeCharacterId
         ?.let { id -> CharacterStore.byId(cardContext, id) }
-        ?.let { card -> card.greetings.map { CharacterStore.renderText(it, card) } }
+        ?.let { card -> card.greetings.map { CharacterStore.renderText(TavernMacros.render(it, TavernVars()), card) } }
         .orEmpty()
     }
   }
@@ -653,6 +666,8 @@ private fun ChatBody(
   onRegenerate: () -> Unit = {},
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
+  onContinue: () -> Unit = {},
+  onImpersonate: () -> Unit = {},
 ) {
   // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
@@ -705,6 +720,8 @@ private fun ChatBody(
         greetings = greetings,
         onPickGreeting = onSeedGreeting,
         onSwipeVariant = onSwipeVariant,
+        onContinue = onContinue,
+        canContinue = state.tavernDirect && !state.isStreaming,
       )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
@@ -734,6 +751,8 @@ private fun ChatBody(
       onStop = onStop,
       onModelSwitchClick = onModelSwitchClick,
       onMicClick = onMicClick,
+      onImpersonate = onImpersonate.takeIf { state.tavernDirect && !state.writingLine },
+      writingLine = state.writingLine,
     )
   }
 }
@@ -773,6 +792,8 @@ private fun MessageList(
   greetings: List<String> = emptyList(),
   onPickGreeting: (String) -> Unit = {},
   onSwipeVariant: (Int) -> Unit = {},
+  onContinue: () -> Unit = {},
+  canContinue: Boolean = false,
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
   // 而删中间一轮会让后面的对话悬在半空。
@@ -801,6 +822,8 @@ private fun MessageList(
         onDeleteTurn = onDeleteTurn,
         onSwipeVariant = onSwipeVariant,
         onRetryFrom = onRetryFrom,
+        onContinue = onContinue,
+        canContinue = canContinue,
       )
     }
   }
@@ -1504,6 +1527,8 @@ private fun MessageBubble(
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
   onSwipeVariant: (Int) -> Unit = {},
+  onContinue: () -> Unit = {},
+  canContinue: Boolean = false,
 ) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
@@ -1516,6 +1541,8 @@ private fun MessageBubble(
       onDeleteTurn = onDeleteTurn,
       onRetryFrom = onRetryFrom,
       onSwipeVariant = onSwipeVariant,
+      onContinue = onContinue,
+      canContinue = canContinue,
     )
   }
 }
@@ -1568,6 +1595,8 @@ private fun AssistantMessage(
   onDeleteTurn: () -> Unit = {},
   onRetryFrom: (String) -> Unit = {},
   onSwipeVariant: (Int) -> Unit = {},
+  onContinue: () -> Unit = {},
+  canContinue: Boolean = false,
 ) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
@@ -1575,18 +1604,24 @@ private fun AssistantMessage(
 
     val error = message.error
     when {
-      error != null ->
-        Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-
+      // 先看正文：流到一半断了、或者续写时请求失败，已经写出来的字必须留着 ——
+      // 只因为最后出过错就把整段回复藏起来，用户会以为内容丢了（其实是库里还在）。
       message.content.isNotEmpty() ->
         MarkdownText(markdown = message.content + if (message.streaming) STREAMING_CURSOR else "")
+
+      error != null ->
+        Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
 
       message.reasoning.isNullOrBlank() && message.toolCalls.isEmpty() ->
         if (message.thinking) ThinkingIndicator() else Text(text = "…", style = MaterialTheme.typography.bodyMedium)
     }
 
-    if (message.content.isNotBlank() && !message.streaming && error == null) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
+    if (error != null && message.content.isNotEmpty()) {
+      Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+    }
+
+    if (message.content.isNotBlank() && !message.streaming) {
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         SpeakAction(messageId = message.id, markdown = message.content, speaking = speaking)
         Spacer(Modifier.width(2.dp))
         CopyAction(text = message.content)
@@ -1599,6 +1634,11 @@ private fun AssistantMessage(
               onStep = onSwipeVariant,
             )
           }
+          // 续写只在直连通道下出现：dsh 那边做不到「接着写」，给个按不动的按钮比不给更糟
+          if (canContinue) {
+            Spacer(Modifier.width(2.dp))
+            TextAction(text = "续写", onClick = onContinue)
+          }
           Spacer(Modifier.width(2.dp))
           TextAction(text = "重写", onClick = onRegenerate)
           TextAction(text = "删这轮", onClick = onDeleteTurn)
@@ -1608,6 +1648,14 @@ private fun AssistantMessage(
           Spacer(Modifier.width(2.dp))
           TextAction(text = "从此处重来", onClick = { onRetryFrom(message.id) })
         }
+        // token 计数贴在末尾：它是「这一条花了多少上下文」，不是这句话的一部分，
+        // 所以用最轻的字重与最旁边的位置，不抢正文的注意力。
+        Spacer(Modifier.weight(1f))
+        Text(
+          text = "≈${Tokens.format(Tokens.estimate(message.content))} tokens",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
     }
   }
@@ -1728,6 +1776,8 @@ private fun ChatInputBar(
   onStop: () -> Unit,
   onModelSwitchClick: () -> Unit,
   onMicClick: () -> Unit,
+  onImpersonate: (() -> Unit)? = null,
+  writingLine: Boolean = false,
 ) {
   val textStyle = MaterialTheme.typography.bodyLarge
   Column(modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
@@ -1780,6 +1830,10 @@ private fun ChatInputBar(
               )
             }
           }
+          if (onImpersonate != null || writingLine) {
+            Spacer(Modifier.width(8.dp))
+            ImpersonateAction(onClick = onImpersonate, writing = writingLine, busy = isStreaming)
+          }
           Spacer(Modifier.weight(1f))
           DictationStatus(dictation)
           Spacer(Modifier.width(6.dp))
@@ -1795,6 +1849,30 @@ private fun ChatInputBar(
       }
     }
   }
+}
+
+/**
+ * 「替我写」：只在能走直连通道的会话里出现。
+ *
+ * 正在写的时候显示「正在替你写…」而不是置灰按钮：按钮一灰，用户不知道是在等还是在坏。
+ * 这一块单独成函数是因为输入卡那一段已经贴着 detekt 的 80 行上限。
+ */
+@Composable
+private fun ImpersonateAction(onClick: (() -> Unit)?, writing: Boolean, busy: Boolean) {
+  Text(
+    text = if (writing) "正在替你写…" else "替我写",
+    style = MaterialTheme.typography.labelSmall,
+    color =
+      if (writing) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+      } else {
+        MaterialTheme.colorScheme.primary
+      },
+    modifier =
+      Modifier.clip(RoundedCornerShape(10.dp))
+        .clickable(enabled = !writing && !busy && onClick != null) { onClick?.invoke() }
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+  )
 }
 
 @Composable

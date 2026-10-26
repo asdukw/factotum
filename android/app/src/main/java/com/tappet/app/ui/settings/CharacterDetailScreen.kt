@@ -92,6 +92,7 @@ fun CharacterDetailScreen(
     onStart = { id -> viewModel.start(id) { onStartChat() } },
     onTogglePin = { pinned = CharacterPins.toggle(appContext, characterId) },
     onEdit = { editing = true },
+    onCardChanged = { card = it },
     onDelete = {
       viewModel.delete(characterId)
       CharacterPins.forget(appContext, characterId)
@@ -111,6 +112,7 @@ internal fun CharacterDetailScreen(
   onStart: (String) -> Unit,
   onTogglePin: () -> Unit,
   onEdit: () -> Unit = {},
+  onCardChanged: (CharacterCard) -> Unit = {},
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -142,6 +144,8 @@ internal fun CharacterDetailScreen(
           onTogglePin = onTogglePin,
           onEdit = onEdit,
         )
+        // 出口放在「开始对话」正下方：导进来的卡改过之后，用户第一个想知道的就是「怎么带走」
+        CardTransferRow(card = card, onCardChanged = onCardChanged)
 
         PresetRow(
           cardId = card.id,

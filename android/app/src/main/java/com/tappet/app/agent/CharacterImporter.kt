@@ -190,32 +190,8 @@ object CharacterImporter {
   private fun readWorld(data: JsonObject): List<WorldEntry> {
     val book = data["character_book"]?.jsonObject ?: data["world"]?.jsonObject ?: return emptyList()
     val entries = book["entries"]?.jsonArray ?: book["items"]?.jsonArray ?: return emptyList()
-    return entries.mapNotNull { element ->
-      val entry = element.jsonObject
-      val content = entry["content"]?.string()?.trim().orEmpty()
-      if (content.isEmpty()) return@mapNotNull null
-      val extensions = entry["extensions"]?.jsonObject
-      WorldEntry(
-        keys = readKeys(entry, "keys", "key"),
-        content = content,
-        order = entry["insertion_order"]?.jsonPrimitive?.intOrNull ?: 0,
-        // `constant` 在 v2 规范里是「每轮都注入」；`enabled: false` 的条目直接跳过
-        constant = entry["constant"]?.jsonPrimitive?.booleanOrNull == true,
-        // 编排参数在 v3 卡里放在 extensions 里，v2 卡偶尔放在顶层 —— 两处都认
-        depth = extInt(extensions, entry, "depth", 4),
-        secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
-        secondaryLogic = SecondaryLogic.fromRaw(entry["selectiveLogic"]?.jsonPrimitive?.intOrNull),
-        exclude = readKeys(entry, "exclude_keys", "excludeKeys"),
-        probability = extInt(extensions, entry, "probability", 100),
-        sticky = extInt(extensions, entry, "sticky", 0),
-        cooldown = extInt(extensions, entry, "cooldown", 0),
-        position = extInt(extensions, entry, "position", WorldEntry.POSITION_DEPTH),
-        role = extInt(extensions, entry, "role", WorldEntry.ROLE_SYSTEM),
-        useProbability = extBool(extensions, entry, "useProbability", true),
-        matchWholeWords = extBool(extensions, entry, "matchWholeWords", false),
-        caseSensitive = extBool(extensions, entry, "caseSensitive", false),
-      ).takeIf { entry["enabled"]?.jsonPrimitive?.booleanOrNull != false }
-    }
+    // 条目字段的兼容（两套拼法、两处位置）在 WorldEntryReader 里，「只导世界书」也走它
+    return WorldEntryReader.entriesOf(entries)
   }
 
   /** 备用开场白：v3 里是 `alternate_greetings` 数组，个别卡写成顶层 `alternateGreetings`。 */
@@ -224,26 +200,6 @@ object CharacterImporter {
       ?.let { element -> if (element is JsonArray) element else JsonArray(listOf(element)) }
       ?.mapNotNull { (it as? JsonPrimitive)?.content?.trim() }
       ?.filter { it.isNotEmpty() }
-      ?: emptyList()
-
-  /** 读一个布尔编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
-  private fun extBool(extensions: JsonObject?, entry: JsonObject, name: String, fallback: Boolean): Boolean =
-    extensions?.get(name)?.jsonPrimitive?.booleanOrNull ?: entry[name]?.jsonPrimitive?.booleanOrNull ?: fallback
-
-  /** 读一个整型编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
-  private fun extInt(extensions: JsonObject?, entry: JsonObject, name: String, fallback: Int): Int =
-    extensions?.get(name)?.jsonPrimitive?.intOrNull ?: entry[name]?.jsonPrimitive?.intOrNull ?: fallback
-
-  /** 读一组关键词：数组取每项，单字符串当一条；空串丢掉（真卡里偶有空元素）。 */
-  private fun readKeys(entry: JsonObject, vararg names: String): List<String> =
-    names.firstNotNullOfOrNull { name ->
-      when (val value = entry[name]) {
-        is JsonArray -> value.mapNotNull { it.string() }
-        null -> null
-        else -> listOfNotNull(value.string())
-      }
-    }
-      ?.filter { it.isNotBlank() }
       ?: emptyList()
 
   private fun newId(): String =

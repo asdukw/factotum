@@ -62,13 +62,33 @@ object TappetDatabaseProvider {
       }
     }
 
+  /**
+   * v3 → v4：消息表加「候选回答」三列。
+   *
+   * - `anchor_id`：这份回答在回答哪条用户消息（空 = 没有替代品，比如开场白与工具步骤）；
+   * - `variant_index`：同一 anchor 下的第几份；
+   * - `variant_selected`：组里当前显示哪一份。
+   *
+   * 只加列、全部给默认值：老数据的 anchor_id 为 null、variant_index 为 0、selected 为 1，
+   * 于是查询（只取 selected）读到的历史与升级前一模一样。
+   */
+  private val MIGRATION_3_4 =
+    object : Migration(3, 4) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `anchor_id` TEXT")
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `variant_index` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `variant_selected` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_anchor_id` ON `message` (`anchor_id`)")
+      }
+    }
+
   fun open(context: Context): TappetDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, TappetDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

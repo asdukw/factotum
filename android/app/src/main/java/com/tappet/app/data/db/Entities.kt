@@ -101,7 +101,7 @@ data class SessionEntity(
         onDelete = ForeignKey.CASCADE,
       ),
     ],
-  indices = [Index(value = ["session_id", "seq"], unique = true)],
+  indices = [Index(value = ["session_id", "seq"], unique = true), Index(value = ["anchor_id"])],
 )
 data class MessageEntity(
   @PrimaryKey @ColumnInfo(name = "id") val id: String,
@@ -114,6 +114,22 @@ data class MessageEntity(
   @ColumnInfo(name = "error") val error: String?,
   @ColumnInfo(name = "created_at") val createdAt: Long,
   @ColumnInfo(name = "finished_at") val finishedAt: Long?,
+  /**
+   * 这条助手回复是在回答哪一条用户消息（那条用户消息的 id）。
+   *
+   * 为空表示「没有替代品」——开场白、工具中间步骤、日常任务的步骤都是这一类。
+   * 有了它，「重写」就不用删掉上一份回答：新回答挂同一个 anchor，两份并存，只显示选中的那份。
+   */
+  @ColumnInfo(name = "anchor_id") val anchorId: String? = null,
+  /** 同一个 anchor 下的第几份回答（0 起）。用于「2/3」这种指示与左右切。 */
+  @ColumnInfo(name = "variant_index") val variantIndex: Int = 0,
+  /**
+   * 同一组里当前显示哪一份。
+   *
+   * 查询只取选中的那些，所以屏幕上的历史永远只有一条线 —— 不做并排的树。
+   * 用「选中标记」而不是「组里存一个索引」：删掉中间一份时不会出现「索引指向空气」。
+   */
+  @ColumnInfo(name = "variant_selected") val variantSelected: Boolean = true,
 )
 
 /**

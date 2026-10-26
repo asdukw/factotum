@@ -52,12 +52,25 @@ abstract class SessionStoreDao {
 
   // ---- message ----
 
-  @Query("SELECT * FROM message WHERE session_id = :sessionId ORDER BY seq")
+  // 只要选中的那一份：同一句提问的多份回答在库里并存，屏幕上永远只走一条线
+  @Query("SELECT * FROM message WHERE session_id = :sessionId AND variant_selected = 1 ORDER BY seq")
   abstract suspend fun messages(sessionId: String): List<MessageEntity>
 
   /** 删一条消息；「重写」「删掉这一轮」用它（工具调用跟着 message_id 级联）。 */
   @Query("DELETE FROM message WHERE id = :id")
   abstract suspend fun deleteMessage(id: String): Int
+
+  /** 同一个 anchor 下的所有回答（含未选中的），按 variant_index 排。 */
+  @Query("SELECT * FROM message WHERE anchor_id = :anchorId ORDER BY variant_index")
+  abstract suspend fun variantsOf(anchorId: String): List<MessageEntity>
+
+  /** 让同一组里只留下 [keepId] 那一份可见。 */
+  @Query("UPDATE message SET variant_selected = (id = :keepId) WHERE anchor_id = :anchorId")
+  abstract suspend fun selectVariant(anchorId: String, keepId: String)
+
+  /** 把一份已有回复登记成某个 anchor 的第 [index] 份候选（重写时第一步就是它）。 */
+  @Query("UPDATE message SET anchor_id = :anchorId, variant_index = :index WHERE id = :id")
+  abstract suspend fun tagVariant(id: String, anchorId: String, index: Int)
 
   @Query("SELECT COALESCE(MAX(seq), 0) + 1 FROM message WHERE session_id = :sessionId")
   abstract suspend fun nextSeq(sessionId: String): Long

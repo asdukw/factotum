@@ -117,6 +117,7 @@ import com.tappet.app.agent.PrefsWorldTracking
 import com.tappet.app.agent.RoleplayBinding
 import com.tappet.app.agent.RoleplayGroup
 import com.tappet.app.agent.SessionHandoff
+import com.tappet.app.agent.SessionRecap
 import com.tappet.app.agent.TavernMacros
 import com.tappet.app.agent.TavernPresetStore
 import com.tappet.app.agent.TavernTurns
@@ -126,6 +127,7 @@ import com.tappet.app.agent.ToolCallState
 import com.tappet.app.agent.ToolCallView
 import com.tappet.app.agent.UserQuestionHub
 import com.tappet.app.data.session.ChatSession
+import com.tappet.app.data.session.SessionAdmin
 import com.tappet.app.data.session.SessionStore
 import com.tappet.app.data.session.tappetSessionStore
 import com.tappet.app.device.AccessibilityStatus
@@ -162,6 +164,9 @@ fun ChatScreen(
   store: SessionStore = LocalContext.current.tappetSessionStore(),
 ) {
   val appContext = LocalContext.current.applicationContext
+  val tavernTurns = rememberTavernTurns(appContext)
+  // 前情提要在协程里跑；作用域取页面的，随页面销毁一起取消
+  val recapScope = rememberCoroutineScope()
   val viewModel: ChatViewModel = viewModel {
     ChatViewModel(
       // 配置来自设置页（密钥走 Keystore 封装）。运行时只在需要时重载：
@@ -176,25 +181,8 @@ fun ChatScreen(
         RoleplayBinding(
           characters = { CharacterStore.cards(appContext) },
           pins = { CharacterPins.pinned(appContext) },
-          // 酒馆直连通道：只有 OpenAI 兼容端点能这样发（Anthropic 原生协议的消息体不一样），
-          // 不是就返回 null，酒馆会话退回 dsh —— 退回去仍能演，只是少了深度注入与真重写。
-          tavern =
-            TavernTurns(
-              cards = { CharacterStore.cards(appContext) },
-              channel = {
-                val current = AgentConfigStore.current(appContext)
-                if (current.api == "openai-completions" && current.isConfigured) {
-                  HttpTavernChannel { AgentConfigStore.current(appContext) }
-                } else {
-                  null
-                }
-              },
-              memory = { id -> CharacterMemory.notes(appContext, id) },
-              preset = { id -> TavernPresetStore.forCard(appContext, id) },
-              tracking = { sessionId -> PrefsWorldTracking(appContext, sessionId) },
-              vars = PrefsVarsStore(appContext),
-              nextTurn = { sessionId -> PrefsWorldTracking.nextTurn(appContext, sessionId) },
-            ),
+          tavern = tavernTurns,
+          recap = recapFor(store, tavernTurns, recapScope),
           // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
           // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。
           switcher = { characterId ->
@@ -245,6 +233,50 @@ fun ChatScreen(
   )
 }
 
+/**
+ * 酒馆直连通道的绑定。
+ *
+ * 抽出来只是为了让 [ChatScreen] 留在 detekt 的行数阈值内 —— 这个函数体的身子本来就是
+ * 一串依赖注入，没有分支。只有 OpenAI 兼容端点能这样发，否则返回 null（会话退回 dsh）。
+ */
+@Composable
+private fun rememberTavernTurns(appContext: Context): TavernTurns =
+  remember(appContext) {
+    TavernTurns(
+      cards = { CharacterStore.cards(appContext) },
+      channel = {
+        val current = AgentConfigStore.current(appContext)
+        if (current.api == "openai-completions" && current.isConfigured) {
+          HttpTavernChannel { AgentConfigStore.current(appContext) }
+        } else {
+          null
+        }
+      },
+      memory = { id -> CharacterMemory.notes(appContext, id) },
+      preset = { id -> TavernPresetStore.forCard(appContext, id) },
+      tracking = { sessionId -> PrefsWorldTracking(appContext, sessionId) },
+      vars = PrefsVarsStore(appContext),
+      nextTurn = { sessionId -> PrefsWorldTracking.nextTurn(appContext, sessionId) },
+    )
+  }
+
+/** 没有提要写入能力的替身（假 store / 单测）。写进去什么都不做。 */
+private val NO_RECAP_WRITER =
+  object : SessionAdmin {
+    override suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) = Unit
+  }
+
+/** 前情提要的绑定（见 `SessionRecap`）：走酒馆通道的一次性补全，不另开 HTTP 客户端。 */
+private fun recapFor(store: SessionStore, tavern: TavernTurns, scope: CoroutineScope) =
+  SessionRecap(
+    store = store,
+    // 生产环境里 store 恒为 RoomSessionStore（同时实现了 SessionAdmin）；
+    // 契约测试里的假 store 没有它，于是前情提要退化成「什么也不写」。
+    admin = store as? SessionAdmin ?: NO_RECAP_WRITER,
+    complete = { sessionId, system, user -> tavern.complete(sessionId, system, user) },
+    start = { block -> scope.launch { block() } },
+  )
+
 /** ViewModel 那边的五个气泡动作绑成一包（包装层只是转发，不在这里写业务）。 */
 private fun bubbleActions(viewModel: ChatViewModel) =
   BubbleActions(
@@ -253,6 +285,7 @@ private fun bubbleActions(viewModel: ChatViewModel) =
     retryFrom = viewModel.retryFrom,
     swipe = viewModel.variantsSwitch.swipe,
     continueReply = viewModel.replies.continueReply,
+    fork = viewModel.branching.fork,
   )
 
 /**
@@ -268,6 +301,7 @@ internal data class BubbleActions(
   val retryFrom: (String) -> Unit = {},
   val swipe: (Int) -> Unit = {},
   val continueReply: () -> Unit = {},
+  val fork: (String) -> Unit = {},
 )
 
 /**
@@ -1727,6 +1761,9 @@ private fun AssistantMessage(
           }
           Spacer(Modifier.width(2.dp))
           TextAction(text = "重写", onClick = actions.regenerate)
+          // 支线：复制到此为止的历史到新会话。放在「重写」旁边是因为两者回答的是同一个问题
+          // （「这句不满意」），只是重写保留候选、支线保留整条走法。
+          TextAction(text = "开新支线", onClick = { actions.fork(message.id) })
           TextAction(text = "删这轮", onClick = actions.deleteTurn)
         } else {
           // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，

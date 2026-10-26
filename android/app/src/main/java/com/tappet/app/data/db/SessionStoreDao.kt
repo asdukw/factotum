@@ -40,6 +40,10 @@ abstract class SessionStoreDao {
   @Query("UPDATE session SET title = :title WHERE id = :id AND title IS NULL")
   abstract suspend fun titleIfEmpty(id: String, title: String)
 
+  /** 前情提要与「总结到哪条」一起写，见 `SessionStore.setSummary`。 */
+  @Query("UPDATE session SET summary = :summary, summary_upto = :upto WHERE id = :id")
+  abstract suspend fun setSummary(id: String, summary: String?, upto: String?)
+
   /** 群聊在场的所有卡（逗号分隔）。单角色会话不写这一列。 */
   @Query("UPDATE session SET character_ids = :ids WHERE id = :id")
   abstract suspend fun setSessionCharacters(id: String, ids: String?)

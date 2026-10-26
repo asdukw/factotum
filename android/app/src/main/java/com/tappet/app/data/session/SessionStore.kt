@@ -29,6 +29,10 @@ data class ChatSession(
    * 这件事每次切会话都要手点一遍。
    */
   val model: String? = null,
+  /** 前情提要（自动总结写的）；没有就是 null。 */
+  val summary: String? = null,
+  /** 提要盖到哪条消息为止；下一轮从这里之后接着总结。 */
+  val summaryUpto: String? = null,
 ) {
   /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
   val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
@@ -101,6 +105,22 @@ object NoVariants : VariantStore
  * 因为那个接口的函数数同样卡在上限（接口阈值只有 11）。
  */
 fun SessionStore.variantsOrNone(): VariantStore = this as? VariantStore ?: NoVariants
+
+/**
+ * 前情提要的写入。
+ *
+ * **不进 [SessionStore]**：那个接口已经贴着 detekt 的 interfaces 阈值（11），而 Room 的实现类
+ * 也贴着 20 只函数。故意让它与「读消息 / 追加消息」分开 —— 前情提要是一只独立的小写入，
+ * 由 `SessionRecap` 单独拿着，不需要把整套会话读写都传进去。
+ */
+interface SessionAdmin {
+  /**
+   * 存一条前情提要，并记下「总结到哪条消息」。
+   *
+   * 二者必须一起写：只写提要而不记位置，下一轮会把同一段再压一遍，提要越来越长却没有任何新信息。
+   */
+  suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) {}
+}
 
 /**
  * 会话存储的窄接口。

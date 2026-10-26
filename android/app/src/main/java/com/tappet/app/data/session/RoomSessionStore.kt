@@ -19,7 +19,9 @@ import kotlinx.coroutines.sync.withLock
 class RoomSessionStore(
   database: TappetDatabase,
   private val clock: () -> Long = System::currentTimeMillis,
-) : SessionStore, VariantStore by RoomVariants(database.store()) {
+) : SessionStore,
+  VariantStore by RoomVariants(database.store()),
+  SessionAdmin by RoomAdmin(database.store()) {
   private val dao = database.store()
   private val bootstrap = Mutex()
 
@@ -163,12 +165,23 @@ class RoomSessionStore(
   override suspend fun toolCalls(sessionId: String): List<StoredToolCall> =
     dao.toolCalls(sessionId).map { it.toDomain() }
 
+  override suspend fun setSessionCharacters(sessionId: String, ids: List<String>) =
+    dao.setSessionCharacters(sessionId, ids.filter { it.isNotBlank() }.joinToString(","))
+
   override suspend fun markStreamingAsInterrupted(): Int =
     // 半截回复保留；会话时间戳不因这次改判往前跳，所以不走 touchSession。
     dao.reclassify(MessageStatus.Streaming, MessageStatus.Interrupted, clock())
+}
 
-  override suspend fun setSessionCharacters(sessionId: String, ids: List<String>) =
-    dao.setSessionCharacters(sessionId, ids.filter { it.isNotBlank() }.joinToString(","))
+/**
+ * 会话行管理写操作的实现：群聊名单与前情提要。
+ *
+ * 与 [RoomVariants] 同理委托出去 —— 主类已经贴着 detekt 的 20 个函数上限，
+ * 每加一只写操作都要从别处挪一只出来，不如按职责分开。
+ */
+internal class RoomAdmin(private val dao: SessionStoreDao) : SessionAdmin {
+  override suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) =
+    dao.setSummary(sessionId, text, uptoMessageId)
 }
 
 /** 候选回答的读写实现；被 [RoomSessionStore] 委托，好让那个类不超函数上限。 */
@@ -192,6 +205,8 @@ private fun SessionEntity.toDomain() =
     updatedAt = updatedAt,
     characterId = characterId,
     characterIds = characterIds.orEmpty().split(',').filter { it.isNotBlank() },
+    summary = summary?.takeIf { it.isNotBlank() },
+    summaryUpto = summaryUpto,
     model = model,
   )
 

@@ -37,6 +37,25 @@ class TavernTurns(
   val enabled: Boolean get() = channel() != null
 
   /**
+   * 一次性补全：自动提要这类「只读历史、不改历史」的调用走同一条通道与同一套鉴权。
+   *
+   * 不另开一个 HTTP 客户端：提供商配置、超时、错误映射都已经在这条通道上，复制一份出来
+   * 只会让两边慢慢走偏。
+   */
+  suspend fun complete(sessionId: String, system: String, user: String): String {
+    val ch = channel() ?: return ""
+    val out = StringBuilder()
+    ch.stream(
+      TavernRequest(
+        sessionId,
+        listOf(TavernMessage(TavernMessage.SYSTEM, system), TavernMessage(TavernMessage.USER, user)),
+      ),
+    )
+      .collect { event -> if (event is AgentStreamEvent.TextDelta) out.append(event.text) }
+    return out.toString().trim()
+  }
+
+  /**
    * 这个会话现在的变量快照（界面上的「状态」小块就是它）。
    *
    * 只读、不改：变量由卡里的 `{{setvar}}` 在一轮轮里写，用户看见的必须是**实际生效的那一份**，
@@ -62,6 +81,14 @@ class TavernTurns(
     turns: List<ChatMessage>,
     tail: String? = null,
     cast: List<String> = emptyList(),
+    /**
+     * 这个会话的前情提要（自动总结写的）。由调用方从会话行里读好传进来，而不是在这一层去查：
+     * [stream] 不是 suspend（它同步返回 Flow），在这里 await 一个 IO 读会把签名整个改成协程。
+     *
+     * 它与卡记忆一起进 `{{memory}}` 段：两者都是「模型该记得、但历史里已经不在」的事，
+     * 分成两段只会让预设作者多写一个槽位。
+     */
+    recap: String? = null,
   ): Flow<AgentStreamEvent>? {
     val channel = channel() ?: return null
     val ids = (listOfNotNull(characterId) + cast).distinct()
@@ -82,7 +109,7 @@ class TavernTurns(
     val messages =
       TavernPrompt.build(
         card = card,
-        memory = memory(card.id),
+        memory = listOfNotNull(memory(card.id).takeIf { it.isNotBlank() }, recap).joinToString("\n\n"),
         turns = history,
         preset = preset(card.id),
         state =

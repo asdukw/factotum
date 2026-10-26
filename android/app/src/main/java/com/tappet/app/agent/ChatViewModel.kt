@@ -92,6 +92,8 @@ data class RoleplayBinding(
    * 退回去仍然能演，只是世界书回到「粘在消息前」、重写回到「删了重问」。
    */
   val tavern: TavernTurns? = null,
+  /** 前情提要（自动总结）；null 表示这个构建里没有它（单测常见）。 */
+  val recap: SessionRecap? = null,
 )
 
 data class ChatUiState(
@@ -119,6 +121,8 @@ data class ChatUiState(
   /** 当前会话绑定的角色（日常会话为 null）。 */
   val activeCharacterId: String? = null,
   val activeCharacterName: String? = null,
+  /** 这个会话的前情提要（自动总结写的）；拼 prompt 时进 `{{memory}}` 段。 */
+  val sessionRecap: String? = null,
   /** 这个会话的变量（卡里 `{{setvar}}` 写下的东西），空表示还没有。 */
   val sessionVars: Map<String, String> = emptyMap(),
   /** 群聊在场的所有卡 id（含主卡）；单角色会话为空。 */
@@ -256,7 +260,14 @@ class ChatViewModel(
       update = { transform -> _state.update(transform) },
       start = { block -> streamJob = viewModelScope.launch { block() } },
       open = { sessionId, characterId, tail ->
-        roleplay.tavern?.stream(sessionId, characterId, _state.value.messages, tail, _state.value.characterIds)
+        roleplay.tavern?.stream(
+          sessionId,
+          characterId,
+          _state.value.messages,
+          tail,
+          _state.value.characterIds,
+          _state.value.sessionRecap,
+        )
       },
       continueInto = { sessionId, messageId, base ->
         streamInto(sessionId, messageId, wire = "", tavern = true, base = base, tail = TavernDirectives.CONTINUE)
@@ -284,6 +295,16 @@ class ChatViewModel(
       finishRunningToolCalls = { messageId -> finishRunningToolCalls(messageId) },
       timing = timing,
       uiFlushMs = UI_FLUSH_INTERVAL_MS,
+    )
+
+  /** 从任意一条消息开支线（见 [Branching]）：原会话不动，历史抄进一段新会话。 */
+  val branching =
+    Branching(
+      snapshot = { _state.value },
+      store = store,
+      start = { block -> viewModelScope.launch { block() } },
+      open = { session -> switchTo(session) },
+      reportFailure = ::reportStorageFailure,
     )
 
   /** 候选回答的左右切（见 [VariantSwitcher]）。 */
@@ -446,6 +467,7 @@ class ChatViewModel(
           _state.value.messages,
           tail,
           _state.value.characterIds,
+          recap = _state.value.sessionRecap,
         )
       } else {
         null
@@ -470,6 +492,8 @@ class ChatViewModel(
       // 这一轮可能写了变量（卡里的 {{setvar}}）：界面上的状态块得跟着动，
       // 否则用户会看着「好感 3」聊了半天却发现一直没涨。
       refreshVars(sessionId)
+      // 每轮结束后看一眼要不要写前情提要：放在 finally 里，失败了也不会伤到这一轮的回复
+      roleplay.recap?.maybeSummarize(sessionId)
     }
   }
 
@@ -786,11 +810,14 @@ class ChatViewModel(
         }
       }
 
+    // 提要与消息一起在这一层读好：拼 prompt 的 `stream()` 不是挂起函数，没法自己来查库。
+    val recap = runCatching { store.session(sessionId)?.summary }.getOrNull()
     loaded
       .onSuccess { messages ->
         _state.update {
           it.copy(
             sessionId = sessionId,
+            sessionRecap = recap,
             messages = messages,
             ready = true,
             storageError = null,

@@ -1,7 +1,7 @@
 # 邮箱连接器（connector）：边界与隐私闸门
 
-> 状态：**Gmail 首版已实现，PC 侧验证通过，真机待验**（2026-10-18；2026-10-22 补只读工具；
-> 2026-10-22 加审批门控的写工具与附件下载）。
+> 状态：**Gmail 已实现五读四写、授权生命周期与临时授权前台服务**。2026-10-28 用户反馈本轮真机已验；
+> 该反馈不代替逐项取证，历史 PC / 真机记录与待定向验收项见 §6。
 > 注意：**授权面是 `gmail.modify`（读 + 写 + 发），能力面是五个只读 + 四个写** ——
 > 写工具只有用户点「允许一次」才会执行，见 §1.1 与 `docs/approvals.md`。
 > 本文是 `AGENTS.md` §「安全与隐私红线」第 6 条要求的那份前置文档：
@@ -54,9 +54,9 @@
 | `mail_send` | 发送邮件（不可撤销） | **写**，审批门控 |
 | `mail_save_attachment` | 把附件保存到公共「下载/zoneu」 | **写手机存储**，审批门控；Android 10+，≤20MB |
 
-附件**只列元数据，不下载内容**：下载意味着落盘，与 §1.3「不落盘」冲突，模型也没有可用的本地文件系统。
+读取工具**只列附件元数据，不下载内容**；只有用户明确要求并经审批的 `mail_save_attachment` 才落盘，见 §1.3。
 
-**写操作现在有了，但只在审批之后。** 三个写工具都在 `tools/pre-execute` 里被判成 `ask`，
+**写操作现在有了，但只在审批之后。** 四个写工具都在 `tools/pre-execute` 里被判成 `ask`，
 由 `@deepseek-ai/dsh-user-approval` 交给手机确认面板；只有用户点「允许一次」（`allowed-once`）
 才会真的发出请求。`rejected` / `cancelled` / `unavailable` 一律不执行，缺 answerer 时
 fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节见 `docs/approvals.md`。
@@ -64,10 +64,10 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 - 发送是**对外不可逆**的，确认面板必须显示收件人与主题；这两个字段放在 `displayReason`
   （只给 UI，不进审计），审计里的 `reason` 只写「发送 1 封邮件」。
 - 改标签 / 草稿也是写，但可逆；仍然走审批，保持一条规则，避免「哪些写要确认」的灰色地带。
-- 回复 / 转发 / 批量操作 / 删除还没有做 —— 等这三个写工具在真机上验过再加。
+- 回复 / 转发 / 批量操作 / 删除还没有做 —— 不在本轮范围内。
 
 **边界现在由两层守**：读工具只走 `gmailGet`（固定 GET）；写工具只能走 `gmailPost`，
-插件单测断言「三个写工具全部被判成 `ask`，非 GET 只出现在这三个白名单端点」。
+插件单测断言「四个写工具全部被判成 `ask`，Gmail 非 GET 只出现在三个白名单端点」；附件保存另经宿主桥写入公共目录。
 
 #### 授权面：`gmail.modify`，以及它带来的真实代价
 
@@ -86,8 +86,8 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 ### 1.2 账号范围：只有用户自己授权的那个账号
 
 - 授权走 OAuth 2.0 授权码流程 + PKCE，**由用户在 Google 的页面上完成**，zoneu 不接触用户密码。
-- **不要客户端密码**（client secret）：Google 对桌面应用类型明说「桌面应用是公共客户端，
-  保不住秘密」，用 PKCE 代替。所以包里没有可泄漏的密钥。
+- 使用 PKCE；同时按当前桌面 OAuth 客户端合同发送配套 client secret。桌面应用无法保密该字段，
+  它不是邮箱访问凭据，也不能代替 PKCE；实际邮箱长期凭据仍只进 Keystore 封装存储。
 - **不做多账号**：一个连接器实例 = 一个账号。多账号是产品决策，不是技术债。
 
 ### 1.3 数据面：默认不落盘、不进日志、不做后台采集
@@ -123,8 +123,8 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
   不做「工具直接消失」—— 工具面随配置变化会让模型的行为不可预测，报错更诚实。
 - 用户还应该在 **Google 账号页**撤销授权（<https://myaccount.google.com/permissions>）：
   本机断开只是删掉了自己这一份。
-- 插件在收到 `invalid_grant`（refresh token 已失效）时**主动清本机凭据**，
-  不留「界面显示已连接、但每次都失败」的状态。
+- Kotlin 仅在**当前授权版本**的 refresh 请求收到 `invalid_grant` 时清本机凭据；旧请求不得删除新授权。
+  网络、限流、5xx、客户端配置问题与无法解密均保留凭据，并返回不同错误码。
 
 ## 2. 隐私闸门（写代码时必须逐条满足）
 
@@ -173,10 +173,10 @@ Outlook 那套「显示一串码 + 用户去浏览器输入 + 轮询」在 Gmail
 所以 Gmail 走**回环重定向**（loopback）：`http://127.0.0.1:<随机端口>`。这是 Google 对
 **桌面应用**类型客户端的**推荐**做法，而且好处正合我们的架构：
 
-- **不用改 Manifest**（没有 intent-filter、没有自定义 scheme），
+- **回调不用 intent-filter 或自定义 scheme**；等待回调的保活服务仍需 Manifest 声明，见 §7.5，
 - **不用注册签名 SHA-1、不绑包名** —— 所以预置一个 client id 能对所有人生效
   （Android 类型的客户端要求注册签名指纹，那样每个自己构建的人都要去注册一遍），
-- **不需要客户端密码** —— 用 PKCE。
+- 使用 PKCE，并发送同一桌面 OAuth 客户端配套的密码；自定义 ID 不借用预置密码。
 - 体验上反而更好：点「连接」→ 浏览器 → 点同意 → **自动跳回 App**，没有码要抄。
 
 回环监听器只绑 `127.0.0.1`（绑 `0.0.0.0` 等于把授权码暴露给同网段），端口交给系统分配
@@ -213,20 +213,19 @@ zoneu 现在没有服务端，没有地方藏。要变成「点一下就连接�
    要公开发布得过 Google 的验证，含安全评估。那是另一件事，见 §4.6。同意页上会写明
    「读取、撰写和发送你的邮件」。）
 4. **凭据 → 创建凭据 → OAuth 客户端 ID** → 应用类型选 **桌面应用** → 创建。
-5. 记下那个 **客户端 ID**（形如 `xxxx.apps.googleusercontent.com`）。
-   **不要**创建客户端密码 —— 用不上，而且没必要让一个「像秘密的东西」进包。
+5. 保存这个桌面客户端的 **客户端 ID**（形如 `xxxx.apps.googleusercontent.com`）与**配套客户端密码**。
+   两者必须来自同一个客户端；不要提交到仓库或粘贴进日志。密码不能代替 PKCE，见 §4.1b。
 
 ### 4.3 zoneu 侧
 
-设置 → 连接器 → Gmail → 填**客户端 ID** → 点「连接」→ 浏览器里登录并点「同意」→
-自动跳回。授权成功后设置页显示**已连接的账号**；`mail_*` 五个工具随即可用。
+设置 → 连接器 → Gmail → 使用预置客户端，或填写自己的**客户端 ID 与配套密码** → 点「连接」→ 浏览器里登录并点「同意」→
+自动跳回。App 完成换码与凭据保存后显示**已连接的账号**；九个 `mail_*` 工具随即可用，四个写工具仍走审批。
 
 ### 4.4 预置客户端 ID：目标是「装完点一下就授权」
 
-客户端 ID **不是秘密**：Google 明说桌面应用是公共客户端、保不住秘密，用 PKCE 代替密码。
-它本来就要分发给每一个安装。所以把它作为默认值烧进包里**不违反**仓库
-「密钥永不入库、不进构建产物」的红线 —— 那条红线说的是**密钥**，而这里没有密钥可泄漏
-（我们根本不申请客户端密码，`check-sensitive.ps1` 也不认客户端 ID）。
+桌面客户端 ID 与配套密码是随应用分发的公共客户端标识，不能作为邮箱访问凭据；授权码归属由 PKCE 验证。
+预置值仅走构建注入，不硬编码入库；用户邮箱的 access / refresh token 与 LLM API key 不随包分发。
+`check-sensitive.ps1` 的现有模式不覆盖桌面 OAuth 客户端值，不能据其通过认定可公开，见下文。
 
 **客户端 id 与密码走构建期注入、不入库**：`ConnectorDefaults.kt` 读 `BuildConfig` ——
 本地读 `android/local.properties` 的 `zoneu.connector.gmailClientId` / `...gmailClientSecret`，
@@ -234,7 +233,7 @@ zoneu 现在没有服务端，没有地方藏。要变成「点一下就连接�
 `ZONEU_GMAIL_CLIENT_SECRET`）。目标是「装完点一下就授权」，用户不必自己去 Google Cloud
 注册应用；留空则退回「要求用户自己填」。发布包不允许留空：`release.yml` 的「检查连接器凭据」
 读到空值就失败（secret 配在 `release` environment 里，见 `docs/releasing.md`）。本地包照常留空可打 ——
-`local.properties` 不入库，**worktree 里没有这份文件**，从 worktree 打的 debug 包必然要用户自己填。
+`local.properties` 不入库；新工作树若未单独配置这些值，打出的 debug 包就需要用户自己填。
 
 **为什么不入库**：GitHub 的 push protection 把 Google OAuth 的 client id 与 client secret
 都判成密钥，对管理员一样拦（实测 `GH013 ... Push cannot contain secrets`，连 `master` 直推
@@ -272,12 +271,13 @@ scope 只是又一次重授权），但没有免费的重来。
 
 ## 5. 与既有架构的关系
 
-### 5.0 四处同一件事（改连接器先看这张表）
+### 5.0 职责分层（改连接器先看这张表）
 
 | 位置 | 管什么 |
 |---|---|
 | `connector/GoogleOAuth.kt` | 纯协议：PKCE / 授权 URL / 回环请求行 / 令牌解析。scope 常量 `GMAIL_SCOPE` 在这里 |
-| `connector/GmailAuth.kt` + `ConnectorStore.kt` | 网络与存储：回环监听器 + 浏览器、refresh token 进 SecretVault、access token 只在内存 |
+| `connector/GmailAuth.kt` / `GmailLoopback.kt` / `GmailTransport.kt` / `GmailAuthorizationService.kt` | 授权编排、回环监听、可取消网络请求与临时前台保活 |
+| `connector/GmailSession.kt` / `GmailCredentials.kt` / `ConnectorStore.kt` | 刷新单飞与版本保护、客户端绑定凭据、SecretVault 持久化；access token 只在内存 |
 | `bridge/ConnectorBridgeServer.kt` | 只发短命 access token 的本地桥，**独立于设备桥**（理由见类注释） |
 | `tools/dsh-phone/plugins/gmail/` | 模型可见的九个工具（五个只读 + 四个审批门控写）；Gmail 的 REST 语义全在这里 |
 
@@ -321,7 +321,7 @@ scope 只是又一次重授权），但没有免费的重来。
 | refresh token 的 `SecretVault` prefsName | `zoneu_connector_secret-gmail` |
 | refresh token 的 Keystore keyAlias | `zoneu-connector-gmail-v1` |
 | 客户端 id（非密） | `gmail_client_id` |
-| 账号标识（连接后写入非密 prefs） | `gmail_account` |
+| 旧账号展示键（仅兼容读取 / 断开清理） | `gmail_account` |
 
 后两个键带连接器 id 前缀，前两个直接把 id 拼进名字 —— 与提供商那套命名同构
 （`$LEGACY_SECRET_PREFS-${preset.id}`）。加 Outlook 时是**另一把 Keystore 钥匙**，
@@ -346,14 +346,14 @@ shinzo-labs 的 `list_messages` 干脆不取元数据。等真机实测 25 封�
 
 ## 6. 怎么验
 
-### 已经验到的（2026-10-18，PC 侧）
+### 历史 PC 验证记录（2026-10-18 / 2026-10-22，非本轮完整树证据）
 
 | 判据 | 结果 |
 |---|---|
 | PKCE 正确 | ✅ 对着 **RFC 7636 Appendix B** 的官方样例钉住 |
 | scope 是 `gmail.modify`，且不含 `https://mail.google.com/`（永久删除） | ✅ 单测断言 |
 | 读请求全是 GET；写请求只到三个白名单端点 | ✅ 插件测试断言（见 §1.1） |
-| 三个写工具全部被判成 `ask`；读工具放行 | ✅ 插件测试断言 |
+| 四个写工具全部被判成 `ask`；读工具放行 | ✅ 插件测试断言 |
 | `reason` 不含收件人 / 主题（审计日志），`displayReason` 才带 | ✅ 插件测试断言 |
 | MIME：非 ASCII 主题 RFC 2047、正文 base64、头字段拒绝换行 | ✅ 插件测试断言 |
 | 附件下载：按 1-based index 取附件、二进制交给宿主、结果不含 attachmentId | ✅ 插件测试断言 |
@@ -375,7 +375,7 @@ shinzo-labs 的 `list_messages` 干脆不取元数据。等真机实测 25 封�
 | 会话视图：按时间排序、每条截断、整条有总预算 | ✅ 插件测试 |
 | 附件只给清单（文件名 / 类型 / 大小），不给 `attachmentId` | ✅ 插件测试 |
 | 自定义标签按名字 / id 解析；系统标签不多发一次 `labels.list` | ✅ 插件测试 |
-| 五个工具通过真实 `defineTool` | ✅ `real-schema.mjs`（借缓存运行时） |
+| 九个工具通过真实 `defineTool` | ✅ `real-schema.mjs`（借缓存运行时） |
 
 ### 真机结果（一加 15T / ColorOS，2026-10-18）
 
@@ -394,36 +394,23 @@ connect: token granted refresh=true
 | state 校验 | ✅ `stateMatch=true` |
 | 拿到 refresh token | ✅ `refresh=true` |
 | 令牌只落 SecretVault 密文 | ✅ 文件里只有 `secret_wrapped` + `secret_iv`，明文 token 痕迹 0 处 |
-| 账号只落非密 prefs | ✅ `gmail_account=zhouzongyuu@gmail.com` |
+| 历史账号展示存储 | ✅ 非密 prefs 的 `gmail_account`；当前版本改为绑定凭据记录，不在本文保留真实账号 |
 | 真读邮件 | ✅ `mail_list` 跑通，`task done ok=true tools=4 chars=490 errors=0` |
 | 令牌有缓存、不重复换取 | ✅ 7 次桥调用全部 `ok`，无重复 OAuth 往返 |
 | 正文不进日志 | ✅ 我们的 tag 只有状态行；不开 `logPayload` 时连 `assistant:` 都不落 |
 
-### 还没验的（写在这里免得当成已完成）
+### 本轮反馈与验收边界（2026-10-28）
 
-- **真机上的完整授权流程一次都没跑过**：需要用户自己的 Google Cloud OAuth 客户端。
-  空白的是「点连接 → 浏览器 → 同意 → 回环收回调 → 换到令牌 → 落盘」这一整段。
-- **回环监听器在真机上的行为**：浏览器是否会老老实实跳到 `127.0.0.1`（部分浏览器 /
-  系统 WebView 对回环地址有额外拦截）、`state` 校验、超时路径 —— 全是空白。
-- **真机 logcat 里没有邮件正文**：代码层面没有写盘与打印路径，但没有真机取证记录。
-- **八个工具的真机回归还没跑**：真机只验过 `mail_list`；分页、会话视图、附件清单、
-  自定义标签、以及三个写工具目前都是 PC 侧桩测试，需要重装 APK + 真实账号再跑一次。
-- **写操作的真机端到端还没跑**：确认面板 → 用户点「允许一次」→ 真正发信 / 建草稿 / 改标签，
-  这一整段只有桩测试。第一次真机验证建议先用 `mail_draft`（可逆），再验 `mail_send`。
-- **附件下载的真机端到端还没跑**：MediaStore 写入 `Download/zoneu/`、系统「文件」App 能看到、
-  同名文件冲突、ColorOS 上的行为，都只有 PC 侧桩测试。需要真机 + 真实附件验一次。
-- 仍然**没有做**：多账号、回复 / 转发 / 批量写、增量同步。每一条都在 §1 的边界之外。
-- **授权流程依赖 App 进程一直活着**（最长 10 分钟持有回环 socket）。实测被踩到过一次：
-  另一个会话重装 APK 把进程换掉，监听器随之消失，浏览器跳回 `127.0.0.1` 时无人应答，
-  令牌就没落盘。Android 后台杀进程是常态，这是**真实的设计缺口**，正确做法是把等待回调
-  这段放进前台服务（仓库里已有 `NodeTaskService` 的先例）。**没做。**
-- **测试模式下 refresh token 会过期**（官方写「limited refresh token lifetime」，社区实测 7 天）。
-  预置的 client id 停在测试模式，所以每周要重连一次。代码能优雅处理（`invalid_grant` 时
-  主动清凭据并提示重连），但体验上是个真问题。
-- **别人装这个包，Gmail 连接器默认连不上**：他们的账号不在测试用户白名单里。
-  逃生门是「使用我自己的 OAuth 客户端 ID」——自己注册一个填进去（**现在还要填客户端密码**）。
+用户反馈本轮真机已验，但未逐项提供结果。该反馈不等于九个工具、取消 / 超时、进程重建及所有 ROM 场景均有独立证据，也不等于 `GmailCredentialAndroidTest` 已在设备执行。
+需要定向复验时，按 §7.4 检查授权 / 重连 / 只读任务；写工具先验可逆的 `mail_draft`，再经审批验发送、标签修改与附件保存（公共目录可见性及同名冲突）。不以编译替代设备执行，不在日志中保留正文或凭据。
 
-## 7. 为什么先做 Gmail 而不是 Outlook
+已知边界：
+- 不支持多账号、回复 / 转发 / 批量写、增量同步。
+- 等待授权已由独立临时前台服务保活，但进程被杀仍需重来，ColorOS 仍可能冻结前台服务，见 §7.5。
+- **External + Testing 的 refresh token 通常七天过期**（仅基础身份 scope 的例外不适用于 `gmail.modify`）。这是 Google 服务端规则，实际发布状态需在控制台核实，不能仅凭旧文档定因；当前 grant 的 `invalid_grant` 会清凭据并提示重连。
+- 处于 Testing 的 OAuth 项目只允许白名单测试用户；其他用户需配置自己的桌面 OAuth 客户端 ID 与配套密码。
+
+## 附：为什么先做 Gmail 而不是 Outlook
 
 Outlook 先试过一轮（代码在 `feat/outlook-connector` 分支，已搁置），卡在一个不对称上：
 
@@ -436,3 +423,62 @@ Outlook 先试过一轮（代码在 `feat/outlook-connector` 分支，已搁置�
 结论：**两家都必须有 OAuth 客户端注册**（预置一次即可解决），但 Gmail 的回环流程体验更好、
 且不绑签名。Outlook 要复活的话，那套设备码实现在 `feat/outlook-connector` 上，
 存储身份与桥的约定与本文一致。
+
+
+## 7. 连接生命周期、恢复与诊断
+
+### 7.1 成功条件与兼容
+
+- `Connected` 表示交互授权拿到 refresh token，并且加密记录同步提交成功；仅有 access token、保存 false 或异常都不能报告连接完成。
+- 既有 vault prefs 与 Keystore alias 不变。同一个加密值记录版本、refresh token、完整客户端绑定和账号；access token 仍只在内存。
+- 既有裸 refresh token 可以读取；成功刷新后才升级为绑定记录。正常刷新省略 refresh token 时沿用旧值，JSON null / 空白 / 非字符串不会被存成凭据。
+- 输入是草稿，连接时快照并整体保存 client ID / secret；自定义客户端不使用预置客户端的密码。旧授权与当前配置不匹配时明确要求重连，不混用。
+- 读取区分 Missing / Unreadable / Present；读取不生成替代 Keystore key。不可读时保留密文，提示解锁重试或重新连接，不静默清数据。
+
+### 7.2 刷新、取消与 401
+
+- 访问令牌在请求时按需刷新，没有后台轮询；缓存 TTL 使用单调时钟。刷新单飞，提交受 generation 与凭据快照保护，重连 / 取消 / 断开后旧结果不能清掉或恢复授权。
+- 回环监听固定 127.0.0.1，随机端口、PKCE、随机 state。包括 error 回调在内先验证 state；取消关闭 server/client socket 并取消 HTTP call，读取有长度与总时限。
+- 浏览器只显示「已收到授权回调」，App 完成换码与持久化后才算成功。授权先启动独立临时前台服务并确认通知就绪，再打开浏览器；服务持续到换码、持久化完成或取消 / 十分钟超时。App 被系统杀死仍需重新开始，不重启旧授权。
+- 插件使用受随机 token 保护的本机桥 `access_token`，401 携带被拒 access token 请求条件式失效；refresh token 不离开 Kotlin。
+- 只有 GET 在明确 401 后刷新并最多重试一次。第二次 401 止损；POST、发信、改标签、草稿不自动重放，只调用 `invalidate_token` 失效匹配缓存；重新执行仍需审批。403 / 429 / 5xx / 网络异常不套用授权重试。
+
+### 7.3 看错误码，不猜原因
+
+| 错误码 | 含义 / 下一步 |
+|---|---|
+| `NOT_CONNECTED` | 本机没有可用授权，重新连接 |
+| `CREDENTIAL_UNREADABLE` | 已有密文读不出；先解锁重试，仍失败再重连，不清数据 |
+| `STORAGE_FAILED` | 长期凭据未可靠保存；检查空间 / 存储，不能把当前进程短暂可用当连接成功 |
+| `MISSING_REFRESH_TOKEN` | Google 未颁发长期凭据；本次连接失败，旧凭据不被空值覆盖 |
+| `NETWORK` / `TEMPORARY` | 网络或 Google 暂时故障 / 限流；保留凭据，检查网络后重试 |
+| `invalid_client` / `invalid_request` | ID / 密码或客户端类型配置问题，不应反复撤销账号权限 |
+| `CONNECTION_PENDING` | 正在交互重连，等待完成后再调用邮件工具 |
+| `CLIENT_CHANGED` | 当前配置与已保存授权不匹配；用目标客户端重新授权 |
+| `invalid_grant` | 当前 refresh grant 被 Google 拒绝；重连，并核实 Testing / 撤权 / 密码变化 |
+| `STATE_MISMATCH` / `STALE_OPERATION` | 回调不属于当前尝试或操作已被取消，重新发起 |
+
+Google 提示「Tappet 已有权限」说的是账号与 OAuth 项目的授权关系，**不证明本次安装还持有可用 refresh token**。名称来自 Google Auth Platform → Branding，与 Android app label / applicationId 独立；代码更名不会更新控制台。无需以卸载、清数据或撤销所有权限作为首选排查。
+
+只收集阶段、固定错误码、HTTP 状态、布尔量与计数；不粘贴 token、code、邮箱、原始回调 URL 或响应体。此修复未核实用户 Google Cloud 配置，也不宣称已确定本次掉线的唯一根因。
+
+### 7.4 回归与真机验收
+
+`GoogleOAuthTest`、`GmailSessionTest` 覆盖协议 null/类型/TTL、持久化失败、旧格式、进程重建模拟、并发刷新与重连 / 断开交错、配置绑定和单次 401 恢复；`GmailLoopbackTest` 验证回调、取消与超时。插件测试验证 GET 恢复边界与发送不重放。
+
+`GmailCredentialAndroidTest` 使用随机独立 prefs/alias 和合成凭据验证真实加密读写，不触碰正式凭据。编译不等于执行；不要在用户设备运行会清正式配置的其它全量存储测试。
+
+用户验收：重新连接 → 退出进程 / 重启 → 连接状态仍在 → 发起只读邮件任务；取消后能立即重试；临时断网不会清授权。需要反馈时只提供阶段与固定错误码，不提供邮件或凭据。
+
+参考：[Google OAuth 最佳实践](https://developers.google.com/identity/protocols/oauth2/resources/best-practices)、[刷新令牌失效](https://developers.google.com/identity/protocols/oauth2#expiration)、[原生应用授权](https://developers.google.com/identity/protocols/oauth2/native-app)。
+
+
+### 7.5 浏览器授权的后台执行保障
+
+真机已复现：zoneu 后台时回环端口存在但 GET / 超时，拉到前台后同一端口立即返回 204。进一步检查发现：即使 `GmailAuthorizationService` 的 `isForeground=true`，ColorOS 的 `OplusHansManager` 仍记录对 zoneu 的 `freeze`。因此，**前台服务并不保证这台 ROM 不冻结应用**。没有系统更新前的对照，不能据此认定由某次更新引入，也不能将所有回环超时都归为这个原因。
+
+`GmailAuthorizationService` 以独立 `specialUse` 前台服务保护用户发起的授权，不复用 Node 任务的 dataSync 服务。Manifest 声明 FOREGROUND_SERVICE_SPECIAL_USE 与具体 subtype；不是邮件同步或后台采集，商店分发仍需满足平台审核。通知只提供返回 App / 取消，不含账号、令牌或回调地址。通知权限未授予不阻止 Android 启动 FGS，但通知可见性由系统控制。
+
+服务就绪前不打开浏览器；启动失败返回 AUTH_SERVICE_FAILED。完成、失败、取消与十分钟超时均停止服务并释放监听；通知取消返回 AUTH_CANCELLED，系统停止返回 AUTH_SERVICE_STOPPED。旧尝试收尾不得停止新尝试。不记录或持久化授权码。
+
+使用者排查步骤见 [本机回调排查 Q&A](Q&A.md#local-callback-timeout)。

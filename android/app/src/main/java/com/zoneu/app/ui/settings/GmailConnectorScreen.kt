@@ -24,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,7 @@ fun GmailConnectorScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
   val state by viewModel.state.collectAsStateWithLifecycle()
 
   LaunchedEffect(Unit) { viewModel.reload() }
+  DisposableEffect(viewModel) { onDispose { viewModel.cancelConnect() } }
 
   GmailConnectorScreen(
     state = state,
@@ -122,7 +124,7 @@ private fun ConnectionCard(
       subtitle =
         when {
           state.awaitingConsent -> "请在浏览器里完成授权…"
-          state.connected -> "只读权限（gmail.readonly）；模型可列出、检索、读取邮件"
+          state.connected -> "权限 gmail.modify；读邮件与审批后写入 / 发送"
           else -> "连接后才能读取邮件；zoneu 不会拿到你的密码"
         },
     ) {
@@ -131,7 +133,7 @@ private fun ConnectionCard(
         tone = if (state.connected) BadgeTone.Enabled else BadgeTone.Muted,
       )
     }
-    if (state.connected) {
+    if (state.connected || state.account != null) {
       SettingsDivider()
       Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -168,7 +170,7 @@ private fun ClientIdSection(
           text =
             "在 Google Cloud 控制台新建项目并启用 Gmail API，配好 OAuth 同意屏幕（External，" +
               "测试模式下把自己加进测试用户），再到「凭据」新建一个「桌面应用」类型的 " +
-              "OAuth 客户端 ID。不需要客户端密码 —— 走的是 PKCE。",
+              "OAuth 客户端 ID 和配套客户端密码；授权同时使用 PKCE。",
         )
       }
       OutlinedTextField(

@@ -148,6 +148,41 @@ class GoogleOAuthTest {
     assertEquals(3600L, granted.expiresInSeconds)
   }
 
+  @Test
+  fun `null blank and non string tokens never become credentials`() {
+    for (value in listOf("null", "true", "42", "{}", "[]", "\"\"", "\"   \"")) {
+      assertTrue(parseTokenResponse("{\"access_token\":$value}") is TokenOutcome.Denied)
+      val response = parseTokenResponse("{\"access_token\":\"at\",\"refresh_token\":$value}") as TokenOutcome.Granted
+      assertNull(response.refreshToken)
+    }
+  }
+
+  @Test
+  fun `invalid lifetimes are rejected`() {
+    for (ttl in listOf("0", "-1", "9223372036854775807", "false", "null", "\"bad\"")) {
+      assertTrue(parseTokenResponse("{\"access_token\":\"at\",\"expires_in\":$ttl}") is TokenOutcome.Denied)
+    }
+  }
+
+  @Test
+  fun `http failures cannot masquerade as revoked authorization`() {
+    for (status in listOf(429, 500, 502, 503)) {
+      assertEquals(TokenOutcome.Denied("TEMPORARY"), parseTokenHttpResponse(status, "{\"error\":\"invalid_grant\"}"))
+    }
+    assertEquals(TokenOutcome.Denied("invalid_response"), parseTokenHttpResponse(200, "<html>bad</html>"))
+    assertEquals(TokenOutcome.Denied("invalid_client"), parseTokenHttpResponse(401, ""))
+    assertEquals(TokenOutcome.Denied("invalid_grant"), parseTokenHttpResponse(400, "{\"error\":\"invalid_grant\"}"))
+  }
+
+  @Test
+  fun `error callbacks must pass state validation first`() {
+    val denied = RedirectParams(code = null, state = "wrong", error = "access_denied", errorDescription = null)
+    assertEquals("STATE_MISMATCH", redirectFailure(denied, "expected"))
+    assertEquals("access_denied", redirectFailure(denied.copy(state = "expected"), "expected"))
+    assertEquals("TIMEOUT", redirectFailure(null, "expected"))
+    assertNull(redirectFailure(denied.copy(code = "fixture", state = "expected", error = null), "expected"))
+  }
+
   // --- 账号标识 -------------------------------------------------------------
 
   @Test

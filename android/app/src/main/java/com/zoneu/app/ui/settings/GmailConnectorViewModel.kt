@@ -7,6 +7,9 @@ import com.zoneu.app.connector.ConnectEvent
 import com.zoneu.app.connector.ConnectorStore
 import com.zoneu.app.connector.GMAIL_CONNECTOR_ID
 import com.zoneu.app.connector.GmailAuth
+import com.zoneu.app.connector.GmailClient
+import com.zoneu.app.connector.tokenFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,9 +20,7 @@ import kotlinx.coroutines.launch
 /**
  * Gmail 连接器的设置页状态：客户端 id / 授权进度 / 已连接的账号。
  *
- * 客户端 id **改一次存一次**（与提供商详情页的非密钥字段同一取舍）：它会在用户去 Google
- * Cloud 复制粘贴时被反复改，攒着不存只会让人以为已经好了。凭据不在这里 —— 它只进
- * [com.zoneu.app.data.crypto.SecretVault]，这一页读不到、也不该读到。
+ * 输入作为草稿，连接时快照完整客户端配置；长期凭据不经 ViewModel 暴露。
  */
 internal class GmailConnectorViewModel(private val appContext: Context) : ViewModel() {
   data class UiState(
@@ -44,6 +45,7 @@ internal class GmailConnectorViewModel(private val appContext: Context) : ViewMo
   val state: StateFlow<UiState> = _state.asStateFlow()
 
   private var connectJob: Job? = null
+  private var attempt = 0L
 
   init {
     reload()
@@ -61,18 +63,24 @@ internal class GmailConnectorViewModel(private val appContext: Context) : ViewMo
         clientSecretFromDefault = storedSecret.isBlank() && secret.isNotBlank(),
         connected = status.connected,
         account = status.account,
+        error = status.problem?.takeUnless { problem -> problem == "NOT_CONNECTED" }?.let { problem -> tokenFailure(problem).summary },
       )
     }
   }
 
   fun onClientIdChange(value: String) {
-    ConnectorStore.saveClientId(appContext, GMAIL_CONNECTOR_ID, value)
-    _state.update { it.copy(clientId = value, error = null) }
+    _state.update {
+      it.copy(
+        clientId = value,
+        clientSecret = if (it.clientSecretFromDefault && value.trim() != it.clientId.trim()) "" else it.clientSecret,
+        clientSecretFromDefault = false,
+        error = null,
+      )
+    }
   }
 
   fun onClientSecretChange(value: String) {
-    ConnectorStore.saveClientSecret(appContext, GMAIL_CONNECTOR_ID, value)
-    _state.update { it.copy(clientSecret = value, error = null) }
+    _state.update { it.copy(clientSecret = value, clientSecretFromDefault = false, error = null) }
   }
 
   /**
@@ -83,26 +91,40 @@ internal class GmailConnectorViewModel(private val appContext: Context) : ViewMo
     if (_state.value.connecting) return
     connectJob?.cancel()
     _state.update { it.copy(connecting = true, awaitingConsent = false, error = null) }
+    val currentAttempt = ++attempt
+    val config = GmailClient(_state.value.clientId.trim(), _state.value.clientSecret.trim())
     connectJob =
       viewModelScope.launch {
-        GmailAuth.connect(appContext, _state.value.clientId).collect { event ->
-          when (event) {
-            ConnectEvent.AwaitingConsent -> _state.update { it.copy(awaitingConsent = true) }
+        try {
+          GmailAuth.connect(appContext, config).collect { event ->
+            when (event) {
+              ConnectEvent.AwaitingConsent -> _state.update { it.copy(awaitingConsent = true) }
 
-            ConnectEvent.Connected -> {
-              reload()
-              _state.update { it.copy(connecting = false, awaitingConsent = false, error = null) }
+              ConnectEvent.Connected -> {
+                reload()
+                _state.update { it.copy(connecting = false, awaitingConsent = false, error = null) }
+              }
+
+              is ConnectEvent.Failed ->
+                _state.update { it.copy(connecting = false, awaitingConsent = false, error = event.message) }
             }
-
-            is ConnectEvent.Failed ->
-              _state.update { it.copy(connecting = false, awaitingConsent = false, error = event.message) }
           }
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (
+          @Suppress("TooGenericExceptionCaught") error: Exception,
+        ) {
+          _state.update { it.copy(error = "Gmail 连接未完成 [CONNECT_FAILED]，请检查网络和客户端配置后重试") }
+        } finally {
+          if (attempt == currentAttempt) _state.update { it.copy(connecting = false, awaitingConsent = false) }
         }
       }
   }
 
   /** 用户点「取消」或离开页面：停掉流程，回环监听器在 `finally` 里被关掉。 */
   fun cancelConnect() {
+    attempt++
+    if (connectJob?.isActive == true) GmailAuth.cancelPending(appContext)
     connectJob?.cancel()
     connectJob = null
     _state.update { it.copy(connecting = false, awaitingConsent = false) }
@@ -114,6 +136,7 @@ internal class GmailConnectorViewModel(private val appContext: Context) : ViewMo
    * 「断开」必须立刻生效，不能有这段窗口。
    */
   fun disconnect() {
+    cancelConnect()
     if (!GmailAuth.disconnect(appContext)) {
       _state.update { it.copy(error = "断开失败：本地存储不可用") }
       return
@@ -124,7 +147,7 @@ internal class GmailConnectorViewModel(private val appContext: Context) : ViewMo
 
   override fun onCleared() {
     // 页面销毁时别留下一个还在等的协程（Activity 作用域的 VM 活得比页面久）。
-    connectJob?.cancel()
+    cancelConnect()
     super.onCleared()
   }
 }

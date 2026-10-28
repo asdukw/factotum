@@ -12,6 +12,8 @@
     <!-- 任务期间保活（ColorOS 会冻结后台进程）；通知在 13+ 需要运行时权限，拒绝也允许 FGS 运行 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 用户主动 OAuth 授权期间等待回环回调，不做后台邮件采集。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- 语音输入：麦克风。音频只在本进程内存里活到识别完（本地模型，不出设备），
@@ -66,6 +68,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <service
+            android:name=".connector.GmailAuthorizationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-initiated OAuth browser consent: local loopback callback and token exchange for at most ten minutes; no background email collection." />
+        </service>
+
         <!-- 执行层：控件树优先、截图兜底；能力声明见 res/xml/accessibility_service_config.xml -->
         <service
             android:name=".accessibility.ZoneuAccessibilityService"
@@ -103,6 +114,7 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
                 <!-- 用户授予 / 撤销「闹钟和提醒」：重排，把窗口闹钟升级成精确闹钟。 -->

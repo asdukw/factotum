@@ -17,6 +17,7 @@ const LONG_BODY = 'x'.repeat(9000)
 const calls = []
 let bridgeReply = { ok: true, accessToken: ACCESS_TOKEN, expiresAt: Date.now() + 3600_000 }
 let gmailStatus = 200
+let gmailStatuses = []
 let listReply = { messages: [] }
 let labelsReply = { labels: [] }
 let writeReply = {}
@@ -41,7 +42,8 @@ globalThis.fetch = async (url, init = {}) => {
     const isSave = init.headers?.['x-connector-action'] === 'save_attachment'
     return jsonResponse(isSave ? saveReply : bridgeReply)
   }
-  if (gmailStatus >= 400) return jsonResponse({ error: { message: 'SECRET-ERROR-DETAIL' } }, gmailStatus)
+  const status = gmailStatuses.shift() ?? gmailStatus
+  if (status >= 400) return jsonResponse({ error: { message: 'SECRET-ERROR-DETAIL' } }, status)
   const path = new URL(href).pathname
   // 写操作：modify / drafts / send。读路径继续走下面的路由。
   if ((init.method ?? 'GET') !== 'GET') return jsonResponse(writeReply)
@@ -518,3 +520,31 @@ function threadMessage(id, { subject = '报价单', from = '张三 <zhangsan@exa
 }
 
 console.log(`ok: 读写边界与令牌隔离（${gmailCalls().length} 次 Gmail 调用；写工具全部经审批）`)
+
+// 401 恢复只重放 GET 一次；写请求只失效缓存，不重发。
+{
+  listReply = { messages: [] }
+  let start = calls.length
+  gmailStatuses = [401, 200]
+  await tools.get('mail_list').execute({})
+  let recent = calls.slice(start)
+  assert.equal(recent.filter(c => !c.href.includes('/action')).length, 2)
+  const recovery = recent.filter(c => c.href.includes('/action')).map(c => JSON.parse(c.body))
+  assert.equal(recovery[1].rejectedToken, ACCESS_TOKEN)
+  assert.equal(recovery[1].action, 'access_token')
+
+  start = calls.length
+  gmailStatuses = [401, 401]
+  await assert.rejects(() => tools.get('mail_list').execute({}), /HTTP 401/)
+  recent = calls.slice(start)
+  assert.equal(recent.filter(c => !c.href.includes('/action')).length, 2)
+  assert.equal(JSON.parse(recent.at(-1).body).action, 'invalidate_token')
+
+  start = calls.length
+  gmailStatuses = [401]
+  await assert.rejects(() => tools.get('mail_send').execute({ to: 'fixture@example.test', subject: 'fixture', body: 'fixture' }), /HTTP 401/)
+  recent = calls.slice(start)
+  assert.equal(recent.filter(c => !c.href.includes('/action')).length, 1, '发送邮件不得自动重放')
+  assert.equal(JSON.parse(recent.at(-1).body).action, 'invalidate_token')
+  assert.equal(gmailStatuses.length, 0)
+}

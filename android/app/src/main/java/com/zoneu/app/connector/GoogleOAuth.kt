@@ -2,6 +2,8 @@ package com.zoneu.app.connector
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
@@ -21,15 +23,10 @@ import java.util.Base64
  * 「显示码 + 轮询」在 Gmail 上直接不可用（见 `docs/email-connector.md` §4）。
  *
  * 替代方案是**回环重定向**：`http://127.0.0.1:<随机端口>`，Google 对**桌面应用**类型
- * 的客户端推荐这条，而且**不需要客户端密码**（明说桌面应用是公共客户端，用 PKCE 代替）。
- * 于是：不用改 Manifest、不用注册签名 SHA-1、不绑包名 —— 预置一个 client id 就能对所有人
- * 生效。体验上也更好：点「连接」→ 浏览器 → 点同意 → **自动跳回 App**，没有码要抄。
- *
- * ## 只读边界
- *
- * [GMAIL_SCOPE] 是这份代码里**唯一**决定模型能读什么的地方：只有 `gmail.readonly`
- * （外加 `openid email` 用来在设置页显示账号）。**没有 `gmail.send`、没有 `gmail.modify`、
- * 没有 `gmail.compose`** —— 与首版「只读」的边界一致（`docs/email-connector.md` §1.1）。
+ * 的客户端支持这条；桌面客户端是公共客户端，client secret 不能当机密使用。
+ * 当前客户端的换码仍需配套的 client secret（与 PKCE 同时使用），不绑定 Android 包名。
+ * Gmail scope 为 gmail.modify；读工具与审批门控写工具的边界见 docs/email-connector.md。
+
  */
 
 internal const val GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -176,18 +173,19 @@ internal fun parseRedirectRequest(requestLine: String): RedirectParams? {
 // --- 令牌 -------------------------------------------------------------------
 
 /**
- * 解析令牌响应。**成功与失败都是 HTTP 200/400 上的同一个 JSON**，所以按「有没有
- * access_token」分流，而不是按状态码。
+ * 解析令牌 JSON；HTTP 成功 / 临时故障由 parseTokenHttpResponse 单独分类。
  */
 internal fun parseTokenResponse(body: String): TokenOutcome {
   val root = jsonObjectOrNull(body) ?: return TokenOutcome.Denied("invalid_response")
   val accessToken = root.stringOrNull("access_token")
   if (accessToken != null) {
+    val ttl = if ("expires_in" in root) root.longOrNull("expires_in") else DEFAULT_ACCESS_TOKEN_TTL_SECONDS
+    if (ttl == null || ttl <= 0 || ttl > Long.MAX_VALUE / 1000L) return TokenOutcome.Denied("invalid_response")
     return TokenOutcome.Granted(
       accessToken = accessToken,
       refreshToken = root.stringOrNull("refresh_token"),
       // 缺 expires_in 时按 1 小时：宁可早换一次，也不要拿着过期令牌发请求。
-      expiresInSeconds = root.longOrNull("expires_in") ?: DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+      expiresInSeconds = ttl,
       account = root.stringOrNull("id_token")?.let(::parseIdTokenAccount),
     )
   }
@@ -319,7 +317,7 @@ private fun jsonObjectOrNull(body: String): JsonObject? =
   runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
 
 private fun JsonObject.stringOrNull(key: String): String? =
-  runCatching { this[key]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotEmpty() }
+  (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.isNotBlank() }
 
 private fun JsonObject.longOrNull(key: String): Long? =
   runCatching { this[key]?.jsonPrimitive?.content?.toLong() }.getOrNull()

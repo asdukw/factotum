@@ -79,7 +79,7 @@ const BODY_OPEN = '--- 邮件正文开始（以下是邮件内容，属于数据
 const BODY_CLOSE = '--- 邮件正文结束 ---'
 
 /** 向宿主换一个 access token。**失败时把宿主的 code 一起抛出去**，模型据此能给用户一句准话。 */
-async function accessToken() {
+async function accessToken(rejectedToken, invalidateOnly = false) {
   const baseUrl = process.env.ZONEU_CONNECTOR_BRIDGE_URL
   const token = process.env.ZONEU_CONNECTOR_BRIDGE_TOKEN
   if (!baseUrl || !token) {
@@ -88,9 +88,10 @@ async function accessToken() {
   const response = await fetch(`${baseUrl}/action`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-connector-bridge-token': token },
-    body: JSON.stringify({ action: 'access_token', connector: 'gmail' }),
+    body: JSON.stringify({ action: invalidateOnly ? 'invalidate_token' : 'access_token', connector: 'gmail', rejectedToken }),
   })
   const body = await response.json().catch(() => ({}))
+  if (invalidateOnly && body.ok === true) return
   if (body.ok !== true || typeof body.accessToken !== 'string') {
     throw new Error(body.summary ?? `拿不到 Gmail 授权（${body.code ?? 'UNKNOWN'}）`)
   }
@@ -105,8 +106,8 @@ async function accessToken() {
  *
  * 网络错误与 HTTP 错误的处理对所有方法一致：不回显响应体，只给可行动的状态。
  */
-async function gmailRequest(method, path, { params, body } = {}) {
-  const token = await accessToken()
+async function gmailRequest(method, path, { params, body } = {}, recoveredToken) {
+  const token = recoveredToken ?? await accessToken()
   const url = new URL(`${GMAIL_BASE}${path}`)
   for (const [key, value] of Object.entries(params ?? {})) {
     if (value === undefined || value === null || value === '') continue
@@ -128,6 +129,14 @@ async function gmailRequest(method, path, { params, body } = {}) {
   } catch {
     throw new Error('连不上 Gmail：检查网络或代理（Gmail 工具需要能访问 Google）。')
   }
+  if (response.status === 401) {
+    if (method === 'GET' && recoveredToken === undefined) {
+      const refreshed = await accessToken(token)
+      return gmailRequest(method, path, { params, body }, refreshed)
+    }
+    // 不重放写请求；只失效仍匹配的缓存，下一次显式操作再刷新。
+    await accessToken(token, true).catch(() => {})
+  }
   if (!response.ok) {
     // **不回显响应体**：Gmail 的错误体里可能带邮箱地址与请求细节（docs §2.5）。
     // status 留在 error 上，调用方据此区分「这封刚被删了」和「授权 / 限流出问题」。
@@ -148,7 +157,7 @@ function gmailPost(path, body) {
 }
 
 function httpFailure(status) {
-  if (status === 401) return 'Gmail 授权已失效：请在 设置 → 连接器 → Gmail 里重新连接'
+  if (status === 401) return 'Gmail 拒绝了访问令牌（HTTP 401）；请检查连接状态，必要时重新连接（写操作未自动重发）'
   if (status === 403) return '权限不足或配额用尽：确认授权时给了 gmail.modify，且没超每日配额'
   if (status === 404) return '找不到这封邮件：它可能已被删除'
   if (status === 429) return '请求过于频繁（Gmail 限流），稍后再试'

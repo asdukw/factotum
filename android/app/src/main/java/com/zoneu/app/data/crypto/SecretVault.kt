@@ -28,16 +28,32 @@ internal class SecretVault(
   private val prefsName: String,
   private val keyAlias: String,
 ) {
-  /**
-   * 读出秘密。没存过、或密文解不开（换机 / Keystore 被清 / 系统还原）都返回 null，
-   * **不抛异常** —— 调用方那边有构建期默认值兜底，读不到不该让界面崩。
-   */
-  fun get(context: Context): String? {
-    val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-    val iv = prefs.getString(PREF_IV, null) ?: return null
-    val wrapped = prefs.getString(PREF_WRAPPED, null) ?: return null
-    return runCatching { decrypt(iv, wrapped) }.getOrNull()?.takeIf { it.isNotEmpty() }
+  /** 不暴露异常原文；调用方可区分从未保存与已有密文不可读。 */
+  sealed interface ReadResult {
+    data object Missing : ReadResult
+
+    data class Present(val value: String) : ReadResult
+
+    data object Unreadable : ReadResult
   }
+
+  fun get(context: Context): String? = (read(context) as? ReadResult.Present)?.value
+
+  /** 读失败保留密文；读取绝不创建替代 key，避免掩盖 Keystore 丢失。 */
+  fun read(context: Context): ReadResult =
+    runCatching {
+      val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+      val iv = prefs.getString(PREF_IV, null)
+      val wrapped = prefs.getString(PREF_WRAPPED, null)
+      when {
+        iv == null && wrapped == null -> ReadResult.Missing
+
+        iv == null || wrapped == null -> ReadResult.Unreadable
+
+        else -> decrypt(iv, wrapped).takeIf { it.isNotEmpty() }
+          ?.let { ReadResult.Present(it) } ?: ReadResult.Unreadable
+      }
+    }.getOrDefault(ReadResult.Unreadable)
 
   /** 写入一条秘密。传空串等于清除。返回是否落盘成功。 */
   fun put(context: Context, secret: String): Boolean {
@@ -62,16 +78,21 @@ internal class SecretVault(
   private fun decrypt(ivEncoded: String, wrappedEncoded: String): String {
     val cipher = Cipher.getInstance(TRANSFORMATION)
     val iv = Base64.decode(ivEncoded, Base64.NO_WRAP)
-    cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+    cipher.init(Cipher.DECRYPT_MODE, existingKey() ?: error("KEY_MISSING"), GCMParameterSpec(GCM_TAG_BITS, iv))
     val plain = cipher.doFinal(Base64.decode(wrappedEncoded, Base64.NO_WRAP))
     return String(plain, Charsets.UTF_8)
   }
 
-  private fun secretKey(): SecretKey {
+  private fun existingKey(): SecretKey? {
+    val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+    return (keyStore.getEntry(keyAlias, null) as? KeyStore.SecretKeyEntry)?.secretKey
+  }
+
+  private fun secretKey(): SecretKey = synchronized(keyLock) {
     val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     val existing = keyStore.getEntry(keyAlias, null)
     if (existing is KeyStore.SecretKeyEntry) {
-      return existing.secretKey
+      return@synchronized existing.secretKey
     }
     val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
     generator.init(
@@ -83,10 +104,11 @@ internal class SecretVault(
         .setRandomizedEncryptionRequired(true)
         .build(),
     )
-    return generator.generateKey()
+    generator.generateKey()
   }
 
   internal companion object {
+    private val keyLock = Any()
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val PREF_IV = "secret_iv"

@@ -2,8 +2,8 @@ package com.zoneu.app.ui.settings
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
-import com.zoneu.app.connector.ConnectorStore
 import com.zoneu.app.connector.GMAIL_CONNECTOR_ID
+import com.zoneu.app.connector.GmailAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,12 +40,12 @@ internal class ConnectorsViewModel(private val appContext: Context) : ViewModel(
   }
 
   private fun entries(): List<ConnectorEntry> {
-    val gmail = ConnectorStore.status(appContext, GMAIL_CONNECTOR_ID)
+    val gmail = GmailAuth.status(appContext)
     return listOf(
       ConnectorEntry(
         id = GMAIL_CONNECTOR_ID,
         title = "Gmail",
-        subtitle = if (gmail.connected) "已连接 · 只读工具" else "列出、检索、读取邮件（只读）",
+        subtitle = if (gmail.connected) "已连接 · 读取与审批后写入" else "读取邮件与审批后写入 / 发送",
         connected = gmail.connected,
         account = gmail.account,
       ),

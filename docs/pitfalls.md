@@ -76,7 +76,7 @@
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
 | 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
 | 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |
-| 浏览器点完同意后 App 没反应 | 授权全流程真机已跑通；遇到时先看 stderr 里回环监听器有没有收到请求（部分浏览器拦 `127.0.0.1`）。另：授权期间 App 进程被杀就得重来（最长 10 分钟持有 socket） |
+| Google 同意后卡在 `127.0.0.1` / `ERR_CONNECTION_TIMED_OUT` | 这是手机本机 OAuth 回调，不等于 Google 网络不通。ColorOS 实测前台服务运行时仍被 HANS 冻结；先尝试允许 zoneu 后台活动，再取消旧连接并重新授权，不反复刷新旧回调、不清数据。后台设置的效果待验证；完整 Q&A 与诊断边界见 [本机回调排查 Q&A](Q&A.md#local-callback-timeout) |
 | 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
 | 邮件工具整个不见了 / dsh 起不来 | 插件名三处不一致（profile 的 insert / `bundle-dsh.ps1` 的 Package / 插件 `package.json`）→ 有单测钉住；改完重跑 `bundle-dsh.ps1` |
 | 想确认邮件正文没进日志 | `adb logcat -s ZoneuConnector ZoneuAudit` —— 只应有动作名与失败码，不该有主题 / 发件人 / 正文 |

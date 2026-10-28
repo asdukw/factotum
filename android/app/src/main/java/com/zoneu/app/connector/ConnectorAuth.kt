@@ -17,6 +17,6 @@ internal sealed interface ConnectEvent {
 internal sealed interface AccessTokenResult {
   data class Ok(val accessToken: String, val expiresAtMillis: Long) : AccessTokenResult
 
-  /** [code]：`NOT_CONFIGURED`（没填客户端 id）/ `NOT_CONNECTED`（没授权）/ `REFRESH_FAILED`。 */
+  /** [code]：固定诊断码见 tokenFailure；不携带服务端错误描述或任何凭据。 */
   data class Unavailable(val code: String, val summary: String) : AccessTokenResult
 }

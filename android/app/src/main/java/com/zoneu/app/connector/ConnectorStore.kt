@@ -53,17 +53,24 @@ internal data class ConnectorStatus(
   val connected: Boolean = false,
   /** 授权时拿到的账号标识（`id_token` 里的 `preferred_username` 一类）；解不出来时为 null。 */
   val account: String? = null,
+  val problem: String? = null,
 )
 
 internal object ConnectorStore {
   fun status(context: Context, connectorId: String): ConnectorStatus {
     val stored = clientId(context, connectorId)
     val fallback = defaultClientId(connectorId)
+    val credential = credentials(context, connectorId).read()
     return ConnectorStatus(
       clientId = stored.ifBlank { fallback },
       clientIdFromDefault = stored.isBlank() && fallback.isNotBlank(),
-      connected = vault(connectorId).has(context),
-      account = prefs(context).getString(connectorId + SUFFIX_ACCOUNT, null),
+      connected = credential is GmailCredentialRead.Present,
+      account = if (credential is GmailCredentialRead.Present) {
+        credential.credential.account
+      } else {
+        prefs(context).getString(connectorId + SUFFIX_ACCOUNT, null)
+      },
+      problem = if (credential == GmailCredentialRead.Unreadable) "CREDENTIAL_UNREADABLE" else null,
     )
   }
 
@@ -92,7 +99,9 @@ internal object ConnectorStore {
 
   /** 生效的客户端密码：用户填过就用用户的，否则用预置的那份。 */
   fun effectiveClientSecret(context: Context, connectorId: String): String =
-    clientSecret(context, connectorId).ifBlank { defaultClientSecret(connectorId) }
+    clientSecret(context, connectorId).ifBlank {
+      if (effectiveClientId(context, connectorId) == defaultClientId(connectorId)) defaultClientSecret(connectorId) else ""
+    }
 
   /**
    * 保存客户端 id。空串等于清除（回落到「未配置」），不是「不修改」。
@@ -112,7 +121,7 @@ internal object ConnectorStore {
   }
 
   fun refreshToken(context: Context, connectorId: String): String? =
-    vault(connectorId).get(context)
+    (credentials(context, connectorId).read() as? GmailCredentialRead.Present)?.credential?.refreshToken
 
   /** 写入 refresh token。空串走 [clearCredentials] 的语义（清除），别把「没拿到」当「存空」。 */
   fun saveRefreshToken(context: Context, connectorId: String, token: String): Boolean {
@@ -125,6 +134,35 @@ internal object ConnectorStore {
       .edit()
       .putString(connectorId + SUFFIX_ACCOUNT, account?.trim()?.takeIf { it.isNotEmpty() })
       .commit()
+
+  fun gmailClient(context: Context): GmailClient = GmailClient(
+    effectiveClientId(context, GMAIL_CONNECTOR_ID),
+    effectiveClientSecret(context, GMAIL_CONNECTOR_ID),
+  )
+
+  fun saveClient(context: Context, config: GmailClient): Boolean =
+    prefs(context).edit()
+      .putString(GMAIL_CONNECTOR_ID + SUFFIX_CLIENT_ID, config.id.trim().ifEmpty { null })
+      .putString(GMAIL_CONNECTOR_ID + SUFFIX_CLIENT_SECRET, config.secret.trim().ifEmpty { null })
+      .commit()
+
+  fun credentials(context: Context, connectorId: String = GMAIL_CONNECTOR_ID): GmailCredentialStore =
+    object : GmailCredentialStore {
+      override fun read(): GmailCredentialRead = when (val stored = vault(connectorId).read(context)) {
+        SecretVault.ReadResult.Missing -> GmailCredentialRead.Missing
+
+        SecretVault.ReadResult.Unreadable -> GmailCredentialRead.Unreadable
+
+        is SecretVault.ReadResult.Present -> decodeGmailCredential(
+          stored.value,
+          prefs(context).getString(connectorId + SUFFIX_ACCOUNT, null),
+        )
+      }
+
+      override fun save(credential: GmailCredential): Boolean = vault(connectorId).put(context, encodeGmailCredential(credential))
+
+      override fun clear(): Boolean = clearCredentials(context, connectorId)
+    }
 
   /**
    * 断开：清凭据 + 清账号标识。**客户端 id 留着** —— 用户重连时不该再填一遍，

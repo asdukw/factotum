@@ -129,7 +129,8 @@ object ConnectorBridgeServer {
       }.getOrNull()
     val action = body?.string("action") ?: return errorJson("BAD_REQUEST", "非法 JSON 或缺 action")
     return when (action) {
-      "access_token" -> accessToken(body.string("connector"))
+      "access_token" -> accessToken(body.string("connector"), body.string("rejectedToken"))
+      "invalidate_token" -> invalidateToken(body.string("connector"), body.string("rejectedToken"))
       else -> errorJson("UNKNOWN_ACTION", "未知 action：$action")
     }
   }
@@ -243,13 +244,13 @@ object ConnectorBridgeServer {
    * 令牌本身**不落日志**，只记连接器名、成功与否与失败码
    * （与设备桥「只记动作与结构化结果」同一条规矩）。
    */
-  private fun accessToken(connectorId: String?): String {
+  private fun accessToken(connectorId: String?, rejectedToken: String?): String {
     val context = appContext ?: return errorJson("BRIDGE_FAILED", "连接器桥尚未初始化")
     val id = connectorId?.trim().orEmpty()
     if (id.isEmpty()) return errorJson("BAD_REQUEST", "缺少 connector")
     val result =
       when (id) {
-        GMAIL_CONNECTOR_ID -> runBlocking { GmailAuth.accessToken(context) }
+        GMAIL_CONNECTOR_ID -> runBlocking { GmailAuth.accessToken(context, rejectedToken) }
         else -> return errorJson("UNKNOWN_CONNECTOR", "未知连接器：$id")
       }
     return when (result) {
@@ -268,6 +269,13 @@ object ConnectorBridgeServer {
         errorJson(result.code, result.summary)
       }
     }
+  }
+
+  private fun invalidateToken(connectorId: String?, rejectedToken: String?): String {
+    val context = appContext ?: return errorJson("BRIDGE_FAILED", "连接器桥尚未初始化")
+    if (connectorId != GMAIL_CONNECTOR_ID || rejectedToken.isNullOrBlank()) return errorJson("BAD_REQUEST", "缺少 Gmail token 标识")
+    GmailAuth.invalidate(context, rejectedToken)
+    return "{\"ok\":true}"
   }
 
   private fun readLine(input: BufferedInputStream): String? {

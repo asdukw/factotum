@@ -251,9 +251,10 @@ secret checks → release).
   and refresh tokens are short-lived (about 7 days in practice). To use Gmail, replace the client ID
   and secret in Settings. Authorization also requires the app process to stay alive (up to 10
   minutes).
-- Scheduled tasks, alarms and calendar prefill are not verified on a physical device. Scheduled
-  tasks are daily-only; exact alarms need a special permission on Android 12+, and Android 14
-  denies it by default for new installs.
+- Scheduled tasks support daily, weekly, monthly, yearly and a specific date once. The user
+  reported device verification for the current changes (2026-10-28); this is not evidence for
+  every alarm/calendar path. Exact alarms need a special permission on Android 12+, and
+  Android 14 denies it by default for new installs.
 - Cross-app long tasks rely on a foreground service; ColorOS background freezing still has edge
   cases.
 - The project was renamed from Memex on 2026-10-12, including `applicationId`. The old
@@ -263,6 +264,7 @@ secret checks → release).
 
 | Document | Contents |
 |---|---|
+| [docs/Q&A.md](docs/Q&A.md) | Q&A: common issues and troubleshooting (Chinese) |
 | [AGENTS.md](AGENTS.md) | Project memory for coding agents: hard rules, commands, change entry points, full doc index |
 | [docs/dsh-android.md](docs/dsh-android.md) | Agent runtime selection and measurements |
 | [docs/android-accessibility.md](docs/android-accessibility.md) | Execution layer, visual path, text injection |

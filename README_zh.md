@@ -54,7 +54,7 @@ v0.5.0 起它多了**第二条获取信息的通道**：连接器（首版 Gmail
 - **联网搜索**：`web_search` / `web_fetch` 走模型服务商自带的服务器端搜索 ——
   不新增厂商、不新增凭据；网页正文标记为**外部不可信数据**。
 - **agent 配套能力**：`ask_user_question`、长期记忆、文件读写 / 编辑与 `glob` / `grep`、
-  待办、每天执行的定时任务、系统 intent 辅助工具 `set_alarm` / `add_calendar_event`，
+  待办、对话创建的定时任务、系统 intent 辅助工具 `set_alarm` / `add_calendar_event`，
   以及支持续传与签名校验的应用内更新。
 - **落盘加密**：聊天记录在 Room + SQLCipher 里，数据库口令由 Keystore 封装。
 
@@ -231,8 +231,8 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
   且 refresh token 寿命受限（实测 7 天，到期需重连）。别人装这个包想用 Gmail，
   得在设置里换成自己的 OAuth 客户端 ID 与密码。授权期间还要求 App 进程活着
   （最长 10 分钟持有回环 socket），进程被杀就得重来。
-- **定时任务、闹钟与日程尚未真机验证**。定时任务只支持「每天一次」；精确闹钟在 Android 12+
-  需要单独授权，Android 14 对新装应用默认拒绝。
+- 定时任务支持每天 / 每周 / 每月 / 每年 / 指定日期单次。用户于 2026-10-28 反馈本轮改动已真机验收，
+  不代表所有闹钟与日程路径都有独立验证记录；精确闹钟在 Android 12+ 需要单独授权，Android 14 对新装应用默认拒绝。
 - 跨 App 长任务依赖前台服务保活，ColorOS 的后台冻结仍有边界情况。
 - 项目原名 Memex，2026-10-12 更名（含 `applicationId`）。旧包 `com.memex.app`
   若还在设备上，其数据新包读不到，卸载即可。
@@ -241,6 +241,7 @@ CI 分四个 workflow：`ci.yml`（静态检查 + 单测 + 离线自检）、`as
 
 | 文件 | 内容 |
 |---|---|
+| [docs/Q&A.md](docs/Q&A.md) | Q&A：常见问题与处理办法 |
 | [AGENTS.md](AGENTS.md) | 给 coding agent 的项目记忆：硬规则、命令、改动入口、完整文档索引 |
 | [docs/dsh-android.md](docs/dsh-android.md) | agent runtime 选型与各阶段实测 |
 | [docs/android-accessibility.md](docs/android-accessibility.md) | 执行层、视觉路径、文本注入通道 |

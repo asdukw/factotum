@@ -107,13 +107,25 @@ object ZoneuDatabaseProvider {
       }
     }
 
+  internal val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `schedule_type` TEXT NOT NULL DEFAULT 'daily'")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `weekday` INTEGER")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `day_of_month` INTEGER")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `date` TEXT")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `month` INTEGER")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `revision` TEXT NOT NULL DEFAULT ''")
+      db.execSQL("ALTER TABLE `scheduled_task` ADD COLUMN `next_run_at` INTEGER")
+    }
+  }
+
   fun open(context: Context): ZoneuDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, ZoneuDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

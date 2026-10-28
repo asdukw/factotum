@@ -1,5 +1,8 @@
 package com.zoneu.app.device
 
+import com.zoneu.app.schedule.ScheduleRule
+import com.zoneu.app.schedule.ScheduleRulePatch
+
 /**
  * 设备执行层的原子动作。App 无关：工具循环把 LLM 的 function call 映射到这里，
  * 具体实现（无障碍 / 将来的其它执行器）不参与语义判断。
@@ -142,16 +145,17 @@ sealed interface DeviceAction {
   data class DeleteCalendarEvent(val eventId: Long) : DeviceAction
 
   /**
-   * 语义化创建定时任务：每天 [hour]:[minute] 让 agent 跑 [prompt]。
+   * 语义化创建定时任务：按 [rule] 在 [hour]:[minute] 让 agent 跑 [prompt]。
    *
    * 模型把「每天早上八点提醒我看天气」拆成时间与指令，这里只负责落库与排闹钟。
-   * 手机上只有「每天一次」这种粒度（见 `docs/scheduled-tasks.md`）。
+   * 支持每日、每周、每月和指定日期单次（见 `docs/scheduled-tasks.md`）。
    */
   data class CreateScheduledTask(
     val title: String,
     val prompt: String,
     val hour: Int,
     val minute: Int,
+    val rule: ScheduleRule = ScheduleRule(),
   ) : DeviceAction
 
   /** 列出定时任务。id 是改 / 删的前置 —— 不让模型按标题猜。 */
@@ -165,6 +169,7 @@ sealed interface DeviceAction {
     val hour: Int? = null,
     val minute: Int? = null,
     val enabled: Boolean? = null,
+    val rule: ScheduleRulePatch = ScheduleRulePatch(),
   ) : DeviceAction
 
   /** 删除定时任务。破坏性操作，必须经审批闸门。 */

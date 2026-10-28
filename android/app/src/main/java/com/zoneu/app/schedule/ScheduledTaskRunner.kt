@@ -3,40 +3,61 @@ package com.zoneu.app.schedule
 import android.content.Context
 import android.util.Log
 import com.zoneu.app.ZoneuApplication
+import com.zoneu.app.data.db.ScheduledTaskEntity
 import com.zoneu.app.node.NodeRuntime
+import com.zoneu.app.node.NodeTaskService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
-/**
- * 跑一条定时任务：拉起运行时、提交那句话、把结果记回表里、排下一次。
- *
- * **只记「成功 / 失败码 + 时间」，不记产出**：任务产出会进会话库（用户能看到），
- * 而这张表是给列表页看的 —— 多存一份正文就是多一处会泄漏屏幕内容的地方
- * （与日志「只记计数 / 类名 / 坐标」同一条规矩）。
- *
- * **错过的任务不补跑**：设备关机或深度休眠期间错过的那些，重新排期时按「今天这个点还没到
- * 就今天、否则明天」算 —— 也就是只跑下一次。开机瞬间连跑十条积压的任务比漏掉更糟。
- */
+/** alarm 的发生时刻和编辑版本必须同时匹配；领取清除 next_run_at，重复广播不再执行。 */
+internal fun canClaim(task: ScheduledTaskEntity, revision: String, planned: Long, now: Long): Boolean =
+  task.enabled && task.revision == revision && task.nextRunAt == planned && planned > 0 && now >= planned
+
 object ScheduledTaskRunner {
   private const val TAG = "ZoneuSchedule"
 
-  suspend fun run(context: Context, id: String) {
+  suspend fun run(context: Context, id: String, revision: String, planned: Long, onForeground: () -> Unit = {}) {
     val app = context.applicationContext as? ZoneuApplication ?: return
     val dao = app.database.scheduledTasks()
-    val task = dao.byId(id) ?: return
-    if (!task.enabled) return
-
-    val startedAt = System.currentTimeMillis()
-    val error =
-      runCatching {
-        NodeRuntime.initialize(context)
-        NodeRuntime.runTask(NodeRuntime.persistentSessionId(context), task.prompt)
+    val started = System.currentTimeMillis()
+    val task = scheduleGate.withLock {
+      val current = dao.byId(id) ?: return@withLock null
+      if (!canClaim(current, revision, planned, started)) return@withLock null
+      if (dao.claim(id, revision, planned, started) == 1) current else null
+    } ?: return
+    var foreground = false
+    var error: String? = null
+    try {
+      NodeTaskService.start(app)
+      foreground = true
+      onForeground()
+      NodeRuntime.initialize(app)
+      val outcome = NodeRuntime.runTask(NodeRuntime.persistentSessionId(app), task.prompt)
+      // 不把模型错误描述写入结果码或日志，避免混入用户内容。
+      if (!outcome.ok) error = "TURN_FAILED"
+    } catch (cancelled: CancellationException) {
+      error = "TASK_CANCELLED"
+      throw cancelled
+    } catch (
+      @Suppress("TooGenericExceptionCaught") failure: Exception,
+    ) {
+      Log.w(TAG, "task failed category=${failure.javaClass.simpleName}")
+      error = if (foreground) "TASK_FAILED" else "FOREGROUND_SERVICE_FAILED"
+    } finally {
+      withContext(NonCancellable) {
+        try {
+          scheduleGate.withLock {
+            dao.finish(id, revision, started, error)
+            // 编辑动作已负责自己的排期；不以运行前旧快照恢复停用或删除的任务。
+            dao.byId(id)?.takeIf { it.revision == revision }?.let { ScheduledTaskScheduler.schedule(app, it) }
+          }
+        } finally {
+          if (foreground) NodeTaskService.stop(app)
+        }
       }
-        .map { outcome -> if (outcome.ok) null else outcome.turnErrors.firstOrNull() ?: "TURN_FAILED" }
-        .getOrElse { throwable -> throwable.javaClass.simpleName }
-
-    dao.recordRun(id, startedAt, error)
-    // 一次性闹钟响完就没了 —— 在这里补下一次。放到 runner 里是为了「跑没跑成都排下一次」。
-    ScheduledTaskScheduler.schedule(context, task)
-    // 只记 id 与结果码：prompt 里可能有用户的私人内容。
-    Log.i(TAG, "task $id done error=${error ?: "-"}")
+      Log.i(TAG, "task $id done error=${error ?: "-"}")
+    }
   }
 }

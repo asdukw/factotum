@@ -5,10 +5,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import com.zoneu.app.node.NodeTaskService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 闹钟响了：跑那条定时任务。
@@ -22,13 +23,20 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != ACTION_FIRE) return
     val id = intent.getStringExtra(ScheduledTaskScheduler.EXTRA_ID) ?: return
+    val revision = intent.getStringExtra(ScheduledTaskScheduler.EXTRA_REVISION) ?: return
+    val planned = intent.getLongExtra(ScheduledTaskScheduler.EXTRA_PLANNED, 0)
     val app = context.applicationContext
-    NodeTaskService.start(app)
+    val pending = goAsync()
+    val released = AtomicBoolean(false)
+
+    fun release() {
+      if (released.compareAndSet(false, true)) pending.finish()
+    }
     CoroutineScope(Dispatchers.IO).launch {
       try {
-        ScheduledTaskRunner.run(app, id)
+        ScheduledTaskRunner.run(app, id, revision, planned, ::release)
       } finally {
-        NodeTaskService.stop(app)
+        release()
       }
     }
   }
@@ -48,6 +56,7 @@ class ScheduledTaskBootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     val relevant =
       intent.action == Intent.ACTION_BOOT_COMPLETED ||
+        intent.action == Intent.ACTION_MY_PACKAGE_REPLACED ||
         intent.action == Intent.ACTION_TIME_CHANGED ||
         intent.action == Intent.ACTION_TIMEZONE_CHANGED ||
         // 用户刚在系统设置里打开了「闹钟和提醒」：把已有的窗口闹钟重排成精确闹钟。
@@ -58,10 +67,15 @@ class ScheduledTaskBootReceiver : BroadcastReceiver() {
         )
     if (!relevant) return
     val app = context.applicationContext
+    val pending = goAsync()
     CoroutineScope(Dispatchers.IO).launch {
-      runCatching { ScheduledTaskScheduler.scheduleAll(app) }
-      // 开机 / 改时间也会清掉非精确闹钟 —— 权限提醒的轮询一并重排。
-      runCatching { ExactAlarmMonitor.schedule(app, force = true) }
+      try {
+        runCatching { scheduleGate.withLock { ScheduledTaskScheduler.scheduleAll(app) } }
+        // 开机 / 改时间也会清掉非精确闹钟 —— 权限提醒的轮询一并重排。
+        runCatching { ExactAlarmMonitor.schedule(app, force = true) }
+      } finally {
+        pending.finish()
+      }
     }
   }
 }

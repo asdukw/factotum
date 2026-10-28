@@ -212,7 +212,7 @@ Model-visible tools (19): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,durat
 `type_text`, `press(back|home|recents|enter)`, `launch_app(query)`, `swipe(direction)`,
 `set_alarm(hour,minute,label?)`, `add_calendar_event(...)`, `list_calendar_events(begin,end)`,
 `update_calendar_event(event_id,...)`, `delete_calendar_event(event_id)`,
-`schedule_task(title,prompt,hour,minute)`, `list_scheduled_tasks`, `update_scheduled_task(id,...)`,
+`schedule_task(title,prompt,hour,minute,schedule_type?,...)`, `list_scheduled_tasks`, `update_scheduled_task(id,...)`,
 `delete_scheduled_task(id)`. `run_command` runs inside the embedded Debian (registered when the host sets
 `ZONEU_PROOT=1`; the launcher maps it to the external plugin’s `FACTOTUM_PROOT` contract); with a mail connector add
 nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_thread`,
@@ -222,7 +222,8 @@ nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_
 - **Scheduled tasks are created by conversation, not by a settings form.** The model parses
   "每天早上八点提醒我看天气" into `schedule_task(title,prompt,hour,minute)`; the settings entry is
   gone. Writes (`schedule_task` / `update_scheduled_task` / `delete_scheduled_task`) go through
-  the approval seam. Only daily HH:mm exists; no cron. See `docs/scheduled-tasks.md`.
+  the approval seam. Supports daily, weekly, monthly, yearly and a specific date once; no cron.
+  Missing calendar dates are skipped, not clamped; once tasks disable on claim. See `docs/scheduled-tasks.md`.
 - **Calendar and alarms never go through the UI.** `ContentResolver` + `AlarmClock` intents
   (`device/SystemIntents.kt`), silent: no editor, no system confirmation. Editing an event by
   tapping the Calendar app cost 27 UI actions for one change — `list_calendar_events` first, then

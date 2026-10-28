@@ -160,24 +160,14 @@ object DeviceBridgeServer {
             action.prompt,
             action.hour,
             action.minute,
+            action.rule,
           )
         }
 
       is DeviceAction.ListScheduledTasks ->
         runBlocking { ScheduledTaskStore.list(context, action.includeDisabled) }
 
-      is DeviceAction.UpdateScheduledTask ->
-        runBlocking {
-          ScheduledTaskStore.update(
-            context,
-            action.id,
-            action.title,
-            action.prompt,
-            action.hour,
-            action.minute,
-            action.enabled,
-          )
-        }
+      is DeviceAction.UpdateScheduledTask -> runBlocking { ScheduledTaskStore.update(context, action) }
 
       is DeviceAction.DeleteScheduledTask ->
         runBlocking { ScheduledTaskStore.delete(context, action.id) }
@@ -372,13 +362,13 @@ object DeviceBridgeServer {
 
       "delete_calendar_event" -> root.long("event_id")?.let(DeviceAction::DeleteCalendarEvent)
 
-      "schedule_task" -> createScheduledTask(root)
+      "schedule_task" -> parseScheduledTaskCreate(root)
 
       "list_scheduled_tasks" ->
         DeviceAction.ListScheduledTasks(includeDisabled = root.boolean("include_disabled") != false)
 
       "update_scheduled_task" ->
-        root.string("id")?.takeIf { it.isNotBlank() }?.let { updateScheduledTask(it, root) }
+        root.string("id")?.takeIf { it.isNotBlank() }?.let { parseScheduledTaskUpdate(it, root) }
 
       "delete_scheduled_task" ->
         root.string("id")?.takeIf { it.isNotBlank() }?.let(DeviceAction::DeleteScheduledTask)
@@ -405,26 +395,6 @@ object DeviceBridgeServer {
       location = root.string("location"),
       description = root.string("description"),
       reminderMinutes = root.int("reminder_minutes")?.takeIf { it >= 0 },
-    )
-
-  /** 定时任务参数：四个必填字段，缺一个整条动作就不成立。 */
-  private fun createScheduledTask(root: JsonObject): DeviceAction.CreateScheduledTask? {
-    val title = root.string("title")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val prompt = root.string("prompt")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val hour = root.int("hour") ?: return null
-    val minute = root.int("minute") ?: return null
-    return DeviceAction.CreateScheduledTask(title, prompt, hour, minute)
-  }
-
-  /** 修改定时任务：除 id 外全是可空字段，null = 这一项不改。 */
-  private fun updateScheduledTask(id: String, root: JsonObject): DeviceAction.UpdateScheduledTask =
-    DeviceAction.UpdateScheduledTask(
-      id = id,
-      title = root.string("title"),
-      prompt = root.string("prompt"),
-      hour = root.int("hour"),
-      minute = root.int("minute"),
-      enabled = root.boolean("enabled"),
     )
 
   /** 日程参数单独一个函数：四个可空字段凑一个对象，写成嵌套 `let` 会撞 detekt 的嵌套深度。 */

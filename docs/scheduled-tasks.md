@@ -1,123 +1,66 @@
-# 定时任务：Android 上没有 cron，我们用什么
+# 定时任务
 
-> 状态：**代码完成、门禁全绿，真机未验**（2026-10-25：改为对话语义化创建，设置页入口已删）。
-> 验证要点在 §6。
-> 本文是 `AGENTS.md` §「安全与隐私红线」第 6 条要求的前置文档：定时任务是**第一条让 agent
-> 在用户不在场时自己动起来**的能力，边界与失败行为必须先写清楚。
+定时任务通过对话创建、查询、修改、停用和删除，没有设置表单。支持每天、每周、每月、每年，以及指定公历日期单次执行；沿用现有 AlarmManager 和权限，不使用 cron 或高频后台轮询。
 
-## 1. 没有 cron，也别假装有
+## 1. 自然语言与工具合同
 
-Android 没有 crontab、没有常驻调度器 —— 后台执行是被刻意限制的（Doze、App Standby，
-ColorOS 还会再叠一层）。可用的调度只有这几种：
-
-| 机制 | 精度 | 代价 |
+| 用户表达示例 | schedule_type | 规则参数 |
 |---|---|---|
-| **`AlarmManager.setExactAndAllowWhileIdle`** | 准点，Doze 下也能唤醒 | Android 12+ 要 `SCHEDULE_EXACT_ALARM`（特殊权限）；Doze 下**每应用约 9 分钟**才允许一次 |
-| `AlarmManager.setWindow` | 15 分钟窗口内 | 无权限 |
-| `WorkManager` Periodic | **最小 15 分钟**，不精确 | 无权限 |
-| 前台服务 + 计时器 | 精确 | 常驻通知，进程被杀就没了 |
+| 每天早上八点查看天气 | `daily`（省略时默认） | `hour=8, minute=0` |
+| 每周三上午九点汇总待办 | `weekly` | `weekday=3, hour=9, minute=0` |
+| 每月十五号十八点做月度整理 | `monthly` | `day_of_month=15, hour=18, minute=0` |
+| 每年六月一日上午九点提醒我 | `yearly` | `month=6, day_of_month=1, hour=9, minute=0` |
+| 2027年1月5日上午十点执行一次 | `once` | `date="2027-01-05", hour=10, minute=0` |
 
-**所以任务规则只有一种：每天 HH:mm。** 不给 cron 表达式，因为它承诺不了 ——
-更细的粒度需要常驻进程，而那正是 Android 一直在杀的东西。
+- `schedule_task(title,prompt,hour,minute,schedule_type?,weekday?,day_of_month?,month?,date?)` 创建并启用任务。旧的四参数调用继续表示每日。
+- `list_scheduled_tasks` 只读，返回真实 id、规则、设备时区、下次具体日期时间、启用态及上次执行结果；完成 / 停用任务的 `next_trigger` 为 null。
+- `update_scheduled_task(id,...)` 仅修改提供的字段，可只改小时或分钟；`enabled=false` 停用。改 / 删前先 list，不能按标题猜 id。
+- `delete_scheduled_task(id)` 删除并取消 alarm。
+- 增 / 改 / 删沿用 `tools/pre-execute → ask` 审批，不因定时而扩权。audit reason 只含规则与时间，不含标题或 prompt；用户内容只进审批 UI 与工具结果。
 
-**创建只有一条路：对话。** 用户说「每天早上八点提醒我看天气」，模型把它拆成
-`title / prompt / hour / minute` 调 `schedule_task`；设置页没有定时任务入口。
-查看、修改、停用、删除同样走工具（`list_scheduled_tasks` / `update_scheduled_task` /
-`delete_scheduled_task`），见 §2.1。
+模型负责解析自然语言，桥严格校验参数：周一=1…周日=7；月=1…12；月日=1…31 且年度月日组合必须存在；单次日期使用完整 `YYYY-MM-DD`。规则只允许相关字段，错误类型、显式 null、未知规则或矛盾组合不会静默回退为每天。切换规则时清除旧规则字段，新规则所需参数必须完整；缺少或有歧义的时间由模型询问。
 
-## 2. 一次触发的完整路径
+## 2. 日期边界
 
-```
-AlarmManager（精确或窗口）
-  → ScheduledTaskReceiver（BroadcastReceiver）
-      → NodeTaskService.start()          ← 先起前台服务：任务可能跑几分钟
-      → ScheduledTaskRunner.run(taskId)
-          → NodeRuntime.initialize + runTask（无 UI 的那条路）
-          → 结果写回 scheduled_task 表（只记成功/失败码 + 时间）
-          → 排下一次
-      → NodeTaskService.stop()
-```
+- 按**设备本地时区**的公历日历执行，回执带时区与实际下次触发时间。换时区会重新计算，不固定原时区的绝对时刻。
+- 每月 31 号遇到无 31 号的月份跳过，**不改成月末**；年度 2 月 29 日遇非闰年跳过，不改成 2 月 28 日。4 月 31 日等不可能的年度组合直接拒绝。
+- DST 缺失时刻按 `java.time.atZone` 顺延，重复时刻取较早偏移，不在第二个偏移重复安排同一当地时刻。
+- 单次任务创建、改期或恢复时要求未来时刻，已过时间返回 `SCHEDULE_PAST_DATE`，不变成循环任务或下一年。已排 alarm 延迟送达可以执行，不因几毫秒迟到而丢弃。
+- 单次任务**被领取时即停用**，无论之后成功、失败还是进程被杀，都不自动重复；不声称副作用“恰好一次”。上次结果与记录保留，可由用户改到未来日期再启用。
+- 重启重排时错过的单次任务停用并标 `SCHEDULE_MISSED`，不补跑；周期任务只排下一次，不在开机时连跑积压任务。
 
-**先起前台服务再干活**是必须的：`onReceive` 返回后没有 FGS，进程会被直接回收，
-表现是「任务跑了一半没了」，而且没有任何报错。
+## 3. 精度、权限与后台限制
 
-### 2.1 模型可见的四个工具
-
-写入这样一条链路：插件 → `DeviceBridgeServer` → `ScheduledTaskStore` → Room +
-`ScheduledTaskScheduler`。**不经过无障碍**（与日历 / 闹钟同一类），所以没开无障碍也能建任务。
-
-| 工具 | 做什么 | 审批 |
-|---|---|---|
-| `schedule_task(title, prompt, hour, minute)` | 建一条每天 HH:mm 的任务 | `ask` |
-| `list_scheduled_tasks` | 列出 id / 标题 / 指令 / 时间 / 启用态 / 下次触发 / 上次结果 | 读，放行 |
-| `update_scheduled_task(id, ...)` | 改时间 / 指令 / 标题，或 `enabled=false` 停用 | `ask` |
-| `delete_scheduled_task(id)` | 删除并取消闹钟 | `ask` |
-
-时间解析（「每天早上」「每晚十点」）由模型完成，桥只接受 0-23 / 0-59 的钟点；
-越界回 `SCHEDULE_INVALID_TIME`，id 不存在回 `SCHEDULE_NOT_FOUND`（让模型先 list，不要按标题猜）。
-没有精确闹钟权限时任务照样建，只是降级成 15 分钟窗口 —— 回执里会写明。
-
-## 3. 精确与不精确：有降级，不是有闸门
-
-和无障碍不同，这里**没有权限也能用**：
-
-- 有 `SCHEDULE_EXACT_ALARM` → `setExactAndAllowWhileIdle`
-- 没有 → `setWindow`（15 分钟窗口），照样跑，只是可能晚几分钟
-
-**权限只在真的有需要时提醒，而且是主动的**：聊天页每次回到前台会查一次 ——
-「至少有一条启用的定时任务」且「没有精确闹钟权限」时，顶部摆一条可点的提示（去系统开关）。
-这条提醒**不能等失败**：缺权限时任务照跑、只是可能晚 15 分钟以上，永远不会报错。
-用户授予权限后，`ScheduledTaskBootReceiver` 收到 `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`
-会整体重排，把已有的窗口闹钟升级成精确闹钟（否则之前建的任务会一直晚到下次编辑）。
-
-应用不在前台时，`ExactAlarmMonitor` 每 6 小时轮询一次：一条**非精确**的
-`AlarmManager.set`（自续期的一次性闹钟，开机 / 改时间后由 boot receiver 重排）。
-满足条件时发一条高优先级通知，最多**每 24 小时一次**；权限开好或任务删光后同一次检查会把
-通知撤掉。用非精确闹钟是刻意的 —— 要提醒的正是「精确闹钟权限没开」，不能反过来依赖它。
-通知正文只报任务条数，不报标题。
-
-- Android 14 起新装默认拒绝这个权限；用户随时可以撤销。
-- 撤销的瞬间 `setExactAndAllowWhileIdle` 会抛 `SecurityException` —— 代码里就地降级成
-  `setWindow`，不让那条任务静默消失。
-- **不要用 `USE_EXACT_ALARM`**：那个变体只允许「核心功能是闹钟/日历」的应用使用。
-
-## 4. 错过与重启：不补跑
-
-- alarm **不持久化**：重启后全没了。`ScheduledTaskBootReceiver` 在
-  `BOOT_COMPLETED` / `TIME_SET` / `TIMEZONE_CHANGED` 时整体重排。
-- **错过的任务不补跑**：重排时按「今天这个点还没到就今天、否则明天」算，只跑下一次。
-  开机瞬间连跑十条积压任务比漏掉更糟。
-- 没开机、深度休眠期间错过的那一次就算了 —— 这一点在设置页的说明里写明。
-
-## 5. 隐私与边界
-
-1. **跑的是同一套 agent**：定时任务用 `NodeRuntime.runTask`，与聊天页那条路径同一个运行时、
-   同一套工具权限。它能做的事 = 用户自己在聊天里说一句话能做的事，没有额外扩权。
-2. **产出进会话库，不进这张表**：`scheduled_task` 只存标题 / 指令 / 时间 / 上次结果码。
-   产出（屏幕内容、邮件正文等）走会话库，与服务端一样的加密与可见性。
-3. **日志只记 task id 与结果码**：prompt 里可能有用户的私人内容，绝不打印。
-4. **不做后台轮询**：没有「每隔 N 分钟看看有没有事」这种设计，只有用户明确设定的时刻。
-5. **用户随时能停**：在对话里说「停掉每天八点的提醒」，模型用 `update_scheduled_task`
-   （`enabled=false`）或 `delete_scheduled_task` 处理；停用 = 取消 alarm。
-
-## 6. 验证到什么程度
-
-| 项 | 状态 |
+| 机制 | 条件与边界 |
 |---|---|
-| `nextTrigger` 的边界（今天 / 明天 / 整点） | ✅ 单测（固定时区） |
-| `parseTime` / `validClock` 的合法与非法输入 | ✅ 单测 |
-| 桥的四个 action 名与解析器一致 | ✅ `DeviceBridgeActionContractTest` |
-| 缺权限时的提醒判据（有启用任务 + 无权限） | ✅ 单测 |
-| 真机：轮询闹钟已排上（`dumpsys alarm` 可见 `CHECK_EXACT_ALARM`，约 6 小时后） | ✅ 2026-10-25 |
-| 真机：缺权限 → 聊天页顶部提示 → 授予后重排 | ❌ **未验**（当前设备权限是开的） |
-| 真机：缺权限 → 通知提醒（24 小时内至多一条） | ❌ **未验** |
-| 插件把三个写工具判成 `ask` | ✅ 插件 smoke |
-| DB v1 → v2 迁移（只加表，不清库） | 需设备验证 |
-| 真机：`schedule_task` → 到点触发 → 结果 | ❌ **未验** |
-| 真机：到点触发 → 前台服务 → 任务跑完 → 记录 | ❌ **未验** |
-| 真机：开机后重排 | ❌ 未验 |
-| 无权限时的窗口降级 | ❌ 未验 |
+| `setExactAndAllowWhileIdle` | Android 12+ 需要用户授予已有 `SCHEDULE_EXACT_ALARM` 特殊权限；Doze 等系统限制仍适用 |
+| `setWindow` | 无精确闹钟权限的降级，可能延迟 15 分钟或更久，不保证窗口上界 |
+| 任务前台服务 | 领取任务后启动现有 NodeTaskService；失败记录 `FOREGROUND_SERVICE_FAILED`，不伪装已执行 |
 
-**怎么验**：让模型建一条「每天 HH:mm」的任务（工具结果里能看到 id 与 next_trigger），
-到点后 `adb logcat -s ZoneuSchedule` 应看到 `task <id> done error=-`；`adb logcat -s ZoneuSchedule` 应看到
-`task <id> done error=-`；列表页的「上次已运行」应更新。
+不新增依赖或权限，不申请只适用于核心闹钟 / 日历应用的 `USE_EXACT_ALARM`。现有 ExactAlarmMonitor 与聊天提示仍负责引导精确闹钟设置；开机、系统时间 / 时区变化、授权变化及应用更新后重排。
+
+**准点与可执行是两回事**：锁屏时不能保证操作其他 App，不能绕过锁屏；需要无障碍的动作仍需原权限。默认写审批需要人在场，无人确认不能自动放行。ColorOS 可能在前台服务运行时仍冻结应用，见 [Q&A](Q&A.md#background-restrictions)。周期规则更丰富不代表这些系统限制被消除。
+
+## 4. 存储、领取和停止
+
+- Room v6→v7 仅增加规则、编辑版本和计划发生时刻，旧任务默认 daily，原有标题、指令、时间和结果不丢；数据库与 Keystore 身份不变。
+- PendingIntent 的 data 带完整 task id，避免只凭 hashCode 碰撞；排期 / 取消时清理旧版无 data 的 intent。
+- alarm 携带任务 id、编辑 revision、planned_at。数据库条件领取同时验证 enabled、版本与计划时刻，领取后清除 next_run_at，重复或旧改期广播不能再次执行。
+- 编辑、领取和重排在短锁内串行，agent 网络执行不持锁。运行结束重新读取最新行；旧结果不能覆盖新编辑，不能用旧快照复活停用或已删除任务。
+- 任务结束排下次，失败也排周期任务的下一次；单次任务保持停用。任务执行期间强杀进程不提供自动重试保证。
+- BroadcastReceiver 的 pending result 仅保护到前台服务已启动的交接；重复广播无需启动任务服务。
+
+## 5. 隐私与错误
+
+任务使用同一个 agent 与原有工具权限；没有后台邮件订阅、通知采集或高频轮询。标题与 prompt 在 SQLCipher 加密表中，日志只记任务 id、计数、异常类型与固定结果码；不记 prompt、屏幕、邮件或模型错误正文。
+
+主要错误：`SCHEDULE_INVALID_TIME`、`SCHEDULE_INVALID_RULE`、`SCHEDULE_EMPTY_CONTENT`、`SCHEDULE_PAST_DATE`、`SCHEDULE_NOT_FOUND`；运行状态 `RUNNING`、`TURN_FAILED`、`TASK_FAILED`、`TASK_CANCELLED`、`FOREGROUND_SERVICE_FAILED`，错过单次为 `SCHEDULE_MISSED`。无精确权限是降级而非创建失败，回执必须写清延迟风险。
+
+## 6. 验证
+
+- JVM：每日兼容、星期边界、短月、闰年与跨世纪、年度日期、单次过期、DST / 时区、规则切换、严格桥解析、领取版本与重复广播判据。
+- 插件：五类规则的 schema、参数透传、自然语言描述及审批隐私，使用真实 defineTool 校验。
+- 隔离设备测试：v6→v7 保留每日任务、单次原子领取 / 停用、旧运行与编辑 / 删除交错。测试仅用独立数据库和合成任务，不清正式库；编译不等于真机执行。
+- 真机由用户验证：自然语言创建五类任务并 list 核对下次日期；单次设到几分钟后，确认只领取一次并停用；修改 / 停用 / 删除后核对不再触发；重启与精确权限降级仍需实测。
+
+没有执行过的真机路径不能按 CI 绿宣称可用；不要为了测试修改用户设备系统时间或自动触发有副作用任务。

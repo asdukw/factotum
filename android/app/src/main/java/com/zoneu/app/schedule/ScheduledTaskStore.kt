@@ -3,7 +3,11 @@ package com.zoneu.app.schedule
 import android.content.Context
 import com.zoneu.app.ZoneuApplication
 import com.zoneu.app.data.db.ScheduledTaskEntity
+import com.zoneu.app.device.DeviceAction
 import com.zoneu.app.device.DeviceActionResult
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -14,155 +18,157 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-/**
- * 定时任务的模型侧入口：语义化创建的落点。
- *
- * 用户在聊天里说「每天早上八点提醒我看天气」，模型把它拆成 `title / prompt / hour / minute`
- * 交给这里 —— 落库、排闹钟、回一行结构化结果。设置页不再有定时任务入口：创建、查看、修改、
- * 删除都走对话（`docs/scheduled-tasks.md`）。
- *
- * **summary 里不放标题与指令**：桥会把 summary 打进日志（`ZoneuBridge`），而标题与指令是
- * 用户内容。需要给模型看的字段全部放 payload。
- */
-object ScheduledTaskStore {
-  /** 任务的简短回执：只有时间与数量，不含用户内容。 */
-  private val triggerFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+/** 本进程内编辑、领取、重排串行，网络执行不持锁。 */
+internal val scheduleGate = Mutex()
 
+object ScheduledTaskStore {
   suspend fun create(
     context: Context,
     title: String,
     prompt: String,
     hour: Int,
     minute: Int,
-  ): DeviceActionResult {
-    if (!validClock(hour, minute)) return invalidTime()
-    val task =
-      ScheduledTaskEntity(
-        id = UUID.randomUUID().toString(),
-        title = title.trim(),
-        prompt = prompt.trim(),
-        hour = hour,
-        minute = minute,
-        enabled = true,
-      )
+    rule: ScheduleRule = ScheduleRule(),
+  ): DeviceActionResult = scheduleGate.withLock {
+    val task = ScheduledTaskEntity(
+      id = UUID.randomUUID().toString(),
+      title = title.trim(),
+      prompt = prompt.trim(),
+      hour = hour,
+      minute = minute,
+      enabled = true,
+      scheduleType = rule.type,
+      weekday = rule.weekday,
+      dayOfMonth = rule.dayOfMonth,
+      date = rule.date,
+      month = rule.month,
+      revision = UUID.randomUUID().toString(),
+    )
+    validationError(task)?.let { return@withLock it }
     dao(context).upsert(task)
     ScheduledTaskScheduler.schedule(context, task)
-    return DeviceActionResult(
-      ok = true,
-      summary = "已创建定时任务：每天 ${clock(task)}${exactNote(context)}",
-      payload = taskObject(context, task).toString(),
-    )
+    receipt(context, "已创建", requireNotNull(dao(context).byId(task.id)))
   }
 
   suspend fun list(context: Context, includeDisabled: Boolean): DeviceActionResult {
     val tasks = dao(context).all().filter { includeDisabled || it.enabled }
-    val payload = buildJsonArray { tasks.forEach { add(taskObject(context, it)) } }
     return DeviceActionResult(
       ok = true,
       summary = "共 ${tasks.size} 条定时任务",
-      payload = payload.toString(),
+      payload = buildJsonArray { tasks.forEach { add(taskObject(context, it)) } }.toString(),
     )
   }
 
-  suspend fun update(
-    context: Context,
-    id: String,
-    title: String?,
-    prompt: String?,
-    hour: Int?,
-    minute: Int?,
-    enabled: Boolean?,
-  ): DeviceActionResult {
-    if (hour != null || minute != null) {
-      val nextHour = hour ?: return invalidTime()
-      val nextMinute = minute ?: return invalidTime()
-      if (!validClock(nextHour, nextMinute)) return invalidTime()
-    }
-    val current = dao(context).byId(id) ?: return notFound()
-    val updated =
-      current.copy(
-        title = title?.trim()?.takeIf { it.isNotEmpty() } ?: current.title,
-        prompt = prompt?.trim()?.takeIf { it.isNotEmpty() } ?: current.prompt,
-        hour = hour ?: current.hour,
-        minute = minute ?: current.minute,
-        enabled = enabled ?: current.enabled,
-      )
+  suspend fun update(context: Context, patch: DeviceAction.UpdateScheduledTask): DeviceActionResult = scheduleGate.withLock {
+    val id = patch.id
+    val current = dao(context).byId(id) ?: return@withLock notFound()
+    val next = mergeScheduleRule(current.rule(), patch.rule)
+    val updated = current.copy(
+      title = patch.title?.trim() ?: current.title,
+      prompt = patch.prompt?.trim() ?: current.prompt,
+      hour = patch.hour ?: current.hour,
+      minute = patch.minute ?: current.minute,
+      enabled = patch.enabled ?: current.enabled,
+      scheduleType = next.type,
+      weekday = next.weekday,
+      dayOfMonth = next.dayOfMonth,
+      date = next.date,
+      month = next.month,
+      revision = UUID.randomUUID().toString(),
+      nextRunAt = null,
+    )
+    validationError(updated)?.let { return@withLock it }
     dao(context).upsert(updated)
     ScheduledTaskScheduler.schedule(context, updated)
-    return DeviceActionResult(
-      ok = true,
-      summary =
-        "已更新定时任务：每天 ${clock(updated)}" +
-          (if (updated.enabled) "" else "（已停用）") +
-          exactNote(context),
-      payload = taskObject(context, updated).toString(),
-    )
+    receipt(context, "已更新", requireNotNull(dao(context).byId(id)))
   }
 
-  suspend fun delete(context: Context, id: String): DeviceActionResult {
-    val current = dao(context).byId(id) ?: return notFound()
-    ScheduledTaskScheduler.cancel(context, id)
+  suspend fun delete(context: Context, id: String): DeviceActionResult = scheduleGate.withLock {
+    if (dao(context).byId(id) == null) return@withLock notFound()
     dao(context).delete(id)
-    return DeviceActionResult(
-      ok = true,
-      summary = "已删除定时任务：每天 ${clock(current)}",
-      payload = taskObject(context, current).toString(),
-    )
+    ScheduledTaskScheduler.cancel(context, id)
+    DeviceActionResult(ok = true, summary = "已删除 1 条定时任务", payload = null)
   }
 
-  private fun dao(context: Context) =
-    (context.applicationContext as ZoneuApplication).database.scheduledTasks()
+  private fun validationError(task: ScheduledTaskEntity): DeviceActionResult? {
+    val code = when {
+      !validClock(task.hour, task.minute) -> "SCHEDULE_INVALID_TIME"
 
-  private fun clock(task: ScheduledTaskEntity): String = "%02d:%02d".format(task.hour, task.minute)
+      !task.rule().valid() -> "SCHEDULE_INVALID_RULE"
 
-  /** 没有精确闹钟权限时会降级成 15 分钟窗口 —— 在回执里说清楚，别让用户以为准点。 */
-  private fun exactNote(context: Context): String =
-    if (ScheduledTaskScheduler.canScheduleExact(context)) "" else "（无精确闹钟权限，可能晚 15 分钟内）"
+      task.title.isBlank() || task.prompt.isBlank() -> "SCHEDULE_EMPTY_CONTENT"
 
-  private fun taskObject(context: Context, task: ScheduledTaskEntity): JsonObject =
-    buildJsonObject {
-      put("id", task.id)
-      put("title", task.title)
-      put("prompt", task.prompt)
-      put("hour", task.hour)
-      put("minute", task.minute)
-      put("enabled", task.enabled)
-      put("next_trigger", nextTriggerText(task))
-      task.lastRunAt?.let { put("last_run_at", it) }
-      put("last_error", task.lastError ?: "")
-      if (!task.enabled) put("note", "已停用，不会再触发")
-      // 只有停用 / 降级这类「需要用户处理」的信息才进 payload 的 note。
-      if (task.enabled && !ScheduledTaskScheduler.canScheduleExact(context)) {
-        put("note", "没有精确闹钟权限：实际触发可能晚 15 分钟内")
-      }
+      task.enabled && task.scheduleType == "once" &&
+        task.rule().next(task.hour, task.minute, System.currentTimeMillis(), ZoneId.systemDefault()) == null -> "SCHEDULE_PAST_DATE"
+
+      else -> return null
     }
+    val summary = when (code) {
+      "SCHEDULE_INVALID_TIME" -> "时间不合法：hour 0-23、minute 0-59"
 
-  private fun nextTriggerText(task: ScheduledTaskEntity): String {
-    val at = ScheduledTaskScheduler.nextTrigger(task.hour, task.minute, System.currentTimeMillis())
-    return Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).format(triggerFormat)
+      "SCHEDULE_EMPTY_CONTENT" -> "标题和任务指令不能为空"
+
+      "SCHEDULE_PAST_DATE" -> "指定日期时间已过，请提供未来的日期和时间；不会自动改成循环任务"
+
+      else ->
+        "规则不合法：daily 不带日期；weekly 需 weekday 1-7；monthly 需 day_of_month 1-31；" +
+          "yearly 需 month 1-12 与有效 day_of_month；once 需有效 date YYYY-MM-DD"
+    }
+    return DeviceActionResult(ok = false, summary = summary, payload = null, code = code)
   }
 
-  private fun invalidTime() =
-    DeviceActionResult(
-      ok = false,
-      summary = "时间不合法：hour 0-23、minute 0-59",
-      payload = null,
-      code = "SCHEDULE_INVALID_TIME",
-    )
+  private fun receipt(context: Context, verb: String, task: ScheduledTaskEntity): DeviceActionResult = DeviceActionResult(
+    ok = true,
+    summary = "$verb 定时任务：${task.rule().describe(task.hour, task.minute)}" +
+      (if (task.enabled) exactNote(context) else "（已停用）"),
+    payload = taskObject(context, task).toString(),
+  )
 
-  private fun notFound() =
-    DeviceActionResult(
-      ok = false,
-      summary = "找不到这条定时任务（可能已被删除）。先 list_scheduled_tasks 再按 id 操作，不要按标题猜。",
-      payload = null,
-      code = "SCHEDULE_NOT_FOUND",
-    )
+  private fun dao(context: Context) = (context.applicationContext as ZoneuApplication).database.scheduledTasks()
+
+  private fun exactNote(context: Context): String =
+    if (ScheduledTaskScheduler.canScheduleExact(context)) "" else "（无精确闹钟权限，可能延迟15分钟或更久）"
+
+  private fun taskObject(context: Context, task: ScheduledTaskEntity): JsonObject = buildJsonObject {
+    put("id", task.id)
+    put("title", task.title)
+    put("prompt", task.prompt)
+    put("hour", task.hour)
+    put("minute", task.minute)
+    put("enabled", task.enabled)
+    put("schedule_type", task.scheduleType)
+    task.weekday?.let { put("weekday", it) }
+    task.dayOfMonth?.let { put("day_of_month", it) }
+    task.date?.let { put("date", it) }
+    task.month?.let { put("month", it) }
+    put("schedule", task.rule().describe(task.hour, task.minute))
+    val zone = ZoneId.systemDefault()
+    put("timezone", zone.id)
+    val at = if (task.enabled) task.nextRunAt else null
+    if (at == null) {
+      put("next_trigger", JsonNull)
+    } else {
+      put("next_trigger", Instant.ofEpochMilli(at).atZone(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+    }
+    task.lastRunAt?.let { put("last_run_at", it) }
+    put("last_error", task.lastError ?: "")
+    if (!task.enabled) {
+      put("note", "已停用，不会再触发")
+    } else if (!ScheduledTaskScheduler.canScheduleExact(context)) {
+      put("note", "没有精确闹钟权限：可能延迟15分钟或更久")
+    }
+  }
+
+  private fun notFound() = DeviceActionResult(
+    ok = false,
+    summary = "找不到这条定时任务。先 list_scheduled_tasks 再按 id 操作，不要按标题猜。",
+    payload = null,
+    code = "SCHEDULE_NOT_FOUND",
+  )
 }
 
-/** 时间是否落在合法钟点上。纯函数，单测钉住。 */
 internal fun validClock(hour: Int, minute: Int): Boolean = hour in 0..23 && minute in 0..59
 
-/** 解析「HH:mm」；越界与乱写一律 null。纯函数，单测钉住。 */
 internal fun parseTime(raw: String): Pair<Int, Int>? {
   val parts = raw.trim().split(':')
   if (parts.size != 2) return null

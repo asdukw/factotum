@@ -1,11 +1,11 @@
-# Factotum — AGENTS.md
+# zoneu — AGENTS.md
 
 Project memory for coding agents. Read §1–§9 before changing code; details live in `docs/`
 (Chinese). §11 says which doc to load for which change; §12 governs edits to this file.
 
 ## 1. What this is
 
-Factotum is a general-purpose mobile agent on Android: an LLM operates arbitrary apps through tool
+zoneu is a general-purpose mobile agent on Android: an LLM operates arbitrary apps through tool
 calls. The only runtime is the Android app (Kotlin).
 
 | Layer | Technology |
@@ -46,12 +46,12 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --console=plain
 
 # one test class
-.\gradlew.bat :app:testDebugUnitTest --tests "com.factotum.app.device.ScreenSnapshotRenderTest"
+.\gradlew.bat :app:testDebugUnitTest --tests "com.zoneu.app.device.ScreenSnapshotRenderTest"
 ```
 
 - Proxy flags must go in `GRADLE_OPTS`; inline `-D` is split by `gradlew.bat`.
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk` (~160 MB).
-- Emulator: `fetch-libnode.ps1 -Abi x86_64` + `assembleDebug "-Pfactotum.abis=x86_64"` (quote the
+- Emulator: `fetch-libnode.ps1 -Abi x86_64` + `assembleDebug "-Pzoneu.abis=x86_64"` (quote the
   flag). **Switch jniLibs back to arm64 afterwards**, or the next device APK lacks
   `libc++_shared.so`.
 
@@ -81,7 +81,7 @@ APK on a `v*` tag inside the `release` environment (manual approval; secrets liv
 
 ```
 android/                  the only runtime (Kotlin / Compose)
-  app/src/main/java/com/factotum/app/
+  app/src/main/java/com/zoneu/app/
     agent/ accessibility/ bridge/ connector/ data/ device/ node/ voice/ ui/
   app/src/main/cpp/       JNI (node::Start + stdout forwarding)
   app/src/test/           JVM unit tests
@@ -108,15 +108,15 @@ rewrite pushed history or force-push `master` without explicit approval.
 ### 6.1 Security and privacy
 
 1. **Secrets never enter the repo, logs, or build artifacts.** The only source is Settings →
-   `SecretVault` (Keystore-wrapped), passed to dsh as env `FACTOTUM_LLM_KEY` at Node start.
+   `SecretVault` (Keystore-wrapped), passed to dsh as env `ZONEU_LLM_KEY` at Node start.
 2. **Never log screen or chat content.** Log counts, class names, coordinates, and error codes
    only. UI-tree payloads appear only in model tool results. `--ez logPayload true` is debug-only.
 3. **The visual path sends the full screen image to the model provider** (including all on-screen
    text). Treat it like a UI-tree payload: tool results only, never logged or persisted — and
    never describe it as "structure only".
-4. **`factotum.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses
+4. **`zoneu.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses
    it permanently. Export before uninstalling or clearing data.
-5. **`FactotumDatabaseProvider` must call `System.loadLibrary("sqlcipher")`**; otherwise `nativeOpen`
+5. **`ZoneuDatabaseProvider` must call `System.loadLibrary("sqlcipher")`**; otherwise `nativeOpen`
    throws `UnsatisfiedLinkError`.
 6. **Do not collect other people's data.** Any new collection capability needs a documented
    boundary and privacy gate in `docs/` first.
@@ -157,7 +157,7 @@ push, not later.
   SIGABRTs the app. Cross-app tasks need a foreground service.
 - **Reload config; don't restart.** Write `dsh-home/runtime-config.json` (non-secret) and send
   `runtime.reload`; the launcher remounts the cordis root. Keys are preseeded as
-  `FACTOTUM_LLM_KEY_<ID>` and never written to disk. After reload, re-`initialize` and rotate the
+  `ZONEU_LLM_KEY_<ID>` and never written to disk. After reload, re-`initialize` and rotate the
   session namespace (`runtimeTag`).
 
 ### 6.3 Naming and storage identity
@@ -167,19 +167,19 @@ Renaming anything below silently breaks existing installs. Change all of them to
 | Location | Role |
 |---|---|
 | `app/build.gradle.kts` → `applicationId` | app identity (uid) |
-| `FactotumDatabaseProvider.DATABASE_NAME` | database file |
+| `ZoneuDatabaseProvider.DATABASE_NAME` | database file |
 | `PassphraseVault.prefsName` | SharedPreferences file holding the wrapped passphrase |
 | `PassphraseVault.keyAlias` | Keystore alias |
 
 Also: `SecretVault` `prefsName` / `keyAlias` and `AgentConfigStore.PREFS_NAME`; provider ids
-(`LlmPreset.id`) in `provider.<id>.*` and `factotum-agent-llm-key-v1-<id>`; connector names
-`factotum_connector_settings`, `factotum_connector_secret-<id>`, `factotum-connector-<id>-v1`, and the
+(`LlmPreset.id`) in `provider.<id>.*` and `zoneu-agent-llm-key-v1-<id>`; connector names
+`zoneu_connector_settings`, `zoneu_connector_secret-<id>`, `zoneu-connector-<id>-v1`, and the
 `<id>_client_id` / `<id>_client_secret` / `<id>_account` keys (the leading underscore matters).
-Components use `com.factotum.app/...`; `OemProfiles.FACTOTUM_ACCESSIBILITY_COMPONENT` reads
+Components use `com.zoneu.app/...`; `OemProfiles.ZONEU_ACCESSIBILITY_COMPONENT` reads
 `BuildConfig.APPLICATION_ID`.
 
-The legacy package `com.memex.app` cannot read this app's data; `adb uninstall com.memex.app` is
-enough. Scrub real-world data before committing.
+App-private data belongs to this package; no other package can inherit its database or Keystore
+keys. Scrub real-world data before committing.
 
 ## 7. Workflows
 
@@ -203,7 +203,7 @@ enough. Scrub real-world data before committing.
 ### 7.3 Add or change a device action
 
 One atomic action touches four places: `device/DeviceAction.kt` (definition),
-`accessibility/FactotumAccessibilityService` (execution), `bridge/DeviceBridgeServer` (HTTP mapping),
+`accessibility/ZoneuAccessibilityService` (execution), `bridge/DeviceBridgeServer` (HTTP mapping),
 and `tools/dsh-phone/plugins/android-tools/index.mjs` (`ctx.tools` + model-facing description).
 Then `bundle-dsh.ps1` and reinstall.
 
@@ -214,7 +214,7 @@ Model-visible tools (19): `read_ui_tree`, `tap_node(ref)`, `long_press(ref,durat
 `update_calendar_event(event_id,...)`, `delete_calendar_event(event_id)`,
 `schedule_task(title,prompt,hour,minute)`, `list_scheduled_tasks`, `update_scheduled_task(id,...)`,
 `delete_scheduled_task(id)`. `run_command` runs inside the embedded Debian (registered when the host sets
-`FACTOTUM_PROOT=1`); with a mail connector add
+`ZONEU_PROOT=1`; the launcher maps it to the external plugin’s `FACTOTUM_PROOT` contract); with a mail connector add
 nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_thread`,
 `mail_labels`; four approval-gated writes: `mail_modify`, `mail_draft`, `mail_send`,
 `mail_save_attachment`).
@@ -299,11 +299,11 @@ same device. For the same reason the in-app updater is disabled in debug builds;
 **Parallel worktrees share `applicationId`.** Another session's install can replace your build
 (same version code), and ColorOS does not always kill the running process on update. Two ways out:
 give each worktree its own debug identity, or never install from two sessions at once. To coexist,
-put `factotum.debugSuffix=.foamy` in `android/local.properties` (gitignored) — the debug APK becomes
-`com.factotum.app.foamy` with its own data, key and accessibility grant; `run-suite` reads the same
+put `zoneu.debugSuffix=.foamy` in `android/local.properties` (gitignored) — the debug APK becomes
+`com.zoneu.app.foamy` with its own data, key and accessibility grant; `run-suite` reads the same
 file. Debug broadcasts then need the **full class name**
-(`<pkg>/com.factotum.app.node.NodeDebugReceiver`) and accessibility must be enabled for
-`<pkg>/com.factotum.app.accessibility.FactotumAccessibilityService` — the relative `.node.X` form
+(`<pkg>/com.zoneu.app.node.NodeDebugReceiver`) and accessibility must be enabled for
+`<pkg>/com.zoneu.app.accessibility.ZoneuAccessibilityService` — the relative `.node.X` form
 expands against the suffixed package and points at a class that does not exist. After installing,
 verify the device really runs your code — pull the installed `base.apk` and grep a marker, or check
 a log format you just changed — and `am force-stop` before testing. Otherwise a whole trace can
@@ -317,7 +317,7 @@ silently come from someone else's build.
 - **The new APK's signature must match the installed one**, or the install fails with
   `INSTALL_FAILED_UPDATE_INCOMPATIBLE` and the only way out is uninstalling (database + keys lost).
   With a release keystore in `local.properties`, debug builds are release-signed by default; if the
-  device's copy was signed with the default debug key, set `factotum.debugSigning=debug` there.
+  device's copy was signed with the default debug key, set `zoneu.debugSigning=debug` there.
 - `adb install -r` disables the accessibility service; re-enable it after every install.
 - `pm grant` / `appops set` are blocked by ColorOS. The app only needs `INTERNET`.
 - Only the user can enable accessibility. Prompt **only after a real device action has failed**,
@@ -325,7 +325,7 @@ silently come from someone else's build.
 - ColorOS shows a "keep running" dialog (3 s) after enable/reinstall and defers background
   broadcasts — bring the app to the foreground (`monkey`) first. `uiautomator dump` displaces the
   accessibility service for ~1 s; avoid it during automation.
-- Log tags: `FactotumDevice`, `FactotumNode`, `FactotumAudit` (`key=value`; rename with `AUDIT_TAG`),
+- Log tags: `ZoneuDevice`, `ZoneuNode`, `ZoneuAudit` (`key=value`; rename with `AUDIT_TAG`),
   `NODEJS-MOBILE` (Node stderr; stdout is protocol).
 - **CI green ≠ usable.** The execution layer, embedded Node startup, and real tasks need a device.
 
@@ -333,31 +333,31 @@ silently come from someone else's build.
 
 ```powershell
 # Start the resident runtime once
-adb shell am broadcast -n com.factotum.app/.node.NodeDebugReceiver -a com.factotum.app.debug.NODE --es op START
+adb shell am broadcast -n com.zoneu.app/.node.NodeDebugReceiver -a com.zoneu.app.debug.NODE --es op START
 # Submit a task; add --ez logPayload true to print assistant text
-adb shell "am broadcast -n com.factotum.app/.node.NodeDebugReceiver -a com.factotum.app.debug.NODE --es op TASK --es task 'task text'"
+adb shell "am broadcast -n com.zoneu.app/.node.NodeDebugReceiver -a com.zoneu.app.debug.NODE --es op TASK --es task 'task text'"
 # Drive the execution layer
-adb shell am broadcast -n com.factotum.app/.accessibility.DeviceActionReceiver -a com.factotum.app.debug.ACTION --es action READ_SCREEN
+adb shell am broadcast -n com.zoneu.app/.accessibility.DeviceActionReceiver -a com.zoneu.app.debug.ACTION --es action READ_SCREEN
 # Visual path: capture, then tap image pixels
-adb shell am broadcast -n com.factotum.app/.accessibility.DeviceActionReceiver -a com.factotum.app.debug.ACTION --es action CAPTURE_FRAME
-adb shell am broadcast -n com.factotum.app/.accessibility.DeviceActionReceiver -a com.factotum.app.debug.ACTION --es action TAP_TARGET --es screenshot_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
+adb shell am broadcast -n com.zoneu.app/.accessibility.DeviceActionReceiver -a com.zoneu.app.debug.ACTION --es action CAPTURE_FRAME
+adb shell am broadcast -n com.zoneu.app/.accessibility.DeviceActionReceiver -a com.zoneu.app.debug.ACTION --es action TAP_TARGET --es screenshot_id f1 --ei x1 400 --ei y1 1000 --ei x2 543 --ei y2 1047
 # Receipt notification (importance / sound / promotion), without running a task
-adb shell am broadcast -n com.factotum.app/.accessibility.DeviceActionReceiver -a com.factotum.app.debug.ACTION --es action NOTICE
+adb shell am broadcast -n com.zoneu.app/.accessibility.DeviceActionReceiver -a com.zoneu.app.debug.ACTION --es action NOTICE
 # 内嵌 proot 冒烟（先把 App 拉到前台，ColorOS 会推迟后台广播）；--es cmd 可换命令
-adb shell "am broadcast -n com.factotum.app/.node.NodeDebugReceiver -a com.factotum.app.debug.NODE --es op PROOT --ez logPayload true"
+adb shell "am broadcast -n com.zoneu.app/.node.NodeDebugReceiver -a com.zoneu.app.debug.NODE --es op PROOT --ez logPayload true"
 ```
 
 Other entries (`TEXT_CHANNEL`, `IME_TEXT`, `IME_ENTER`, voice `ASR`/`VAD`) are in
 `docs/android-accessibility.md` §10, `docs/linux-on-phone.md`, and `docs/voice.md` §9. Quote the whole
 `am broadcast` with `adb shell "..."` when arguments contain spaces.
 
-With `factotum.debugSuffix` set, replace both the package and the component shorthand:
-`-n com.factotum.app.foamy/com.factotum.app.node.NodeDebugReceiver` (classes never take the suffix).
+With `zoneu.debugSuffix` set, replace both the package and the component shorthand:
+`-n com.zoneu.app.foamy/com.zoneu.app.node.NodeDebugReceiver` (classes never take the suffix).
 
 ### 8.3 Task audit
 
 `node tools/audit/selftest.mjs` → `run-suite.mjs` → `collect.mjs --label <name>`;
-`.claude/agents/factotum-auditor.md` judges. Rules (sensitive `runs/`, stable `suite.json` ids,
+`.claude/agents/zoneu-auditor.md` judges. Rules (sensitive `runs/`, stable `suite.json` ids,
 keep `runs/index.json`, never hardcode the package) live in `tools/audit/README.md`. Keep durable
 artifacts in `tools/` or `docs/`, not `tmp/`.
 

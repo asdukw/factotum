@@ -2,15 +2,22 @@
 # Only the preflight reports missing variable names. Never print credential values.
 set -euo pipefail
 
+# Existing environment secrets keep their names; new inputs win when configured.
+for suffix in KEYSTORE_BASE64 KEYSTORE_FILE KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET; do
+  canonical="ZONEU_$suffix"
+  legacy="FACTOTUM_$suffix"
+  export "$canonical=${!canonical:-${!legacy:-}}"
+done
+
 case "${1:-}" in
   check)
     names=(
-      FACTOTUM_KEYSTORE_BASE64
-      FACTOTUM_KEYSTORE_PASSWORD
-      FACTOTUM_KEY_ALIAS
-      FACTOTUM_KEY_PASSWORD
-      FACTOTUM_GMAIL_CLIENT_ID
-      FACTOTUM_GMAIL_CLIENT_SECRET
+      ZONEU_KEYSTORE_BASE64
+      ZONEU_KEYSTORE_PASSWORD
+      ZONEU_KEY_ALIAS
+      ZONEU_KEY_PASSWORD
+      ZONEU_GMAIL_CLIENT_ID
+      ZONEU_GMAIL_CLIENT_SECRET
     )
     missing=0
     for name in "${names[@]}"; do
@@ -24,18 +31,18 @@ case "${1:-}" in
   restore)
     umask 077
     keystore=$(mktemp "${RUNNER_TEMP:?}/release.XXXXXX.jks")
-    if ! printf '%s' "${FACTOTUM_KEYSTORE_BASE64:-}" | base64 --decode > "$keystore" || [ ! -s "$keystore" ]; then
+    if ! printf '%s' "${ZONEU_KEYSTORE_BASE64:-}" | base64 --decode > "$keystore" || [ ! -s "$keystore" ]; then
       rm -f "$keystore"
       echo '::error::发布 keystore 不是有效的非空 base64 文件'
       exit 1
     fi
-    printf 'FACTOTUM_KEYSTORE_FILE=%s\nTAPPET_KEYSTORE_FILE=%s\n' "$keystore" "$keystore" >> "${GITHUB_ENV:?}"
+    printf 'ZONEU_KEYSTORE_FILE=%s\nFACTOTUM_KEYSTORE_FILE=%s\nTAPPET_KEYSTORE_FILE=%s\n' "$keystore" "$keystore" "$keystore" >> "${GITHUB_ENV:?}"
     ;;
   assemble)
     # Alias only at build time; never rewrite the target tag's Gradle or applicationId.
     for suffix in KEYSTORE_FILE KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET; do
-      name="FACTOTUM_$suffix"
-      export "TAPPET_$suffix=${!name}"
+      name="ZONEU_$suffix"
+      export "FACTOTUM_$suffix=${!name}" "TAPPET_$suffix=${!name}"
     done
     exec ./gradlew :app:assembleRelease --console=plain
     ;;

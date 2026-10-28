@@ -14,7 +14,7 @@ const rg = load(readFileSync(resolve(root, '.github/workflows/rg.yml'), 'utf8'))
 const bashPath = (value) => value.replaceAll(String.fromCharCode(92), '/').replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 
 function sandbox(t) {
-  const dir = mkdtempSync(join(tmpdir(), 'factotum-rg-workflow-'));
+  const dir = mkdtempSync(join(tmpdir(), 'zoneu-rg-workflow-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   function file(path, content) {
     mkdirSync(dirname(path), { recursive: true });

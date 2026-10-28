@@ -7,7 +7,7 @@
             android:name=".accessibility.DeviceActionReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.factotum.app.debug.ACTION" />
+                <action android:name="com.zoneu.app.debug.ACTION" />
             </intent-filter>
         </receiver>
 
@@ -15,7 +15,7 @@
             android:name=".node.NodeDebugReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.factotum.app.debug.NODE" />
+                <action android:name="com.zoneu.app.debug.NODE" />
             </intent-filter>
         </receiver>
 
@@ -23,7 +23,7 @@
             android:name=".voice.VoiceDebugReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.factotum.app.debug.VOICE" />
+                <action android:name="com.zoneu.app.debug.VOICE" />
             </intent-filter>
         </receiver>
     </application>

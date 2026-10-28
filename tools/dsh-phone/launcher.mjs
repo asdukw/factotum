@@ -1,4 +1,4 @@
-// Factotum phone launcher：在 Android 内嵌 Node 上常驻 dsh 运行时（SDK stdio JSON-RPC + Web 表层）。
+// Zoneu phone launcher：在 Android 内嵌 Node 上常驻 dsh 运行时（SDK stdio JSON-RPC + Web 表层）。
 //
 // 不走 dsh 的 boot()/CLI（它硬依赖没有 Android 产物的 node-addon-require-builtin 做包解析），
 // 但**用 dsh 自己的 cordis-plugin-loader**：组合 profile rows 后塞进 loader.root，
@@ -10,7 +10,7 @@
 //   1) SDK stdio JSON-RPC：stdin 收请求（initialize / session/prompt），stdout 发帧。
 //      stdout 是协议独占——本文件用 stdout guard 把非 JSON-RPC 行改道 stderr。
 //   2) dsh Web 表层：host-webserver 绑 127.0.0.1 随机端口（--port 0），带 token URL。
-//      我们把 URL 落到 $FACTOTUM_WORKDIR/web-url.txt 给 Kotlin 读，App 用 WebView 打开。
+//      我们把 URL 落到 $ZONEU_WORKDIR/web-url.txt 给 Kotlin 读，App 用 WebView 打开。
 //
 // 目录约定（bundle 根 = 本文件所在目录）：
 //   launcher.mjs
@@ -25,11 +25,14 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { installZenSessionFetch } from './zen-session-fetch.mjs'
 
+// 当前固定版本的 android-tools 仍读取此开关；只在外部插件加载边界兼容旧合同。
+process.env.FACTOTUM_PROOT = process.env.ZONEU_PROOT ?? ''
+
 const runtimeDir = fileURLToPath(new URL('.', import.meta.url))
 const profileDir = join(runtimeDir, 'profiles', 'phone')
 const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
 const home = resolveDshHome()
-const workDir = process.env.FACTOTUM_WORKDIR ?? home
+const workDir = process.env.ZONEU_WORKDIR ?? home
 process.chdir(workDir)
 
 const webUrlFile = join(workDir, 'web-url.txt')
@@ -102,19 +105,19 @@ rmSync(readyFile, { force: true })
 /**
  * 重载前宿主把**非密配置**写进 runtime-config.json（env 名 → 值）。
  * 同一个 Node 进程里改不了 process.env，所以每次 mount 前在这里覆盖一遍。
- * 密钥不走这个文件：宿主启动和每次 reload 都把每个提供商的 key 预置成 FACTOTUM_LLM_KEY_<ID>，
- * 配置里的 FACTOTUM_LLM_KEY_FROM 指向其中一个 env 名，这里只做一次拷贝。
+ * 密钥不走这个文件：宿主启动和每次 reload 都把每个提供商的 key 预置成 ZONEU_LLM_KEY_<ID>，
+ * 配置里的 ZONEU_LLM_KEY_FROM 指向其中一个 env 名，这里只做一次拷贝。
  */
 function applyRuntimeConfig() {
   if (!existsSync(configFile)) return
   try {
     const config = JSON.parse(readFileSync(configFile, 'utf8'))
-    const keyFrom = config.FACTOTUM_LLM_KEY_FROM
+    const keyFrom = config.ZONEU_LLM_KEY_FROM
     if (typeof keyFrom === 'string') {
-      process.env.FACTOTUM_LLM_KEY = process.env[keyFrom] ?? ''
+      process.env.ZONEU_LLM_KEY = process.env[keyFrom] ?? ''
     }
     for (const [name, value] of Object.entries(config)) {
-      if (name === 'FACTOTUM_LLM_KEY_FROM') continue
+      if (name === 'ZONEU_LLM_KEY_FROM') continue
       if (typeof value === 'string') process.env[name] = value
     }
     console.error('[launcher] runtime config applied')

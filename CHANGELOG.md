@@ -5,6 +5,18 @@
 release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版本的说明存档在
 `docs/releases/<tag>.md`。
 
+## [Unreleased]
+
+### 破坏性变更
+
+- **全面改名 zoneu**：GitHub 仓库改为 `asdukw/zoneu`，Android 包名改为 `com.zoneu.app`。
+  zoneu 与 Factotum 是两个独立应用，可以并存；旧应用和数据不动，数据库、凭据、会话和授权
+  不自动继承。新应用需重新配置模型、连接 Gmail 并授权无障碍等能力。
+- 源码、组件、数据库 / prefs / Keystore 标识、内部 `ZONEU_*` 合同与构建属性 `zoneu.*`
+  同步换新；仅在本机配置、历史发布和外部插件边界保留明确兼容。
+- 新发布 APK 使用 `zoneu-<tag>-arm64-v8a.apk`，新附件保存到 `Download/zoneu/`。
+  旧下载文件不移动，历史发布资产和说明不改写。
+
 ## [1.0.0] - 2026-10-25
 
 ### 破坏性变更

@@ -119,5 +119,5 @@ AlarmManager（精确或窗口）
 | 无权限时的窗口降级 | ❌ 未验 |
 
 **怎么验**：让模型建一条「每天 HH:mm」的任务（工具结果里能看到 id 与 next_trigger），
-到点后 `adb logcat -s FactotumSchedule` 应看到 `task <id> done error=-`；`adb logcat -s FactotumSchedule` 应看到
+到点后 `adb logcat -s ZoneuSchedule` 应看到 `task <id> done error=-`；`adb logcat -s ZoneuSchedule` 应看到
 `task <id> done error=-`；列表页的「上次已运行」应更新。

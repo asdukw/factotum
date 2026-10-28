@@ -9,7 +9,7 @@
 
 ## 0. 这是新的一类能力，不是新的设备动作
 
-到 2026-10-17 为止，Factotum 只有一条获取信息的通道：**操作手机界面**（读屏 / 截图），
+到 2026-10-17 为止，zoneu 只有一条获取信息的通道：**操作手机界面**（读屏 / 截图），
 信息从屏幕上来，动作回到屏幕上去。邮箱连接器走的是**另一条**：
 
 | | 设备动作（现有） | 邮箱连接器（新增） |
@@ -52,7 +52,7 @@
 | `mail_modify` | 改标签：已读 / 星标 / 归档 / 自定义标签 | **写**，审批门控 |
 | `mail_draft` | 创建草稿（保存到草稿箱，不发送） | **写**，审批门控 |
 | `mail_send` | 发送邮件（不可撤销） | **写**，审批门控 |
-| `mail_save_attachment` | 把附件保存到公共「下载/Factotum」 | **写手机存储**，审批门控；Android 10+，≤20MB |
+| `mail_save_attachment` | 把附件保存到公共「下载/zoneu」 | **写手机存储**，审批门控；Android 10+，≤20MB |
 
 附件**只列元数据，不下载内容**：下载意味着落盘，与 §1.3「不落盘」冲突，模型也没有可用的本地文件系统。
 
@@ -85,7 +85,7 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 
 ### 1.2 账号范围：只有用户自己授权的那个账号
 
-- 授权走 OAuth 2.0 授权码流程 + PKCE，**由用户在 Google 的页面上完成**，Factotum 不接触用户密码。
+- 授权走 OAuth 2.0 授权码流程 + PKCE，**由用户在 Google 的页面上完成**，zoneu 不接触用户密码。
 - **不要客户端密码**（client secret）：Google 对桌面应用类型明说「桌面应用是公共客户端，
   保不住秘密」，用 PKCE 代替。所以包里没有可泄漏的密钥。
 - **不做多账号**：一个连接器实例 = 一个账号。多账号是产品决策，不是技术债。
@@ -97,17 +97,17 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 | 邮件正文 | 只出现在**给模型的工具结果**里 | 不落日志、不落数据库、不写文件、不缓存 |
 | 邮件元数据 | 同上（工具结果里） | 不做本地索引、不做增量同步 |
 | 附件清单（文件名 / 类型 / 大小） | 同上（工具结果里） | 默认不下载内容、不落盘、不进日志 |
-| 附件内容（用户明确要求 `mail_save_attachment` 时） | 写手机**公共** `Download/Factotum/`（MediaStore） | 不写 App 私有目录、不缓存、不进日志；单附件 ≤20MB；Android 10+ |
+| 附件内容（用户明确要求 `mail_save_attachment` 时） | 写手机**公共** `Download/zoneu/`（MediaStore） | 不写 App 私有目录、不缓存、不进日志；单附件 ≤20MB；Android 10+ |
 | access token | **只在内存**（Kotlin 侧，带过期时间） | 不落盘、不进日志、不进工具结果 |
 | refresh token | `SecretVault`（Keystore 封装） | 不进 SharedPreferences 明文、不进日志、不进云备份 |
 | 客户端 id | 普通 SharedPreferences（可预置默认值） | 它不是秘密，但仍不进日志 |
 
 **「默认不落盘」不是顺手为之**：这意味着**没有本地邮箱副本**，所以
-「卸载 / 清数据后 Factotum 里还留着你的邮件」在结构上不可能发生 ——
+「卸载 / 清数据后 zoneu 里还留着你的邮件」在结构上不可能发生 ——
 与 `AGENTS.md` 里「包里有密钥在结构上不可能发生」是同一类论证。
 
 **唯一的落盘例外是用户明确要求保存附件**：`mail_save_attachment` 先走审批，再把内容写进
-公共 `Download/Factotum/`。这是用户可见、可自己删除的文件，不是 App 的缓存；App 不保留副本，
+公共 `Download/zoneu/`。这是用户可见、可自己删除的文件，不是 App 的缓存；App 不保留副本，
 文件名会清洗（路径分隔符 / 控制字符 / 超长名），单附件上限 20MB。Android 9 及以下直接报
 「系统版本不支持」—— 公共目录写入在那些版本上需要存储权限，而 App 只申请 INTERNET。
 
@@ -128,7 +128,7 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 
 ## 2. 隐私闸门（写代码时必须逐条满足）
 
-1. **正文只进工具结果。** 任何 `Log.*`、审计标记（`FactotumAudit`）、异常信息里
+1. **正文只进工具结果。** 任何 `Log.*`、审计标记（`ZoneuAudit`）、异常信息里
    **不得出现主题 / 发件人 / 附件文件名 / 正文**。日志只允许记：动作名、连接器名、结果码、条目数、耗时。
    —— 与 `AGENTS.md` 红线 2「屏幕与聊天正文不落日志」同一条规矩，只是换了数据源。
 2. **不把整封正文一次全给模型。** `mail_read` 截断（首版 4000 字符），并在结果里**说明截断了**。
@@ -137,7 +137,7 @@ fail closed —— 这是 dsh 的官方语义，不是我们的约定。细节�
 4. **工具结果里不得回显令牌**，任何形态（含 access token 的前缀）。
 5. **错误信息不回显响应体。** Gmail 的错误响应可能带邮箱地址与请求细节；
    只回 HTTP 状态码 + 一句可行动的话。
-6. **审计产物**（`tools/audit/runs/`）里同样不得出现邮件正文 —— 审计脚本按 `FactotumAudit`
+6. **审计产物**（`tools/audit/runs/`）里同样不得出现邮件正文 —— 审计脚本按 `ZoneuAudit`
    过滤，第 1 条已经保证标记里没有正文。
 
 ## 3. 提示注入：邮件正文比屏幕文本更危险
@@ -197,13 +197,13 @@ secrets confidential」，真正的保护是 PKCE（换码时必须带一个只�
 
 真正的差别在**有没有后端**：ChatGPT / Claude 那类连接器的 secret 在**服务端**，回调指向
 自家域名的 https 地址 —— 所以他们既不用公开 secret，用户也看不到「未验证应用」警告页。
-Factotum 现在没有服务端，没有地方藏。要变成「点一下就连接」，需要的不是技巧，是加一个后端
+zoneu 现在没有服务端，没有地方藏。要变成「点一下就连接」，需要的不是技巧，是加一个后端
 （随之而来的是一整串新问题：谁的服务器、存不存 token、数据过不过境）。
 
 `tools/check-sensitive.ps1` 不命中 `GOCSPX-`（那里的 Google 模式是 API key 的 `AIza…`）——
 这是**有意不拦**，不是漏了。
 
-### 4.2 Google 侧的一次性准备（用户自己做，Factotum 不代劳）
+### 4.2 Google 侧的一次性准备（用户自己做，zoneu 不代劳）
 
 1. <https://console.cloud.google.com> → 新建项目（名字随意）。
 2. **API 和服务 → 库** → 搜索 **Gmail API** → 启用。
@@ -216,7 +216,7 @@ Factotum 现在没有服务端，没有地方藏。要变成「点一下就连�
 5. 记下那个 **客户端 ID**（形如 `xxxx.apps.googleusercontent.com`）。
    **不要**创建客户端密码 —— 用不上，而且没必要让一个「像秘密的东西」进包。
 
-### 4.3 Factotum 侧
+### 4.3 zoneu 侧
 
 设置 → 连接器 → Gmail → 填**客户端 ID** → 点「连接」→ 浏览器里登录并点「同意」→
 自动跳回。授权成功后设置页显示**已连接的账号**；`mail_*` 五个工具随即可用。
@@ -229,9 +229,9 @@ Factotum 现在没有服务端，没有地方藏。要变成「点一下就连�
 （我们根本不申请客户端密码，`check-sensitive.ps1` 也不认客户端 ID）。
 
 **客户端 id 与密码走构建期注入、不入库**：`ConnectorDefaults.kt` 读 `BuildConfig` ——
-本地读 `android/local.properties` 的 `factotum.connector.gmailClientId` / `...gmailClientSecret`，
-发布由 `release.yml` 从 GitHub Actions secret 注入（`FACTOTUM_GMAIL_CLIENT_ID` /
-`FACTOTUM_GMAIL_CLIENT_SECRET`）。目标是「装完点一下就授权」，用户不必自己去 Google Cloud
+本地读 `android/local.properties` 的 `zoneu.connector.gmailClientId` / `...gmailClientSecret`，
+发布由 `release.yml` 从 GitHub Actions secret 注入（`ZONEU_GMAIL_CLIENT_ID` /
+`ZONEU_GMAIL_CLIENT_SECRET`）。目标是「装完点一下就授权」，用户不必自己去 Google Cloud
 注册应用；留空则退回「要求用户自己填」。发布包不允许留空：`release.yml` 的「检查连接器凭据」
 读到空值就失败（secret 配在 `release` environment 里，见 `docs/releasing.md`）。本地包照常留空可打 ——
 `local.properties` 不入库，**worktree 里没有这份文件**，从 worktree 打的 debug 包必然要用户自己填。
@@ -305,7 +305,7 @@ scope 只是又一次重授权），但没有免费的重来。
   分页 `nextPageToken`）就得写在 Kotlin 宿主里，而工具描述在插件里 —— 一处 API 被劈成两半。
   桥只发令牌，**协议知识全在插件**。
 - **例外：附件保存**。插件取到附件字节后，把二进制 POST 给桥，由 Kotlin 用 MediaStore 写
-  `Download/Factotum` —— 分区存储下 Node 进程写不了公共目录。桥仍然不知道 Gmail 的 API，
+  `Download/zoneu` —— 分区存储下 Node 进程写不了公共目录。桥仍然不知道 Gmail 的 API，
   只接收「文件名 + MIME + 字节」。
 - 桥是**独立的一个**，不扩 `DeviceBridgeServer`：那个桥只讲 `DeviceAction`，
   把令牌塞进它的返回类型是类型上的错配，而且它是无障碍那条命脉，不该为连接器承担风险。
@@ -317,9 +317,9 @@ scope 只是又一次重授权），但没有免费的重来。
 
 | 位置 | 值 |
 |---|---|
-| 连接器非密配置 prefs | `factotum_connector_settings` |
-| refresh token 的 `SecretVault` prefsName | `factotum_connector_secret-gmail` |
-| refresh token 的 Keystore keyAlias | `factotum-connector-gmail-v1` |
+| 连接器非密配置 prefs | `zoneu_connector_settings` |
+| refresh token 的 `SecretVault` prefsName | `zoneu_connector_secret-gmail` |
+| refresh token 的 Keystore keyAlias | `zoneu-connector-gmail-v1` |
 | 客户端 id（非密） | `gmail_client_id` |
 | 账号标识（连接后写入非密 prefs） | `gmail_account` |
 
@@ -410,7 +410,7 @@ connect: token granted refresh=true
   自定义标签、以及三个写工具目前都是 PC 侧桩测试，需要重装 APK + 真实账号再跑一次。
 - **写操作的真机端到端还没跑**：确认面板 → 用户点「允许一次」→ 真正发信 / 建草稿 / 改标签，
   这一整段只有桩测试。第一次真机验证建议先用 `mail_draft`（可逆），再验 `mail_send`。
-- **附件下载的真机端到端还没跑**：MediaStore 写入 `Download/Factotum/`、系统「文件」App 能看到、
+- **附件下载的真机端到端还没跑**：MediaStore 写入 `Download/zoneu/`、系统「文件」App 能看到、
   同名文件冲突、ColorOS 上的行为，都只有 PC 侧桩测试。需要真机 + 真实附件验一次。
 - 仍然**没有做**：多账号、回复 / 转发 / 批量写、增量同步。每一条都在 §1 的边界之外。
 - **授权流程依赖 App 进程一直活着**（最长 10 分钟持有回环 socket）。实测被踩到过一次：

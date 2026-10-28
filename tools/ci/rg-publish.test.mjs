@@ -23,7 +23,7 @@ function http(code, body = {}, crlf = true) {
 
 // All gh calls are modeled in memory, without a token, remote or network.
 function fixture(t, { exists = true, draft = false, assets = [[ASSET_NAME, payload], [checksumName, checksum]], fail, paginate = false } = {}) {
-  const artifactDir = mkdtempSync(join(tmpdir(), 'factotum-rg-'));
+  const artifactDir = mkdtempSync(join(tmpdir(), 'zoneu-rg-'));
   t.after(() => rmSync(artifactDir, { recursive: true, force: true }));
   writeFileSync(join(artifactDir, ASSET_NAME), payload);
   writeFileSync(join(artifactDir, checksumName), checksum);

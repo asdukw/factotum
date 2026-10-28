@@ -19,11 +19,11 @@ globalThis.fetch = async (url, init = {}) => {
 
 function setBridge(enabled) {
   if (enabled) {
-    process.env.FACTOTUM_APPROVAL_BRIDGE_URL = 'http://127.0.0.1:1'
-    process.env.FACTOTUM_APPROVAL_BRIDGE_TOKEN = 'approval-token'
+    process.env.ZONEU_APPROVAL_BRIDGE_URL = 'http://127.0.0.1:1'
+    process.env.ZONEU_APPROVAL_BRIDGE_TOKEN = 'approval-token'
   } else {
-    delete process.env.FACTOTUM_APPROVAL_BRIDGE_URL
-    delete process.env.FACTOTUM_APPROVAL_BRIDGE_TOKEN
+    delete process.env.ZONEU_APPROVAL_BRIDGE_URL
+    delete process.env.ZONEU_APPROVAL_BRIDGE_TOKEN
   }
 }
 

@@ -62,8 +62,8 @@ test('deleted or moved tag fails instead of falling back to same-named branch', 
   assert.throws(() => verifyRemoteTag(f.directory, 'v0.16.0', f.sourceSha), /tag 已移动/);
 });
 
-test('both signing generations work; unknown or version-mismatched contracts fail before setup', t => {
-  for (const prefix of ['TAPPET', 'FACTOTUM']) {
+test('all signing generations work; unknown or version-mismatched contracts fail before setup', t => {
+  for (const prefix of ['ZONEU', 'TAPPET', 'FACTOTUM']) {
     const f = fixture(t, prefix);
     assert.equal(resolveSource(f.directory, 'v0.16.0'), f.sourceSha);
     writeFileSync(f.gradlePath, readFileSync(f.gradlePath, 'utf8').replace('KEY_ALIAS', 'UNKNOWN_ALIAS'));

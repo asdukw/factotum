@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="android/app/src/main/res/drawable-nodpi/factotum_mascot.jpg" width="120" alt="Factotum mascot">
+  <img src="android/app/src/main/res/drawable-nodpi/zoneu_mascot.jpg" width="120" alt="zoneu mascot">
 </p>
 
-<h1 align="center">Factotum</h1>
+<h1 align="center">zoneu</h1>
 
 <p align="center">
   <em>A general-purpose mobile agent for Android. An LLM operates arbitrary apps through tool calls — no per-app integrations.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/asdukw/factotum/actions/workflows/ci.yml"><img src="https://github.com/asdukw/factotum/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/asdukw/factotum/releases"><img src="https://img.shields.io/github/v/release/asdukw/factotum" alt="Release"></a>
+  <a href="https://github.com/asdukw/zoneu/actions/workflows/ci.yml"><img src="https://github.com/asdukw/zoneu/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/asdukw/zoneu/releases"><img src="https://img.shields.io/github/v/release/asdukw/zoneu" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -18,7 +18,7 @@
   <a href="README_zh.md">简体中文</a> · English
 </p>
 
-Factotum hands the phone to the model. It reads the screen, taps, long-presses, types, swipes and
+zoneu hands the phone to the model. It reads the screen, taps, long-presses, types, swipes and
 launches apps — ten general UI primitives that the model composes itself to finish tasks like
 "open the calculator and compute 37×48", instead of a script per app.
 
@@ -34,6 +34,10 @@ user's own cloud account directly, without going through accessibility.
 > for OpenAI, Anthropic, DeepSeek, OpenCode Go and OpenRouter, or a custom endpoint), enable the
 > accessibility service (only you can do this), and optionally connect Gmail. The status table below
 > says which paths have actually been verified on a device.
+
+> **New application identity:** `com.zoneu.app` installs alongside Factotum. Existing app data,
+> credentials and permissions are not inherited; configure and authorize zoneu separately.
+> Historical releases keep their original APK names. The source rename is not yet a new release.
 
 ## Features
 
@@ -64,7 +68,7 @@ user's own cloud account directly, without going through accessibility.
 
 ## Status
 
-Factotum is explicit about what has been verified. "Unit-tested" is not the same as "works on a
+zoneu is explicit about what has been verified. "Unit-tested" is not the same as "works on a
 device".
 
 | Capability | Status |
@@ -86,14 +90,15 @@ device".
 
 ### Install a release
 
-[Releases](https://github.com/asdukw/factotum/releases) contain the signed APK, its `.sha256` and
+[Releases](https://github.com/asdukw/zoneu/releases) contain the signed APK, its `.sha256` and
 release notes. Only `arm64-v8a` is shipped.
 
 ```bash
-adb install -r factotum-v0.13.0-arm64-v8a.apk
-sha256sum -c factotum-v0.13.0-arm64-v8a.apk.sha256   # optional
-apksigner verify --print-certs factotum-v0.13.0-arm64-v8a.apk
-gh attestation verify factotum-v0.13.0-arm64-v8a.apk --repo asdukw/factotum
+APK=zoneu-vX.Y.Z-arm64-v8a.apk
+adb install -r "$APK"
+sha256sum -c "$APK.sha256"   # optional
+apksigner verify --print-certs "$APK"
+gh attestation verify "$APK" --repo asdukw/zoneu
 ```
 
 `adb install -r` removes the enabled accessibility service. Re-enable it after installing.
@@ -126,7 +131,7 @@ cd android
   entries that the device cannot unpack.
 - The assembly scripts fetch pinned runtimes; their outputs are not committed. They honor
   `HTTP_PROXY` / `HTTPS_PROXY`.
-- For an emulator, fetch the x86_64 libnode and build with `"-Pfactotum.abis=x86_64"`, then switch
+- For an emulator, fetch the x86_64 libnode and build with `"-Pzoneu.abis=x86_64"`, then switch
   back to arm64.
 - Do not use Gradle's automatic install on ColorOS: it blocks the first install and fails after
   several minutes. Use `adb install -r` and re-enable accessibility.
@@ -196,7 +201,7 @@ Deliberate choices:
   authorization for installed apps, so widening later would force every connected user through
   consent again. The trade-off is documented in
   [docs/email-connector.md](docs/email-connector.md) §1.1.
-- **`factotum.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses it
+- **`zoneu.db` is SQLCipher-encrypted**; the passphrase is Keystore-wrapped. Uninstalling loses it
   permanently.
 - **Pre-release scan.** `tools/check-sensitive.ps1` scans the working tree and full history, and can
   scan the APK too. `-SelfTest` proves the scanner can hit.
@@ -212,7 +217,7 @@ Deliberate choices:
 - Device tests (`androidTest/`, covering Room/SQLCipher and Compose UI): `adb install -r`, re-enable
   accessibility, then `.\gradlew.bat :app:connectedDebugAndroidTest`.
 - The task audit loop: `node tools/audit/run-suite.mjs` runs a fixed suite and collects traces;
-  `factotum-auditor` judges them. Artifacts contain screen text and are treated as sensitive.
+  `zoneu-auditor` judges them. Artifacts contain screen text and are treated as sensitive.
 - Changes under `tools/dsh-phone/` require `.\tools\bundle-dsh.ps1` and a reinstall: the runtime is
   packaged into assets. The plugin itself lives in a
   [separate public repo](https://github.com/asdukw/dsh-plugin-android-tools); commit there first,

@@ -1,5 +1,5 @@
 {
-  "name": "factotum-node-selfcheck",
+  "name": "zoneu-node-selfcheck",
   "version": "0.0.1",
   "private": true,
   "description": "P0 self-check for the embedded libnode runtime",

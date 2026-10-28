@@ -38,3 +38,19 @@ test('workflow separates trusted helpers and fixed source SHA with strict curren
     assert.equal(result.status, 0, `${step.name}: ${result.stderr}`)
   }
 })
+
+test('release carries one APK-derived asset identity from build into publish', () => {
+  const build = workflow.jobs.build
+  const publish = workflow.jobs.publish
+  const stage = build.steps.find(s => s.id === 'artifact')
+  assert.ok(stage.run.includes('release-identity.mjs inspect'))
+  assert.ok(stage.run.indexOf('release-identity.mjs') < stage.run.indexOf('cp source/'))
+  assert.equal(stage.env.SOURCE_SHA, '${{ steps.source.outputs.source_sha }}')
+  assert.equal(build.outputs.asset, '${{ steps.artifact.outputs.asset }}')
+  assert.equal(publish.env.ASSET, '${{ needs.build.outputs.asset }}')
+  const summary = publish.steps.find(s => s.run?.includes('GITHUB_STEP_SUMMARY'))
+  assert.doesNotMatch(summary.run, /ASSET=/)
+  for (const job of [build, publish]) for (const step of job.steps) {
+    assert.doesNotMatch(step.run ?? '', /ASSET="(?:factotum|zoneu)-/)
+  }
+})

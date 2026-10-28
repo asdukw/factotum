@@ -85,19 +85,19 @@ function capture(options = {}) {
 
 // --- 7) 会话 id 的取值顺序：options > env > 常量 ---
 {
-  const previous = process.env.FACTOTUM_LLM_SESSION
-  process.env.FACTOTUM_LLM_SESSION = 'from-env'
+  const previous = process.env.ZONEU_LLM_SESSION
+  process.env.ZONEU_LLM_SESSION = 'from-env'
   const fromEnv = capture()
   await fromEnv.wrapped('https://opencode.ai/zen/go/v1/messages', { headers: {} })
   assert.equal(fromEnv.seen[0].headers.get('x-opencode-session'), 'from-env')
 
-  delete process.env.FACTOTUM_LLM_SESSION
+  delete process.env.ZONEU_LLM_SESSION
   const fallback = capture()
   await fallback.wrapped('https://opencode.ai/zen/go/v1/messages', { headers: {} })
-  assert.equal(fallback.seen[0].headers.get('x-opencode-session'), 'factotum-mobile')
+  assert.equal(fallback.seen[0].headers.get('x-opencode-session'), 'zoneu-mobile')
 
-  if (previous === undefined) delete process.env.FACTOTUM_LLM_SESSION
-  else process.env.FACTOTUM_LLM_SESSION = previous
+  if (previous === undefined) delete process.env.ZONEU_LLM_SESSION
+  else process.env.ZONEU_LLM_SESSION = previous
 }
 
 console.log('ok: zen 会话头只加在 zen 主机上，且不覆盖调用方给的值')

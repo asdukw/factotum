@@ -50,7 +50,7 @@ function Get-File([string]$url, [string]$path, [string]$sha256, [string]$what) {
     Remove-Item -LiteralPath $path -Force
   }
   Write-Host "downloading $what $(if ($Proxy) { "(proxy $Proxy)" })"
-  $req = @{ Uri = $url; OutFile = $path; Headers = @{ "User-Agent" = "factotum" } }
+  $req = @{ Uri = $url; OutFile = $path; Headers = @{ "User-Agent" = "zoneu" } }
   if ($Proxy) { $req.Proxy = $Proxy }
   Invoke-WebRequest @req
   $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -123,7 +123,7 @@ if (-not (Test-Path -LiteralPath $rootfsPath)) {
   $token = (Invoke-RestMethod @tokenReq).token
   $blobUrl = "https://registry-1.docker.io/v2/$repo/blobs/$RootfsDigest"
   Write-Host "downloading $RootfsRef $(if ($Proxy) { "(proxy $Proxy)" })"
-  $blobReq = @{ Uri = $blobUrl; OutFile = $rootfsPath; Headers = @{ Authorization = "Bearer $token"; "User-Agent" = "factotum" } }
+  $blobReq = @{ Uri = $blobUrl; OutFile = $rootfsPath; Headers = @{ Authorization = "Bearer $token"; "User-Agent" = "zoneu" } }
   if ($Proxy) { $blobReq.Proxy = $Proxy }
   Invoke-WebRequest @blobReq
 }

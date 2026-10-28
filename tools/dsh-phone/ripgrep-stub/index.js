@@ -12,17 +12,17 @@
 //
 // 二进制由 `.github/workflows/rg.yml` 交叉编译（默认特性、无 pcre2、自包含），
 // 由 `tools/fetch-rg.ps1` 按 pinned 版本拉进 `jniLibs/<abi>/librg.so`，
-// 由 `NodeRuntime` 注入 `FACTOTUM_RG_PATH` 指向 nativeLibraryDir 下的它。
+// 由 `NodeRuntime` 注入 `ZONEU_RG_PATH` 指向 nativeLibraryDir 下的它。
 //
 // 路径走 env 而不是写死：nativeLibraryDir 的绝对路径在安装时才确定，构建期算不出来。
-const rgPath = process.env.FACTOTUM_RG_PATH
+const rgPath = process.env.ZONEU_RG_PATH
 
 if (typeof rgPath !== 'string' || rgPath === '') {
   // 故意**在 import 时就炸**而不是等调用：`rgPath` 是模块的导出值，不是函数，
   // 拿不到就说明这个运行时没有配好 —— 早点报错，别让模型收到一个「glob 找不到文件」的
   // 假答案（那看起来像工作区是空的）。
   throw new Error(
-    'FACTOTUM_RG_PATH 未设置：这个运行时没有带 ripgrep。' +
+    'ZONEU_RG_PATH 未设置：这个运行时没有带 ripgrep。' +
       '装配时先跑 tools/fetch-rg.ps1（它会从 rg-<version> release 拉产物），' +
       '并确认 NodeRuntime 注入了这个变量。',
   )

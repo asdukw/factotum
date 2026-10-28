@@ -74,7 +74,7 @@ $DSH_HOME/AGENTS.md            ← 用户全局，无条件加载
 发现靠 `projectRootMarkers`（默认 `.git`）上溯；**根标记不存在时继续上溯**，
 权限 / IO 失败则**停止发现并抛出原始错误**，不会退而求其次选个祖先目录。
 
-我们的 `DSH_HOME` = `FACTOTUM_WORKDIR` = `files/dsh-home`，那里**没有 `.git`**。
+我们的 `DSH_HOME` = `ZONEU_WORKDIR` = `files/dsh-home`，那里**没有 `.git`**。
 所以：
 
 - 实际生效的是**用户全局那份** `$DSH_HOME/AGENTS.md`（无条件加载，不依赖根发现）—— 稳定。

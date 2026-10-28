@@ -33,7 +33,7 @@ test('every missing secret fails and reports names, never credential values', ()
   for (const name of names) {
     const result = run('check', { [name]: '' });
     assert.equal(result.status, 1);
-    assert.ok(result.stdout.includes(name));
+    assert.ok(result.stdout.includes(name.replace('FACTOTUM_', 'ZONEU_')));
     for (const value of Object.values(mockSecrets)) assert.ok(!(result.stdout + result.stderr).includes(value));
     assert.equal(result.stdout.trim().split('\n').length, 1);
   }
@@ -52,6 +52,7 @@ test('restore decodes one keystore and exports the same path for both signing co
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(result.stdout + result.stderr, '');
   const entries = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')));
+  assert.equal(entries.ZONEU_KEYSTORE_FILE, entries.FACTOTUM_KEYSTORE_FILE);
   assert.equal(entries.FACTOTUM_KEYSTORE_FILE, entries.TAPPET_KEYSTORE_FILE);
   const file = readdirSync(directory).find(name => name.endsWith('.jks'));
   assert.deepEqual(readFileSync(join(directory, file)), bytes);
@@ -74,7 +75,7 @@ test('mock Gradle receives identical FACTOTUM and TAPPET credentials and signed 
   const capture = join(directory, 'captured.json');
   const captureScript = join(directory, 'capture.mjs');
   const suffixes = ['KEYSTORE_FILE', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'];
-  writeFileSync(captureScript, `import fs from 'node:fs';\nconst keys=${JSON.stringify(suffixes)};\nfs.writeFileSync(process.env.CAPTURE,JSON.stringify({args:process.argv.slice(2),values:Object.fromEntries(keys.map(k=>[k,[process.env['FACTOTUM_'+k],process.env['TAPPET_'+k]]]))}));\n`);
+  writeFileSync(captureScript, `import fs from 'node:fs';\nconst keys=${JSON.stringify(suffixes)};\nfs.writeFileSync(process.env.CAPTURE,JSON.stringify({args:process.argv.slice(2),values:Object.fromEntries(keys.map(k=>[k,[process.env['ZONEU_'+k],process.env['FACTOTUM_'+k],process.env['TAPPET_'+k]]]))}));\n`);
   writeFileSync(join(directory, 'gradlew'), '#!/usr/bin/env bash\nexec node "$CAPTURE_SCRIPT" "$@"\n', { mode: 0o755 });
   const env = { FACTOTUM_KEYSTORE_FILE: 'fixture-signing-identity.jks', CAPTURE: bashPath(capture), CAPTURE_SCRIPT: bashPath(captureScript) };
   const result = run('assemble', env, directory);
@@ -84,6 +85,18 @@ test('mock Gradle receives identical FACTOTUM and TAPPET credentials and signed 
   assert.deepEqual(actual.args, [':app:assembleRelease', '--console=plain']);
   for (const suffix of suffixes) {
     const expected = suffix === 'KEYSTORE_FILE' ? env.FACTOTUM_KEYSTORE_FILE : mockSecrets[`FACTOTUM_${suffix}`];
-    assert.deepEqual(actual.values[suffix], [expected, expected]);
+    assert.deepEqual(actual.values[suffix], [expected, expected, expected]);
   }
+});
+
+test('canonical secret inputs take precedence without printing values', t => {
+  const directory = fixture(t);
+  const output = join(directory, 'github-env');
+  const bytes = Buffer.from('canonical fixture keystore');
+  const result = run('restore', { RUNNER_TEMP: bashPath(directory), GITHUB_ENV: bashPath(output),
+    ZONEU_KEYSTORE_BASE64: bytes.toString('base64'), FACTOTUM_KEYSTORE_BASE64: 'invalid-legacy' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout + result.stderr, '');
+  const file = readdirSync(directory).find(name => name.endsWith('.jks'));
+  assert.deepEqual(readFileSync(join(directory, file)), bytes);
 });

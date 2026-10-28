@@ -8,7 +8,7 @@ import { publish } from './release-publish.mjs';
 
 const repo = 'fixture/project';
 const tag = 'v0.16.0';
-const asset = `factotum-${tag}-arm64-v8a.apk`;
+const asset = `zoneu-${tag}-arm64-v8a.apk`;
 const ok = stdout => ({ status: 0, stdout: stdout ?? '' });
 function http(status, body = {}, ending = '\r\n') {
   return { status: status === 200 ? 0 : 1, stdout: `HTTP/2.0 ${status} Response${ending}Content-Type: application/json${ending}${ending}${JSON.stringify(body)}` };
@@ -24,7 +24,9 @@ function fixture(t, { exists = true, draft = true, notes = true, fail, verify } 
   const bytes = Buffer.from('offline fixture APK');
   writeFileSync(join(artifactDirectory, asset), bytes);
   writeFileSync(join(artifactDirectory, `${asset}.sha256`), `${createHash('sha256').update(bytes).digest('hex')}  ${asset}\n`);
-  const env = { GH_REPO: repo, TAG: tag, SOURCE_SHA: 'a'.repeat(40) };
+  const env = { GH_REPO: repo, TAG: tag, SOURCE_SHA: 'a'.repeat(40), ASSET: asset };
+  writeFileSync(join(artifactDirectory, 'release-identity.json'), JSON.stringify({
+    applicationId: 'com.zoneu.app', tag, sourceSha: env.SOURCE_SHA, asset }));
   const state = { exists, draft, calls: [], verifications: 0, body: 'preserved historical notes' };
   const mutations = () => state.calls.filter(args => args[0] === 'release');
   const runGh = args => {

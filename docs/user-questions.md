@@ -124,5 +124,5 @@ ask_user_question(questions[])           # 一批，至少一题
 
 **端到端验过的步骤**：装包 → 提交「用 ask_user_question 问我晚饭吃面还是吃饭」→ 底部 sheet 弹出、
 选项与自由文本都在 → 点「吃面」→ 模型下一句确认了「吃面」。
-日志：`adb logcat -s FactotumQuestion`（桥只记题数与答案数，**不记问题正文与答案正文** ——
+日志：`adb logcat -s ZoneuQuestion`（桥只记题数与答案数，**不记问题正文与答案正文** ——
 与设备桥「只记动作与结构化结果」同一条规矩）。

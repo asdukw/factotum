@@ -2,7 +2,7 @@
   "name": "dsh-plugin-approval",
   "version": "0.1.0",
   "private": true,
-  "description": "Factotum answerer for ctx.approval: forwards one-shot permission requests to the app's confirmation sheet over the local approval bridge",
+  "description": "Zoneu answerer for ctx.approval: forwards one-shot permission requests to the app's confirmation sheet over the local approval bridge",
   "type": "module",
   "main": "index.mjs",
   "exports": {

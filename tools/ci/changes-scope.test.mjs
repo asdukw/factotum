@@ -12,7 +12,7 @@ const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: process.platform === 'win32'
   GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
 
 function fixture(t) {
-  const cwd = mkdtempSync(join(tmpdir(), 'factotum-changes-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'zoneu-changes-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   function git(args, input) {
     const result = spawnSync('git', args, { cwd, env: gitEnv, input, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });

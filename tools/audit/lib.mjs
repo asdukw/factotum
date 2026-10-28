@@ -1,4 +1,4 @@
-// Factotum 任务审计：公共部分（设备取数、zstd 逐帧解码、包名解析）。
+// Zoneu 任务审计：公共部分（设备取数、zstd 逐帧解码、包名解析）。
 //
 // 设计原则：**应用身份只有一个来源** —— `android/app/build.gradle.kts` 的 applicationId。
 // 上一轮改名时有一批手工脚本因为硬编码 `com.memex.app` 一起失效，其中就包括拉 session 的
@@ -56,14 +56,14 @@ export function requireDevice() {
 }
 
 /**
- * 设备上本 App 的包名。FACTOTUM_PACKAGE 可覆盖（例如临时装了个改名的调试包）。
+ * 设备上本 App 的包名。ZONEU_PACKAGE 可覆盖（例如临时装了个改名的调试包）。
  *
- * debug 包可能带 `applicationIdSuffix`（`android/local.properties` 的 `factotum.debugSuffix`，
+ * debug 包可能带 `applicationIdSuffix`（`android/local.properties` 的 `zoneu.debugSuffix`，
  * 用于并行 worktree 共存）。后缀是构建时拼上去的，这里必须一起读，否则审计会去找一个
  * 根本没装的身份，表现为「会话目录为空」——又是一次静默失效。
  */
 export function resolvePackage() {
-  if (process.env.FACTOTUM_PACKAGE) return process.env.FACTOTUM_PACKAGE
+  if (process.env.ZONEU_PACKAGE || process.env.FACTOTUM_PACKAGE) return process.env.ZONEU_PACKAGE || process.env.FACTOTUM_PACKAGE
   const gradle = readFileSync(join(ROOT, 'android/app/build.gradle.kts'), 'utf8')
   const m = gradle.match(/applicationId\s*=\s*"([^"]+)"/)
   if (!m) throw new Error('在 android/app/build.gradle.kts 里找不到 applicationId')
@@ -73,7 +73,9 @@ export function resolvePackage() {
 function debugSuffix() {
   const file = join(ROOT, 'android/local.properties')
   if (!existsSync(file)) return ''
-  const m = readFileSync(file, 'utf8').match(/^\s*factotum\.debugSuffix\s*=\s*(\S+)\s*$/m)
+  const text = readFileSync(file, 'utf8')
+  const m = text.match(/^\s*zoneu\.debugSuffix\s*=\s*(\S+)\s*$/m)
+    ?? text.match(/^\s*factotum\.debugSuffix\s*=\s*(\S+)\s*$/m)
   return m ? m[1] : ''
 }
 
@@ -332,16 +334,16 @@ const textOf = (c) =>
 }
 
 // ---------------------------------------------------------------------------
-// 审计标记：App 侧往 logcat 打的 `FactotumAudit` 行
-// （见 FactotumAccessibilityService.audit / AUDIT_TAG）。
+// 审计标记：App 侧往 logcat 打的 `ZoneuAudit` 行
+// （见 ZoneuAccessibilityService.audit / AUDIT_TAG）。
 //
 // 为什么需要这条通道：触摸探索开着时 dispatchGesture 会被系统吞掉，点击/滑动失效是
 // **预期行为**；关着却失效才是故障。这个状态不在 dsh 会话记录里，
 // 不并进事件流，审计就分不清这两类，也就无法归因。
 // ---------------------------------------------------------------------------
 
-/** 必须与 FactotumAccessibilityService.AUDIT_TAG 一致；两边要一起改。 */
-export const AUDIT_TAG = 'FactotumAudit'
+/** 必须与 ZoneuAccessibilityService.AUDIT_TAG 一致；两边要一起改。 */
+export const AUDIT_TAG = 'ZoneuAudit'
 
 /** dump 审计标记的 logcat 缓冲区。`-s` 是设备侧过滤，很快。 */
 export function dumpAuditLog() {
@@ -358,8 +360,8 @@ export function clearLogcat() {
 }
 
 /**
- * 解析 `adb logcat -v epoch -s FactotumAudit:I` 的输出。
- * 行形如：`1750000000.123  1234  1234 I FactotumAudit: ev=exploration_request want=true changed=true`
+ * 解析 `adb logcat -v epoch -s ZoneuAudit:I` 的输出。
+ * 行形如：`1750000000.123  1234  1234 I ZoneuAudit: ev=exploration_request want=true changed=true`
  * 时间戳是 epoch 毫秒 —— 与 dsh 记录的 time（Date.now()）同一时基，可直接排序合并。
  */
 export function parseAuditLog(text) {

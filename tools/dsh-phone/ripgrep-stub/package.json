@@ -1,8 +1,8 @@
 {
   "name": "@vscode/ripgrep",
-  "version": "0.0.0-factotum-stub",
+  "version": "0.0.0-zoneu-stub",
   "private": true,
-  "description": "Factotum stub replacing the real @vscode/ripgrep: points rgPath at the ripgrep we cross-compiled for Android (the real package has no android binary)",
+  "description": "Zoneu stub replacing the real @vscode/ripgrep: points rgPath at the ripgrep we cross-compiled for Android (the real package has no android binary)",
   "type": "module",
   "main": "index.js",
   "exports": {

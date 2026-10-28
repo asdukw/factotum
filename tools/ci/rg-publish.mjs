@@ -87,7 +87,7 @@ export function publishRg({ version, repo, artifactDir, runGh = gh }) {
   let info = release();
   if (!info) {
     command(['create', tag, '--draft', '--latest=false', '--title', `ripgrep ${version} (aarch64-linux-android)`,
-      '--notes', '交叉编译给 Factotum 内嵌运行时用的 ripgrep。默认特性（无 pcre2），自包含，只依赖 bionic 的 libc/libdl。供 tools/fetch-rg.ps1 按版本下载，产物不入库。']);
+      '--notes', '交叉编译给 Zoneu 内嵌运行时用的 ripgrep。默认特性（无 pcre2），自包含，只依赖 bionic 的 libc/libdl。供 tools/fetch-rg.ps1 按版本下载，产物不入库。']);
     info = release();
     if (!info?.draft) throw new Error('New release is not a draft');
   }

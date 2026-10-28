@@ -1,5 +1,5 @@
 /**
- * UI-TARS 原生动作 → Factotum 执行层动作的映射。
+ * UI-TARS 原生动作 → Zoneu 执行层动作的映射。
  *
  * **为什么需要这一层**：UI-TARS 是「动作策略」模型，不是会调工具的对话模型。它按字节跳动
  * 官方 MOBILE_USE 模板输出自己的格式：
@@ -7,7 +7,7 @@
  *   Thought: ...
  *   Action: click(point='<point>500 900</point>')
  *
- * 而 Factotum 的执行层认的是 `DeviceAction`（`TAP_POINT` / `PRESS` / `TYPE_TEXT` / …）。
+ * 而 Zoneu 的执行层认的是 `DeviceAction`（`TAP_POINT` / `PRESS` / `TYPE_TEXT` / …）。
  * 两者之间没有交集，必须翻译 —— 这就是「适配」的实质。把这一层写成**纯函数**，
  * 是为了能离开设备验证：解析错一个正则，在设备上表现为「点了屏幕中间」，看着像模型不准。
  *
@@ -137,7 +137,7 @@ export function toScreenPoint(point, screen) {
  * UI-TARS 动作 → 要发往 `DeviceActionReceiver` 的广播参数。
  *
  * 不支持的动作如实返回 `{ unsupported: true }`，**不要静默映射成别的东西** ——
- * `drag` 尤其危险：Factotum 只有四向 `SWIPE`，把任意方向拖拽近似成某个方向会做出
+ * `drag` 尤其危险：Zoneu 只有四向 `SWIPE`，把任意方向拖拽近似成某个方向会做出
  * 用户没要求的操作。
  *
  * @returns {{action: string, extras: Record<string,string|number>} | {unsupported: string}}
@@ -285,7 +285,7 @@ export const GUI_OWL_TOOLS = [
 /**
  * GUI-Owl 的 `arguments` → 与 UI-TARS 共用的内部动作形状。
  *
- * 认不出来或 Factotum 执行层做不了的，如实标 `unsupported` —— 与 `toDeviceAction` 同一条原则：
+ * 认不出来或 Zoneu 执行层做不了的，如实标 `unsupported` —— 与 `toDeviceAction` 同一条原则：
  * **不近似**。`key`（音量/电源等 keyevent）与 `interact`（要人介入）都没有对应的执行层动作。
  */
 export function normalizeGuiOwl(argumentsJson) {

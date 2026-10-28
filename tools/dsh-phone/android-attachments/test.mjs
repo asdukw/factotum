@@ -21,7 +21,7 @@ const libUrl = (pkg, file) =>
 const { AttachmentStore } = await import(libUrl('dsh-attachment', 'index.js'))
 const { Context } = await import(libUrl('cordis', 'index.js'))
 
-const home = mkdtempSync(join(tmpdir(), 'factotum-attach-'))
+const home = mkdtempSync(join(tmpdir(), 'zoneu-attach-'))
 // 真 Context：AttachmentStore 的 Service 基类构造时要往 ctx.reflect 注册服务名。
 const ctx = new Context()
 const store = new AndroidAttachmentStore(ctx, { dshHome: home })

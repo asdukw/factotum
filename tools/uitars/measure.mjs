@@ -2,7 +2,7 @@
 /**
  * UI-TARS 端侧 GUI 任务驱动 + 计时。
  *
- * 一次循环：截图 → 发给设备上的 llama-server → 解析它的原生动作 → 通过 Factotum 的
+ * 一次循环：截图 → 发给设备上的 llama-server → 解析它的原生动作 → 通过 Zoneu 的
  * `DeviceActionReceiver` 执行 → 记时间。**它测的是「端侧模型 + 现有执行层」的速度**，
  * 不是完整产品链路（没有经过 dsh 的工具循环，那一步要另做）。
  *
@@ -57,7 +57,7 @@ const serial = args.serial ?? process.env.ANDROID_SERIAL ?? "";
 const url = args.url ?? "http://127.0.0.1:18080";
 const maxSteps = Number(args["max-steps"] ?? 8);
 const task = args.task;
-const component = args.component ?? "com.factotum.app/.accessibility.DeviceActionReceiver";
+const component = args.component ?? "com.zoneu.app/.accessibility.DeviceActionReceiver";
 // uitars：自由文本动作（`Action: click(point=...)`）
 // guiowl：标准 tool call（`<tool_call>{"name":"mobile_use",...}</tool_call>`）
 const protocol = args.protocol ?? "uitars";
@@ -160,7 +160,7 @@ function execute(deviceAction) {
   });
   adb([
     "shell", "am", "broadcast", "-n", component,
-    "-a", "com.factotum.app.debug.ACTION",
+    "-a", "com.zoneu.app.debug.ACTION",
     "--es", "action", deviceAction.action,
     ...extras,
   ]);

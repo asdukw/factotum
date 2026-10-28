@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { requireTag, verifyRemoteTag } from './release-source.mjs';
+import { readIdentity } from './release-identity.mjs';
 
 function runCli(args) {
   return spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
@@ -12,7 +13,8 @@ function runCli(args) {
 export function publish({ sourceDirectory, artifactDirectory, env = process.env, runGh = runCli, verifyTag = verifyRemoteTag }) {
   requireTag(env.TAG);
   if (typeof env.GH_REPO !== 'string' || env.GH_REPO !== env.GH_REPO.trim() || !/^[\w.-]+\/[\w.-]+$/.test(env.GH_REPO)) throw new Error('缺少明确的发布仓库 GH_REPO');
-  const asset = `factotum-${env.TAG}-arm64-v8a.apk`;
+  const { asset } = readIdentity(artifactDirectory, env.TAG, env.SOURCE_SHA);
+  if (env.ASSET !== asset) throw new Error('release 资产名与 build 输出不匹配');
   const apk = join(artifactDirectory, asset);
   const checksum = `${apk}.sha256`;
   const bytes = readFileSync(apk);

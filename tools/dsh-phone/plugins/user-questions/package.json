@@ -2,7 +2,7 @@
   "name": "dsh-plugin-user-questions",
   "version": "0.1.0",
   "private": true,
-  "description": "Factotum answerer for ctx.userQuestions: forwards ask_user_question to the app's UI over the local question bridge",
+  "description": "Zoneu answerer for ctx.userQuestions: forwards ask_user_question to the app's UI over the local question bridge",
   "type": "module",
   "main": "index.mjs",
   "exports": {

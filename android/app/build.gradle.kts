@@ -13,14 +13,23 @@ val localProperties =
     if (file.isFile) file.inputStream().use { load(it) }
   }
 
+// 兼容旧本机配置；新名称始终优先，不改写私有配置文件。
+fun localValue(key: String): String? =
+  localProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+    ?: localProperties.getProperty(key.replaceFirst("zoneu.", "factotum."))?.takeIf { it.isNotBlank() }
+
+fun environmentValue(key: String): String? =
+  System.getenv(key)?.takeIf { it.isNotBlank() }
+    ?: System.getenv(key.replaceFirst("ZONEU_", "FACTOTUM_"))?.takeIf { it.isNotBlank() }
+
 fun agentValue(
   propertyKey: String,
   environmentKey: String,
   defaultValue: String,
 ): String {
-  val environmentValue = System.getenv(environmentKey)
+  val environmentValue = environmentValue(environmentKey)
   if (!environmentValue.isNullOrBlank()) return environmentValue
-  val localValue = localProperties.getProperty(propertyKey)
+  val localValue = localValue(propertyKey)
   if (!localValue.isNullOrBlank()) return localValue
   return defaultValue
 }
@@ -33,20 +42,19 @@ fun buildConfigString(value: String): String = "\"" + value.replace("\\", "\\\\"
  * 在 `android/local.properties` 里写（该文件在 .gitignore 内，每台机器/每个 worktree 各自一份）：
  *
  * ```
- * factotum.debugSuffix=.foamy
+ * zoneu.debugSuffix=.foamy
  * ```
  *
- * 产物变成 `com.factotum.app.foamy`，与正式包并存；数据、密钥、无障碍授权都是另一份。
+ * 产物变成 `com.zoneu.app.foamy`，与正式包并存；数据、密钥、无障碍授权都是另一份。
  * 留空 = 与发布包相同的身份（默认，CI 与普通开发不受影响）。
  */
 val debugSuffix =
-  localProperties
-    .getProperty("factotum.debugSuffix")
+  localValue("zoneu.debugSuffix")
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
     ?.also {
       require(Regex("^\\.[a-z][a-z0-9_]*$").matches(it)) {
-        "factotum.debugSuffix 必须形如 .foamy（小写字母开头，只含小写字母/数字/下划线）"
+        "zoneu.debugSuffix 必须形如 .foamy（小写字母开头，只含小写字母/数字/下划线）"
       }
     }
 
@@ -55,7 +63,7 @@ val debugSuffix =
  * 否则报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能卸载 —— SQLCipher 库与密钥随之永久丢失。
  *
  * ```
- * factotum.debugSigning=debug
+ * zoneu.debugSigning=debug
  * ```
  *
  * - `release`（默认）：有 release keystore 时 debug 包也用它签（见下面 buildTypes.debug）。
@@ -63,21 +71,21 @@ val debugSuffix =
  *   （从没有 release keystore 的机器或 worktree 打出来的包就是这把）。
  */
 val debugSigning =
-  (localProperties.getProperty("factotum.debugSigning")?.trim()?.takeIf { it.isNotEmpty() } ?: "release")
+  (localValue("zoneu.debugSigning")?.trim()?.takeIf { it.isNotEmpty() } ?: "release")
     .also {
-      require(it == "release" || it == "debug") { "factotum.debugSigning 只能是 release 或 debug" }
+      require(it == "release" || it == "debug") { "zoneu.debugSigning 只能是 release 或 debug" }
     }
 
-// 模拟器调试：-Pfactotum.abis=x86_64；默认只打真机在用的 arm64-v8a（控制 APK 体积）
-val factotumAbis =
-  (project.findProperty("factotum.abis") as String?)
+// 模拟器调试：-Pzoneu.abis=x86_64；默认只打真机在用的 arm64-v8a（控制 APK 体积）
+val zoneuAbis =
+  ((project.findProperty("zoneu.abis") ?: project.findProperty("factotum.abis")) as String?)
     ?.split(',')
     ?.map { it.trim() }
     ?.filter { it.isNotEmpty() }
     ?.takeIf { it.isNotEmpty() }
     ?: listOf("arm64-v8a")
 
-val agentProxyPort = agentValue("factotum.agent.proxyPort", "FACTOTUM_AGENT_PROXY_PORT", "7897").toIntOrNull() ?: 7897
+val agentProxyPort = agentValue("zoneu.agent.proxyPort", "ZONEU_AGENT_PROXY_PORT", "7897").toIntOrNull() ?: 7897
 
 // --- 发布签名 ---
 // keystore 与口令都不入库：本机读 android/local.properties（gitignored，键名见 AGENTS.md），
@@ -85,26 +93,25 @@ val agentProxyPort = agentValue("factotum.agent.proxyPort", "FACTOTUM_AGENT_PROX
 // 未签名包装不上，这个后果自己会说话；比起一个「必须先配签名」的构建错误，它更容易排查。
 val releaseSigning =
   mapOf(
-    "storeFile" to "FACTOTUM_KEYSTORE_FILE",
-    "storePassword" to "FACTOTUM_KEYSTORE_PASSWORD",
-    "keyAlias" to "FACTOTUM_KEY_ALIAS",
-    "keyPassword" to "FACTOTUM_KEY_PASSWORD",
+    "storeFile" to "ZONEU_KEYSTORE_FILE",
+    "storePassword" to "ZONEU_KEYSTORE_PASSWORD",
+    "keyAlias" to "ZONEU_KEY_ALIAS",
+    "keyPassword" to "ZONEU_KEY_PASSWORD",
   ).mapValues { (prop, env) ->
-    System.getenv(env)?.takeIf { it.isNotBlank() }
-      ?: localProperties.getProperty("factotum.release.$prop")?.takeIf { it.isNotBlank() }
+    environmentValue(env) ?: localValue("zoneu.release.$prop")
   }
 val releaseStoreFile = releaseSigning["storeFile"]?.let { File(it) }?.takeIf { it.isFile }
 
 android {
-  namespace = "com.factotum.app"
+  namespace = "com.zoneu.app"
   compileSdk = 37
   ndkVersion = "29.0.14206865"
   defaultConfig {
     // applicationId 是**设备上的应用身份**（uid）。改它 = 设备上变成另一个 App，
     // 旧包的库立刻读不到 —— SQLCipher 口令由 Keystore 按 uid 封装、不可导出。
-    // 存储身份共四处，必须一起改：本行 / FactotumDatabaseProvider.DATABASE_NAME /
+    // 存储身份共四处，必须一起改：本行 / ZoneuDatabaseProvider.DATABASE_NAME /
     // PassphraseVault 的 prefsName 与 keyAlias。
-    applicationId = "com.factotum.app"
+    applicationId = "com.zoneu.app"
     minSdk = 28
     targetSdk = 36
     versionCode = 18
@@ -112,21 +119,21 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // 内嵌 libnode：默认只带真机的 arm64；模拟器用 -Pfactotum.abis=x86_64 覆盖
+    // 内嵌 libnode：默认只带真机的 arm64；模拟器用 -Pzoneu.abis=x86_64 覆盖
     ndk {
-      abiFilters += factotumAbis
+      abiFilters += zoneuAbis
     }
 
     // 这些是**默认值**：设置页（ui/settings）存的值优先级更高，见 AgentConfigStore。
     // 发布物装到别人手机上时，这里每一项都必须能空着跑。
-    buildConfigField("String", "AGENT_BASE_URL", buildConfigString(agentValue("factotum.agent.baseUrl", "FACTOTUM_AGENT_BASE_URL", "https://opencode.ai/zen/go/v1")))
+    buildConfigField("String", "AGENT_BASE_URL", buildConfigString(agentValue("zoneu.agent.baseUrl", "ZONEU_AGENT_BASE_URL", "https://opencode.ai/zen/go/v1")))
     // **这里没有 AGENT_API_KEY，是刻意的**：BuildConfig 是编译期常量、会以明文进 dex
     // （isMinifyEnabled=false，连混淆都没有 —— 实测能从 classes*.dex 里直接 grep 出密钥）。
     // 只要密钥**能**被编进包，「本机构建的包不能发出去」就永远是一条要人记住的规矩，
     // 而不是结构性的事实。密钥现在只有一个来源：设置页 → SecretVault（Keystore 封装）。
     // 要发包之前仍建议跑一遍 tools/check-sensitive.ps1 -ApkPath <包> 兜底。
-    buildConfigField("String", "AGENT_MODEL", buildConfigString(agentValue("factotum.agent.model", "FACTOTUM_AGENT_MODEL", "deepseek-v4.1-flash")))
-    buildConfigField("String", "AGENT_REASONING_EFFORT", buildConfigString(agentValue("factotum.agent.reasoningEffort", "FACTOTUM_AGENT_REASONING_EFFORT", "low")))
+    buildConfigField("String", "AGENT_MODEL", buildConfigString(agentValue("zoneu.agent.model", "ZONEU_AGENT_MODEL", "deepseek-v4.1-flash")))
+    buildConfigField("String", "AGENT_REASONING_EFFORT", buildConfigString(agentValue("zoneu.agent.reasoningEffort", "ZONEU_AGENT_REASONING_EFFORT", "low")))
     // 连接器的 OAuth 客户端凭据：**构建期注入，不入库**。
     // GitHub 的 push protection 把这两个值都判成密钥（对管理员一样拦），而且它们本来就
     // 只该出现在**发布产物**里、不该出现在源码树里。发布由 CI 从 GitHub Actions secret 注入，
@@ -134,9 +141,9 @@ android {
     // 设置页退回「要求用户自己填客户端 ID / 密码」的行为。
     // 这不是密钥泄漏防护（它们不是机密，见 docs/email-connector.md §4.1b），
     // 是**别让仓库和平台规则对着干**：值与源码分开，谁构建谁负责注入。
-    buildConfigField("String", "GMAIL_CLIENT_ID", buildConfigString(agentValue("factotum.connector.gmailClientId", "FACTOTUM_GMAIL_CLIENT_ID", "")))
-    buildConfigField("String", "GMAIL_CLIENT_SECRET", buildConfigString(agentValue("factotum.connector.gmailClientSecret", "FACTOTUM_GMAIL_CLIENT_SECRET", "")))
-    buildConfigField("String", "AGENT_PROXY_HOST", buildConfigString(agentValue("factotum.agent.proxyHost", "FACTOTUM_AGENT_PROXY_HOST", "")))
+    buildConfigField("String", "GMAIL_CLIENT_ID", buildConfigString(agentValue("zoneu.connector.gmailClientId", "ZONEU_GMAIL_CLIENT_ID", "")))
+    buildConfigField("String", "GMAIL_CLIENT_SECRET", buildConfigString(agentValue("zoneu.connector.gmailClientSecret", "ZONEU_GMAIL_CLIENT_SECRET", "")))
+    buildConfigField("String", "AGENT_PROXY_HOST", buildConfigString(agentValue("zoneu.agent.proxyHost", "ZONEU_AGENT_PROXY_HOST", "")))
     buildConfigField("int", "AGENT_PROXY_PORT", agentProxyPort.toString())
   }
 
@@ -157,7 +164,7 @@ android {
       if (debugSuffix != null) applicationIdSuffix = debugSuffix
       // 默认本机 debug 包也用 release 签名：设备上只保留**一个签名身份**，
       // 于是 debug ↔ release 可以互相覆盖安装（Android 要求更新包签名与已装版本一致）。
-      // `factotum.debugSigning=debug` 时不碰它，留给 AGP 用默认 debug 密钥（见文件顶部）。
+      // `zoneu.debugSigning=debug` 时不碰它，留给 AGP 用默认 debug 密钥（见文件顶部）。
       //
       // **必须这样写（`?.let`）而不是直接赋值**：没有 release keystore 时 findByName 返回 null，
       // 直接赋值等于把 debug 变体的签名显式设成 null —— AGP 就不签了，产物变成

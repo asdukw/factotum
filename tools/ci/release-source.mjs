@@ -32,8 +32,8 @@ export function resolveSource(directory, tag) {
   const version = gradle.match(/\bversionName\s*=\s*"([^"]+)"/)?.[1];
   if (version !== tag.slice(1)) throw new Error('tag 与目标源码 versionName 不一致');
   const suffixes = ['KEYSTORE_FILE', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD', 'GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET'];
-  const supported = ['FACTOTUM', 'TAPPET'].some(prefix => suffixes.every(suffix => gradle.includes(`"${prefix}_${suffix}"`)));
-  if (!supported) throw new Error('不支持的历史 Gradle 签名 / Gmail 环境变量合同（支持完整 FACTOTUM_* 或 TAPPET_*）');
+  const supported = ['ZONEU', 'FACTOTUM', 'TAPPET'].some(prefix => suffixes.every(suffix => gradle.includes(`"${prefix}_${suffix}"`)));
+  if (!supported) throw new Error('不支持的历史 Gradle 签名 / Gmail 环境变量合同（支持完整 ZONEU_*、FACTOTUM_* 或 TAPPET_*）');
   const prootMarker = existsSync(join(directory, 'android/app/src/main/assets/proot-runtime.json'));
   const prootScript = existsSync(join(directory, 'tools/fetch-proot.ps1'));
   if (prootMarker !== prootScript) throw new Error('不支持的 proot 装配合同：声明与 fetch-proot.ps1 不一致');

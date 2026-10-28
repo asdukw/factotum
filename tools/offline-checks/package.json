@@ -1,5 +1,5 @@
 {
-  "name": "factotum-offline-checks",
+  "name": "zoneu-offline-checks",
   "private": true,
   "description": "CI-only dependency for the dsh profile YAML parser; not shipped.",
   "dependencies": {

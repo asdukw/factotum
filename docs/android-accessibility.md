@@ -1,7 +1,7 @@
 # Android 无障碍执行层：系统探测与「四问」运行手册
 
 **状态（2026-10-03）**：系统侧探测完成；**四问探针已实现并在真机跑通**
-（Factotum 控制组 + QQ 试验场，结论见 §7）。执行层走**控件树优先、截图兜底**，
+（zoneu 控制组 + QQ 试验场，结论见 §7）。执行层走**控件树优先、截图兜底**，
 可以开始写工具；QQ 是后续两个试验任务的目标 App（选联系人聊天 / 群聊发言 @ 回复）。
 
 > **2026-10-17 变更**：探针页（`ui/probe/`）、`ProbeCommandReceiver` 广播、
@@ -26,7 +26,7 @@
 | ColorOS | PLZ110_16.0.10.500(CN01)，安全补丁 2026-08-01 | `getprop ro.build.display.id` |
 | 屏幕 | 物理 1080x2344，density 560 / 覆盖 480 | `wm size` / `wm density` |
 | 微信 | 8.0.78 | `dumpsys package com.tencent.mm` |
-| 本 App | targetSdk 36 / minSdk 28，debug 构建 | `dumpsys package com.factotum.app` |
+| 本 App | targetSdk 36 / minSdk 28，debug 构建 | `dumpsys package com.zoneu.app` |
 | shell | uid 2000，无 root | `adb shell id` |
 
 ## 2. 系统里有哪些无障碍服务（28 个）
@@ -92,14 +92,14 @@ adb shell cmd package query-services --brief -a android.accessibilityservice.Acc
 
 ## 3. 管控状态与启用路径
 
-- **侧载受限设置**：`cmd appops get com.factotum.app ACCESS_RESTRICTED_SETTINGS` 返回
+- **侧载受限设置**：`cmd appops get com.zoneu.app ACCESS_RESTRICTED_SETTINGS` 返回
   `default; rejectTime=+5d… ago` —— App 处于 Android 13+ 的「受限设置」。
   从设置 UI 手动开启服务前，需走 应用信息 → 右上角菜单 → **允许受限设置**。
 - **adb 启用路径实测可用**（不再只是预计）：`settings put secure enabled_accessibility_services
   <组件>` + `settings put secure accessibility_enabled 1` 后服务立即 bound，
   `dumpsys accessibility` 显示 `capabilities=161`（读树 1 + 手势 32 + 截图 128）。
 - **ColorOS 安全弹窗**：带无障碍的 App 到前台时，`com.oplus.safecenter` 会弹
-  「检测到“Factotum”获取无障碍权限」，按钮「保持开启 (3)」倒计时 3 秒后才可点，
+  「检测到“Zoneu”获取无障碍权限」，按钮「保持开启 (3)」倒计时 3 秒后才可点，
   不点则可能被关闭。首次启用 / 重装后必弹。
 - **重装会摘掉服务**：`adb install -r` 后 `enabled_accessibility_services` 变空，
   必须重新启用（实测）。
@@ -130,12 +130,12 @@ FLAG_SECURE 是逐窗口属性（支付、密码类页面常设），所以 Q2 �
 
 ### 代码分层（ROM 无关契约 / Android 实现 / OEM 档）
 
-- `app/src/main/java/com/factotum/app/device/` —— **通用契约**：
+- `app/src/main/java/com/zoneu/app/device/` —— **通用契约**：
   `DeviceAction` / `DeviceActionResult`（原子动作）、`DeviceBridge`（操作入口）、
   `OemProfiles`（OemProfile：启用路径、adb 命令、已知限制）。
   （`DeviceCapability` / `CapabilityResult` / `DeviceBridgeState` 随探针一起删除。）
-- `app/src/main/java/com/factotum/app/accessibility/` —— **AOSP 无障碍实现**：
-  `FactotumAccessibilityService`（`DeviceBridge` 实现，不绑 ROM）。
+- `app/src/main/java/com/zoneu/app/accessibility/` —— **AOSP 无障碍实现**：
+  `ZoneuAccessibilityService`（`DeviceBridge` 实现，不绑 ROM）。
 - `app/src/debug/` —— debug-only 的 adb 广播入口（`DeviceActionReceiver` / `NodeDebugReceiver`，release 不含）。
 
 换 ROM 只加一个 `OemProfile`；正式执行层只扩 `DeviceBridge`，UI 与工具不动。
@@ -156,7 +156,7 @@ FLAG_SECURE 是逐窗口属性（支付、密码类页面常设），所以 Q2 �
 启用 / 复位（adb 路径）：
 
 ```powershell
-adb shell settings put secure enabled_accessibility_services com.factotum.app/.accessibility.FactotumAccessibilityService
+adb shell settings put secure enabled_accessibility_services com.zoneu.app/.accessibility.ZoneuAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 
 # 复位（PowerShell 里空串要整体包一层引号）
@@ -171,11 +171,11 @@ adb shell settings put secure accessibility_enabled 0
 2. **adb（仅 debug 构建）**：目标 App 在前台时直接广播，无需倒计时 ——
 
 ```powershell
-adb shell am broadcast -n com.factotum.app/.accessibility.ProbeCommandReceiver `
-  -a com.factotum.app.debug.PROBE --es capability READ_TREE   # SCREENSHOT / SET_TEXT / TAP
+adb shell am broadcast -n com.zoneu.app/.accessibility.ProbeCommandReceiver `
+  -a com.zoneu.app.debug.PROBE --es capability READ_TREE   # SCREENSHOT / SET_TEXT / TAP
 ```
 
-结果同时进 `Logcat`（当时 tag 是 `FactotumProbe`；2026-10-17 起执行层的 tag 改为 `FactotumDevice`，
+结果同时进 `Logcat`（当时 tag 是 `ZoneuProbe`；2026-10-17 起执行层的 tag 改为 `ZoneuDevice`，
 只记计数 / 类名 / 坐标 / 错误码，不落正文）。
 
 四问跑在**样本矩阵**上，不绑定单一 App：目标是通用 mobile agent，QQ 是后续两个
@@ -214,9 +214,9 @@ adb shell dumpsys window windows   # 目标窗口 fl= 里有没有 SECURE
 
 | 问 | 结论 | 证据 | 失败形态 |
 |---|---|---|---|
-| Q1 读屏 | ✅ | Factotum：34 节点 / 12 文本 / 1 输入框；QQ 聊天页：45 节点 / 21 文本 / 1 输入框 / 25 可点；均含 `getWindows()` | root 为 null 时框架内已给明确失败文案，未遇到 |
-| Q2 截图 | ✅ | Factotum 100% 非黑；QQ 图库 65.5%；QQ 主页 99.7%；尺寸 1080x2344 | 未遇到 FLAG_SECURE 页；遇到时错误码为 `ERROR_TAKE_SCREENSHOT_SECURE_WINDOW` |
-| Q3 输入 | ✅ | `ACTION_SET_TEXT` 在 Factotum Compose 输入框、QQ 输入框均写入且读回一致；验证后自动清空 | 首版因 Compose/QQ 文本异步刷新读到旧值而误判失败 → 加 400ms 延迟校验后通过；未用到 PASTE 回退 |
+| Q1 读屏 | ✅ | Zoneu：34 节点 / 12 文本 / 1 输入框；QQ 聊天页：45 节点 / 21 文本 / 1 输入框 / 25 可点；均含 `getWindows()` | root 为 null 时框架内已给明确失败文案，未遇到 |
+| Q2 截图 | ✅ | zoneu 100% 非黑；QQ 图库 65.5%；QQ 主页 99.7%；尺寸 1080x2344 | 未遇到 FLAG_SECURE 页；遇到时错误码为 `ERROR_TAKE_SCREENSHOT_SECURE_WINDOW` |
+| Q3 输入 | ✅ | `ACTION_SET_TEXT` 在 zoneu Compose 输入框、QQ 输入框均写入且读回一致；验证后自动清空 | 首版因 Compose/QQ 文本异步刷新读到旧值而误判失败 → 加 400ms 延迟校验后通过；未用到 PASTE 回退 |
 | Q4 手势 | ✅ | `dispatchGesture` 点输入框：控制组焦点坐标包含；QQ 输入框聚焦后位移，按「焦点变为可编辑」判定通过 | 输入框聚焦后 bounds 变化，坐标包含判定会假阴性 |
 
 **结论：四问全通** → 执行层走**控件树优先**（读屏 + 按节点 bounds 手势 + ACTION_SET_TEXT），
@@ -249,8 +249,8 @@ adb shell dumpsys window windows   # 目标窗口 fl= 里有没有 SECURE
 
 | 场景 | 触摸探索 | 微信进程 | 读到的节点 |
 |---|---|---|---|
-| 只挂 Factotum（未声明触摸探索能力） | false | 任意 | 1 |
-| 只挂 Factotum + `canRequestTouchExplorationMode` 但运行时去掉 flag | false | 冷启动 | 1 |
+| 只挂 zoneu（未声明触摸探索能力） | false | 任意 | 1 |
+| 只挂 zoneu + `canRequestTouchExplorationMode` 但运行时去掉 flag | false | 冷启动 | 1 |
 | 运行时加上 flag（`setServiceInfo`） | true | 之前已启动 | 1 |
 | 同上 | true | 冷启动 / 强停后重启 | **441** |
 | 先 false 再 true（进程存活） | true | 存活 | 1 |
@@ -376,7 +376,7 @@ ColorOS 下捕获位图尺寸是否等于 `displayMetrics`。验证步骤见本�
 
 ### 先排除的两条路
 
-- **自建 IME**（roadmap §2.5 原先写的做法）：要用户把 Factotum 切成当前输入法才有效果。而
+- **自建 IME**（roadmap §2.5 原先写的做法）：要用户把 zoneu 切成当前输入法才有效果。而
   **只有当前输入法能切回自己**（`InputMethodManager.setInputMethod` 要 IME 自己的 token 或
   `WRITE_SECURE_SETTINGS`，普通应用两样都没有），所以「任务前切过去、任务后切回来」做不到；
   一个无键盘的输入法当默认输入法 = 把用户的键盘拿走。**每做一个需要输入的任务切一次**，不可接受。
@@ -432,8 +432,8 @@ input method capabilities: get the InputConnection and get text selection change
 
 ### 真机验证（待做）
 
-1. `adb shell am broadcast -n com.factotum.app/.accessibility.DeviceActionReceiver -a com.factotum.app.debug.ACTION --es action TEXT_CHANNEL`
-   → logcat（`FactotumDevice`）应报 `text channel: supported=true flagActive=true connection=… editor=…`。
+1. `adb shell am broadcast -n com.zoneu.app/.accessibility.DeviceActionReceiver -a com.zoneu.app.debug.ACTION --es action TEXT_CHANNEL`
+   → logcat（`ZoneuDevice`）应报 `text channel: supported=true flagActive=true connection=… editor=…`。
    **`flagActive=false` 就是没生效**：去设置里把无障碍关掉再打开一次，再验一遍。
 2. 树可读的界面（系统设置搜索框）：点中输入框 → `TYPE_TEXT` → 应报 `via=tree`（**不该**掉进通道）。
 3. **通道的写入与动作键**（隔离验证）：点中一个输入框，
@@ -449,7 +449,7 @@ input method capabilities: get the InputConnection and get text selection change
 
 解决的是「每步都把整棵树重发一遍」的成本：全量上限 240 行，一个长任务里同一屏往往要读几十次，
 其中绝大多数节点根本没变。实现在 `device/ScreenDiff.kt`（纯函数）与
-`accessibility/FactotumAccessibilityService.executeReadScreen`。
+`accessibility/ZoneuAccessibilityService.executeReadScreen`。
 
 ### 契约
 
@@ -506,7 +506,7 @@ input method capabilities: get the InputConnection and get text selection change
 指纹用于行尾一行提示：`page=3f9a12cd new` 或
 `page=3f9a12cd known visits=4 last=tap@(540,300)`。
 
-页面记忆落在 `SharedPreferences("factotum_page_memory")`（`device/PageMemoryStore.kt`）：
+页面记忆落在 `SharedPreferences("zoneu_page_memory")`（`device/PageMemoryStore.kt`）：
 
 - 只存 `访问次数 | 上次成功动作 | 时间戳`，动作只保留类型与坐标（`tap@(x,y)`、`swipe up`、`type`），
   **不存任何正文** —— 即使文件被读走也还原不出屏幕内容；

@@ -1,7 +1,7 @@
 // 从 pi-ai 的 provider 数据生成「provider → model id → input 模态」索引。
 //
 // 用途：设置页要给几百个端点模型标「可读图 / 仅文本」，NodeRuntime 还要按同一份结论生成
-// FACTOTUM_LLM_MODELS 的 input 声明。让 App 去解 63MB 的 dsh-runtime.zip 只为了拿这点信息
+// ZONEU_LLM_MODELS 的 input 声明。让 App 去解 63MB 的 dsh-runtime.zip 只为了拿这点信息
 // 不值得，所以在装配阶段抽成 ~60KB 的 assets/model-modalities.json。
 //
 // 生成物不入库；调用方是 tools/bundle-dsh.ps1。

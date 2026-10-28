@@ -9,8 +9,10 @@ all_keys.json
 # --- 本地工具 ---
 .workbuddy-ai/
 # Claude Code 的本地状态：worktrees 是完整检出（不是源码）、settings.local.json 是本机设置。
-# 注意 `.claude/agents/` 下已入库的子 agent 定义不受影响 —— gitignore 管不到已跟踪文件。
-.claude/
+# 只保留项目审计 agent，其余本机状态继续忽略。
+.claude/**
+!.claude/agents/
+!.claude/agents/zoneu-auditor.md
 
 # --- 审计产物（tools/audit/collect.mjs 产出）---
 # 含屏幕正文与工具结果原文，属敏感数据：工具与任务集入库，产物不入库。

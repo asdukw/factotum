@@ -57,7 +57,7 @@ $localProperties = Join-Path $root 'android/local.properties'
 # 注意：这些会被塞进 git grep -E（POSIX ERE），所以不用 (?:...) / \d 这类扩展语法。
 $SecretPatterns = @(
   'oc_sk_[A-Za-z0-9_]{16,}'            # opencode zen
-  'sk-[A-Za-z0-9_-]{16,}'              # OpenAI 风格
+  '(^|[^A-Za-z0-9_])sk-[A-Za-z0-9_-]{16,}' # OpenAI 风格；不把 task-list-item-checkbox 当成 key
   'ghp_[A-Za-z0-9]{20,}'               # GitHub PAT（经典）
   'github_pat_[A-Za-z0-9_]{20,}'       # GitHub PAT（细粒度）
   'AKIA[0-9A-Z]{16}'                   # AWS Access Key ID
@@ -76,7 +76,7 @@ $IdentifierPatterns = @(
 function Get-LiveApiKey {
   if (-not (Test-Path -LiteralPath $localProperties)) { return $null }
   foreach ($line in Get-Content -LiteralPath $localProperties) {
-    if ($line -match '^\s*factotum\.agent\.apiKey\s*=') {
+    if ($line -match '^\s*(zoneu|factotum)\.agent\.apiKey\s*=') {
       $value = $line.Substring($line.IndexOf('=') + 1).Trim()
       if ($value.Length -gt 0) { return $value }
     }
@@ -150,11 +150,13 @@ if ($SelfTest) {
   #   2) 真实标识不能借自检样本还魂 —— u_ 那条原本是从已剥离的历史里抄来的真实 NT UID
   #      （见 AGENTS.md「Git 历史」）。样本只要能命中模式即可，越假越好。
   $ocSample = 'oc_sk_' + 'abcdefghijklmnop1234'
+  $skSample = 'sk-' + 'SyntheticPlaceholder00'
   $ghSample = 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   $phoneSample = '138' + '00138000'
   $uidSample = 'u_' + 'SyntheticPlaceholder00'
   $positive = @(
     'key = "' + $ocSample + '"'
+    'openai = "' + $skSample + '"'
     'gh = ' + $ghSample
     'phone = ' + $phoneSample
     'uid = ' + $uidSample
@@ -163,6 +165,7 @@ if ($SelfTest) {
 baseUrl = https://example.com/v1
 model = deepseek-v4.1-flash
 note = "这里没有任何密钥，也没有 u_ 开头的长串"
+<input type="checkbox" class="task-list-item-checkbox"
 '@
 
   $secretHits = Find-PatternHits -Text $positive -Patterns $SecretPatterns
@@ -171,7 +174,7 @@ note = "这里没有任何密钥，也没有 u_ 开头的长串"
   $cleanIdent = Find-PatternHits -Text $negative -Patterns $IdentifierPatterns
   $literal = Find-LiteralHits -Text $positive -Literal $ocSample
 
-  if ($secretHits.Count -lt 2) { Write-Host "  FAIL 密钥模式命中不足：$($secretHits.Count)" -ForegroundColor Red; $failures++ }
+  if ($secretHits.Count -lt 3) { Write-Host "  FAIL 密钥模式命中不足：$($secretHits.Count)" -ForegroundColor Red; $failures++ }
   else { Write-Host "  ok   密钥模式命中 $($secretHits.Count) 条" -ForegroundColor Green }
 
   if ($identHits.Count -lt 2) { Write-Host "  FAIL 标识模式命中不足：$($identHits.Count)" -ForegroundColor Red; $failures++ }
@@ -182,6 +185,15 @@ note = "这里没有任何密钥，也没有 u_ 开头的长串"
 
   if ($cleanIdent.Count -ne 0) { Write-Host "  FAIL 干净文本上误报：$($cleanIdent -join ', ')" -ForegroundColor Red; $failures++ }
   else { Write-Host '  ok   干净文本零误报（标识）' -ForegroundColor Green }
+
+  # 同一条规则用于文本与 dex：起始、引号、分隔符和 NUL 后的真实 key 仍须命中。
+  $skPattern = $SecretPatterns[1]
+  foreach ($prefix in @('', '"', 'Bearer ', [string][char]0)) {
+    if (-not [regex]::IsMatch(($prefix + $skSample), $skPattern)) {
+      Write-Host '  FAIL OpenAI key 边界回归' -ForegroundColor Red
+      $failures++
+    }
+  }
 
   if ($literal -ne 1) { Write-Host "  FAIL 字面量命中数应为 1，实际 $literal" -ForegroundColor Red; $failures++ }
   else { Write-Host '  ok   字面量扫描正常' -ForegroundColor Green }
@@ -196,11 +208,11 @@ $liveKey = Get-LiveApiKey
 $failed = $false
 $warned = $false
 
-Write-Host '== Factotum 发布前敏感信息自检 ==' -ForegroundColor Cyan
+Write-Host '== Zoneu 发布前敏感信息自检 ==' -ForegroundColor Cyan
 if ($liveKey) {
   Write-Host "已读到本机 API key（$($liveKey.Length) 字符，不打印）" -ForegroundColor DarkGray
 } else {
-  Write-Host '本机没有 API key（local.properties 无 factotum.agent.apiKey），只按模式扫' -ForegroundColor DarkGray
+  Write-Host '本机没有 API key（local.properties 无 zoneu.agent.apiKey），只按模式扫' -ForegroundColor DarkGray
 }
 
 # 1) .gitignore 健康检查 —— 这条失效的后果最大

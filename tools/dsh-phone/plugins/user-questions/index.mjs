@@ -24,8 +24,8 @@
 const BRIDGE_TIMEOUT_MS = 30 * 60 * 1000
 
 function bridge() {
-  const baseUrl = process.env.FACTOTUM_QUESTION_BRIDGE_URL
-  const token = process.env.FACTOTUM_QUESTION_BRIDGE_TOKEN
+  const baseUrl = process.env.ZONEU_QUESTION_BRIDGE_URL
+  const token = process.env.ZONEU_QUESTION_BRIDGE_TOKEN
   if (!baseUrl || !token) return undefined
   return { baseUrl, token }
 }

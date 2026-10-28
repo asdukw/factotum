@@ -38,7 +38,7 @@
 # **边界如实记着**：dsh-fs-local 的 `cwd` 只是「相对路径的解析基准」，**不是围栏**
 # （源码原话：a resolution default, NOT a containment boundary）。拿到 tool-fs 之后，
 # 模型能读写的是 **App uid 能碰到的全部路径** —— 包括 files/dsh-home/ 下的会话记录，
-# 以及 databases/factotum.db（SQLCipher 加密，但删得掉）。要收紧得换更严的 fs 后端，
+# 以及 databases/zoneu.db（SQLCipher 加密，但删得掉）。要收紧得换更严的 fs 后端，
 # 或挂 permission / sandbox 那一层（本 profile 现在没挂）。
 - id: tool-fs
   disabled: false
@@ -96,33 +96,33 @@
 - id: llm-pi-ai
   config:
     providers:
-      factotum:
-        displayName: Factotum 端点
-        apiKeyEnv: FACTOTUM_LLM_KEY
-        api: !!js process.env.FACTOTUM_LLM_API ?? 'openai-completions'
+      zoneu:
+        displayName: Zoneu 端点
+        apiKeyEnv: ZONEU_LLM_KEY
+        api: !!js process.env.ZONEU_LLM_API ?? 'openai-completions'
         # 兜底是内置端点：本机没在设置页配过时的默认（也是真机上唯一跑通过的那条）。
-        baseURL: !!js process.env.FACTOTUM_LLM_BASE_URL ?? 'https://opencode.ai/zen/go/v1'
+        baseURL: !!js process.env.ZONEU_LLM_BASE_URL ?? 'https://opencode.ai/zen/go/v1'
         # x-opencode-session 是 opencode zen 的硬要求；别的服务商带上它没有意义，
         # 所以按预选给空对象而不是无条件发。
-        headers: !!js "process.env.FACTOTUM_LLM_ZEN === '1' ? { 'x-opencode-session': process.env.FACTOTUM_LLM_SESSION ?? 'factotum-mobile' } : {}"
+        headers: !!js "process.env.ZONEU_LLM_ZEN === '1' ? { 'x-opencode-session': process.env.ZONEU_LLM_SESSION ?? 'zoneu-mobile' } : {}"
 
-        # 模型清单由宿主在启动时按「当前选中的模型」写成 JSON（NodeRuntime 的 FACTOTUM_LLM_MODELS）。
-        # 路由键 factotum 不是 pi-ai 目录里的 provider，适配器不会从安装目录补模型：未声明的 id
+        # 模型清单由宿主在启动时按「当前选中的模型」写成 JSON（NodeRuntime 的 ZONEU_LLM_MODELS）。
+        # 路由键 zoneu 不是 pi-ai 目录里的 provider，适配器不会从安装目录补模型：未声明的 id
         # 会以 UNKNOWN_MODEL 失败（不是退化成纯文本）。所以清单必须动态生成，否则手填模型与
         # 自定义提供商全都不可用。input 也由宿主按目录模态声明，目录外的 id 一律 text。
         #
-        # 下面的 fallback 只给「没有 FACTOTUM_LLM_MODELS 环境变量」的场景（PC 侧 profile 校验、
+        # 下面的 fallback 只给「没有 ZONEU_LLM_MODELS 环境变量」的场景（PC 侧 profile 校验、
         # 直接跑 dsh）：Android 上 NodeRuntime 启动前一定会注入它。
-        models: !!js "JSON.parse(process.env.FACTOTUM_LLM_MODELS ?? '[{\"id\":\"deepseek-v4.1-flash\",\"input\":[\"text\",\"image\"]}]')"
+        models: !!js "JSON.parse(process.env.ZONEU_LLM_MODELS ?? '[{\"id\":\"deepseek-v4.1-flash\",\"input\":[\"text\",\"image\"]}]')"
         # thinkingFormat 只在对方**没有原生推理协议**时才需要（zen / DeepSeek 的 reasoning
         # 字段靠它解析）。OpenAI 的 responses 与 Anthropic 的 messages 自带推理块，
         # 那时宿主会注入空串，这里就是空对象。
-        compat: !!js "process.env.FACTOTUM_LLM_THINKING_FORMAT ? { thinkingFormat: process.env.FACTOTUM_LLM_THINKING_FORMAT } : {}"
+        compat: !!js "process.env.ZONEU_LLM_THINKING_FORMAT ? { thinkingFormat: process.env.ZONEU_LLM_THINKING_FORMAT } : {}"
 
 - id: agent-default-model
   config:
-    provider: factotum
-    model: !!js process.env.FACTOTUM_LLM_MODEL ?? 'deepseek-v4.1-flash'
+    provider: zoneu
+    model: !!js process.env.ZONEU_LLM_MODEL ?? 'deepseek-v4.1-flash'
 
 # --- 联网搜索：dsh 自带的 web 能力 seam（2026-10-18） ---
 # `dsh-web`（seam）与 `dsh-tool-web`（模型可见的 `web_search` / `web_fetch`，带提示词指引、
@@ -145,9 +145,9 @@
   config:
     # 用 `||` 而不是 `??`：不支持的提供商由宿主注入**空串**，空串要走兜底而不是被当成有效值。
     # 兜底只是「PC 侧直接跑 dsh」的形状；Android 上真正决定可用性的是下面的 apiKeyEnv。
-    baseURL: !!js process.env.FACTOTUM_WEB_SEARCH_BASE_URL || 'https://api.deepseek.com/anthropic/v1'
-    model: !!js process.env.FACTOTUM_WEB_SEARCH_MODEL || 'deepseek-v4-flash'
-    apiKeyEnv: !!js process.env.FACTOTUM_WEB_SEARCH_KEY_ENV || 'DEEPSEEK_API_KEY'
+    baseURL: !!js process.env.ZONEU_WEB_SEARCH_BASE_URL || 'https://api.deepseek.com/anthropic/v1'
+    model: !!js process.env.ZONEU_WEB_SEARCH_MODEL || 'deepseek-v4-flash'
+    apiKeyEnv: !!js process.env.ZONEU_WEB_SEARCH_KEY_ENV || 'DEEPSEEK_API_KEY'
     maxUses: 5
 
 # 工具行（`web_search` / `web_fetch`）**在宿主层重新启用**。
@@ -165,7 +165,7 @@
 # --- 长期记忆：dsh 自带的指令文件加载器（2026-10-18） ---
 # dsh **没有**独立的「记忆」插件。官方的长期记忆机制就是这一条：把 `$DSH_HOME/AGENTS.md`
 # （用户全局）与从项目根到工作目录的指令链读进上下文，`dsh-base` 默认给 64 KiB 预算。
-# 我们的 `DSH_HOME` = `FACTOTUM_WORKDIR` = `files/dsh-home`，所以记忆文件落在
+# 我们的 `DSH_HOME` = `ZONEU_WORKDIR` = `files/dsh-home`，所以记忆文件落在
 # `files/dsh-home/AGENTS.md`（App 私有目录，与会话库同级）。
 #
 # `dsh-web-app` 把它禁了 —— 与 tool-web 同一个文件、同一类坑：**必须在宿主层
@@ -232,7 +232,7 @@
 - id: system-prompt
   config:
     personaPrefix: |-
-      你是 Factotum，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
+      你是 Zoneu，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
       帮用户完成任务。
       **有控件树时**用 read_ui_tree 读屏、tap_node 点击 —— 那条路最稳，优先走它。
       **读屏没有任何可读节点时**（该 App 对无障碍隐藏了控件树）改用视觉路径：capture_screenshot 取一帧，
@@ -275,7 +275,7 @@
             config:
               complete: true
               prefix: |-
-                你是 Factotum，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
+                你是 Zoneu，运行在用户 Android 手机上的 agent。你可以调用通用设备工具直接操作手机界面，
                 帮用户完成任务。
                 **有控件树时**用 read_ui_tree 读屏、tap_node 点击 —— 那条路最稳，优先走它。
                 **读屏没有任何可读节点时**（该 App 对无障碍隐藏了控件树）改用视觉路径：capture_screenshot 取一帧，

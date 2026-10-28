@@ -33,7 +33,7 @@ if (vendor === undefined) {
   process.exit(0)
 }
 
-const sandbox = mkdtempSync(join(tmpdir(), 'factotum-gmail-'))
+const sandbox = mkdtempSync(join(tmpdir(), 'zoneu-gmail-'))
 try {
   const pkgDir = join(sandbox, 'node_modules', 'dsh-plugin-gmail')
   mkdirSync(pkgDir, { recursive: true })

@@ -8,13 +8,13 @@
 | 现象 | 原因 / 处理 |
 |---|---|
 | 全新安装 Gradle 挂 5 分钟后失败 | ColorOS 拦 `adb install` 通道 → 手动 `adb install -r` |
-| `adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` | 新包与设备上那份签名不同：本机有 release keystore 时 debug 包默认用它签，而设备上那份是默认 debug 密钥签的（从没有 `local.properties` 的 worktree 打的就是这把）→ `android/local.properties` 写 `factotum.debugSigning=debug` 重打。**别卸载了事**：SQLCipher 库与密钥随卸载永久丢失。查两边指纹：`apksigner verify --print-certs <apk>` 对 `dumpsys package <pkg>` |
-| `nativeOpen` UnsatisfiedLinkError | 忘加载 SQLCipher → `FactotumDatabaseProvider` 显式 `loadLibrary` |
+| `adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` | 新包与设备上那份签名不同：本机有 release keystore 时 debug 包默认用它签，而设备上那份是默认 debug 密钥签的（从没有 `local.properties` 的 worktree 打的就是这把）→ `android/local.properties` 写 `zoneu.debugSigning=debug` 重打。**别卸载了事**：SQLCipher 库与密钥随卸载永久丢失。查两边指纹：`apksigner verify --print-certs <apk>` 对 `dumpsys package <pkg>` |
+| `nativeOpen` UnsatisfiedLinkError | 忘加载 SQLCipher → `ZoneuDatabaseProvider` 显式 `loadLibrary` |
 | `dlopen failed: libc++_shared.so not found` | 重跑 `tools/fetch-libnode.ps1`；确认文件**确实落在** `jniLibs/<abi>/`（脚本有自检，别只看它打印成功） |
 | APK 里有 libnode.so 但没有 libc++_shared.so | AGP 不会自动打包 STL，jniLibs 是唯一来源 → 同上；`assemble.yml` 会拦住 |
-| `Task '.abis=x86_64' not found` | PowerShell 把 `-Pfactotum.abis=x86_64` 拆成两个参数 → 加引号：`"-Pfactotum.abis=x86_64"` |
+| `Task '.abis=x86_64' not found` | PowerShell 把 `-Pzoneu.abis=x86_64` 拆成两个参数 → 加引号：`"-Pzoneu.abis=x86_64"` |
 | 装到手机上 `dlopen libc++_shared.so` 失败（刚跑过模拟器） | jniLibs 停在 x86_64 → `tools/fetch-libnode.ps1` 切回 arm64 再出包 |
-| 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Pfactotum.abis=x86_64` |
+| 模拟器上 App 起不来 / 缺 libnode | 只装配了 arm64 → `fetch-libnode.ps1 -Abi x86_64` + `-Pzoneu.abis=x86_64` |
 | Gradle 代理不生效 | 行内 `-D` 被 gradlew.bat 拆坏 → 放 `GRADLE_OPTS` 环境变量 |
 | 内嵌 Node 编译失败 `unknown type name 'concept'` | Node 24 头文件要 C++20 → `CMAKE_CXX_STANDARD 20` |
 | 装完 App 起不来，报 `ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis'` | **装配脚本是用 Windows PowerShell 5.1 跑的**：它的 .NET Framework 把 zip 条目名写成 `\`，设备侧解不出目录树（解出来是 `node_modules\.bin\cordis` 这种扁平文件名）→ 用 **`pwsh` 7** 重跑 `bundle-dsh.ps1`（脚本末尾现在会自检并 throw） |
@@ -46,7 +46,7 @@
 | 广播后卡在 `debug task start`、再没有下文 | **cached app freezer 把进程冻住了**（Android 11+，约 10 秒）。首次启动要解压 dsh 运行时（模拟器实测 **122 秒**），期间没有前台服务就必冻 → 先 `am start` 把 App 拉到前台再广播。广播**不在前台的 FGS 白名单里**，`startForegroundService` 会抛 `ForegroundServiceStartNotAllowedException`，所以接收器里那一步是尽力而为（AlarmManager 那条路有白名单，不受影响） |
 | `adb shell am broadcast --es task "a b"` 丢参数 | 整条命令再包一层引号：`adb shell "am broadcast ... 'a b'"` |
 | `op ASR` / `op VAD` 广播了但日志里什么都没有 | Git Bash 把设备路径 `/data/...` 翻成了 `Files/Git/data/...`（MSYS 路径转换）→ 前面加 `MSYS_NO_PATHCONV=1`；另见「先 monkey 再广播」那条 |
-| 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.factotum.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
+| 拉 dsh 会话文件解压失败 | `adb shell cat` 会把 `\n` 翻成 `\r\n` → 用 `adb exec-out run-as com.zoneu.app cat ...`；会话是一帧一条记录，需按 RFC 8878 手工切帧后逐帧解 |
 
 ## 执行层 / 视觉 / 文本输入
 
@@ -79,7 +79,7 @@
 | 浏览器点完同意后 App 没反应 | 授权全流程真机已跑通；遇到时先看 stderr 里回环监听器有没有收到请求（部分浏览器拦 `127.0.0.1`）。另：授权期间 App 进程被杀就得重来（最长 10 分钟持有 socket） |
 | 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
 | 邮件工具整个不见了 / dsh 起不来 | 插件名三处不一致（profile 的 insert / `bundle-dsh.ps1` 的 Package / 插件 `package.json`）→ 有单测钉住；改完重跑 `bundle-dsh.ps1` |
-| 想确认邮件正文没进日志 | `adb logcat -s FactotumConnector FactotumAudit` —— 只应有动作名与失败码，不该有主题 / 发件人 / 正文 |
+| 想确认邮件正文没进日志 | `adb logcat -s ZoneuConnector ZoneuAudit` —— 只应有动作名与失败码，不该有主题 / 发件人 / 正文 |
 | `web_search` 回 `WEB_PROVIDER_UNAVAILABLE` | 当前提供商没有搜索端点（`LlmPreset.Endpoint.search == null`）→ 换 OpenCode Go，或在 `Endpoint.search` 里补一个**实测过**的 |
 | `web_search` 报 400 `MissingSessionID` | zen 的会话头没补上 → 确认 `zen-session-fetch.mjs` 进了运行时（重跑 `bundle-dsh.ps1`；它和 `launcher.mjs` 必须一起拷进 cache） |
 | 装完启动报 `Cannot find module .../zen-session-fetch.mjs` | 同上一类：launcher 的兄弟模块漏拷 → 重跑 `tools/bundle-dsh.ps1` |
@@ -104,7 +104,7 @@
 | 点麦克风什么都没说，输入框却多出一句话 | 手写的能量法端点判定把环境噪声送进了模型（静音 5 秒 → 7~11 个字）→ 已换成 silero VAD，噪声根本不成段；**别再回到阈值判定** |
 | 说完立刻按停，话没了 | `Vad.flush()` 漏了：段要等 0.8 秒静音才闭合 → 收尾顺序必须是 `stop()` → `finish()` → `release()` |
 | 语音输入报「端点检测没起来」 | `assets/silero_vad.onnx` 不在包里 → 跑 `tools/fetch-sherpa.ps1`（629KB，从 `asr-models` release 拉） |
-| `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.factotum.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
+| `op ASR` 报 `Failed to read wave file` | WAV 不在 App 私有目录：`/data/local/tmp` 与 `/sdcard/Android/data/<包名>/` 下 adb 推的文件 App 都读不到 → 用 `adb shell "cat /data/local/tmp/x.wav \| run-as com.zoneu.app sh -c 'cat > files/asr/x.wav'"`（别从宿主侧直接 pipe，会截断） |
 | `voice/` 下的 VAD 改动想验 | `op VAD --es wav <模型归档里的 test_wavs/*.wav>` —— 打的是段数 / 样本数（**没有正文**），不用真人开口就能验 |
 | 想给 `OfflineRecognizerConfig` 加 `decodingMethod` / `blankPenalty` | **别加**：paraformer 只认 `greedy_search`，填别的直接 `SHERPA_ONNX_EXIT(-1)`（App 崩）；`blankPenalty` 只有 transducer 读。要 ITN / 同音字替换用 `ruleFsts` / `ruleFars` / `hr` |
 | 下载模型报「连不上 github.com」 | 手机没开 VPN。**不做自动重试**（会让人以为已经在下了）→ 点那一条上的**重试**，从半截文件接着下。建连超时 15 秒、读超时 15 秒；失败原因由 `UpdateHttp.failReason` 翻译，别再退回「异常原文直接显示」 |

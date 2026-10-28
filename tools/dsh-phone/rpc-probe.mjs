@@ -1,6 +1,6 @@
 // PC 侧验证探针：以 SDK client 身份跟 vendored dsh 的 stdio JSON-RPC 运行时对话。
 //
-// 用法（PC，需 android/local.properties 里有 factotum.agent.apiKey）：
+// 用法（PC，需 android/local.properties 里有 zoneu.agent.apiKey）：
 //   node tools/dsh-phone/rpc-probe.mjs
 //
 // 只做验证：initialize → session/prompt("Reply with exactly: ping")，把
@@ -17,13 +17,13 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..', '..')
 const runtime = join(repoRoot, 'android', '.dsh-cache', 'runtime')
-const work = join(process.env.TEMP ?? '/tmp', 'factotum-rpc-probe')
+const work = join(process.env.TEMP ?? '/tmp', 'zoneu-rpc-probe')
 
 function apiKey() {
   const text = readFileSync(join(repoRoot, 'android', 'local.properties'), 'utf8')
-  const line = text.split(/\r?\n/).find((entry) => entry.startsWith('factotum.agent.apiKey='))
-  if (!line) throw new Error('factotum.agent.apiKey not found in android/local.properties')
-  return line.slice('factotum.agent.apiKey='.length).trim()
+  const line = text.split(/\r?\n/).find((entry) => entry.startsWith('zoneu.agent.apiKey='))
+  if (!line) throw new Error('zoneu.agent.apiKey not found in android/local.properties')
+  return line.slice(line.indexOf('=') + 1).trim()
 }
 
 mkdirSync(work, { recursive: true })
@@ -33,9 +33,9 @@ const child = spawn(process.execPath, [join(runtime, 'launcher.mjs')], {
   env: {
     ...process.env,
     DSH_HOME: work,
-    FACTOTUM_WORKDIR: work,
-    FACTOTUM_LLM_KEY: apiKey(),
-    FACTOTUM_LLM_SESSION: `probe-${Date.now()}`,
+    ZONEU_WORKDIR: work,
+    ZONEU_LLM_KEY: apiKey(),
+    ZONEU_LLM_SESSION: `probe-${Date.now()}`,
     DSH_PERMISSION_MODE: 'danger-full-access',
   },
   stdio: ['pipe', 'pipe', 'pipe'],
@@ -124,14 +124,14 @@ const timer = setTimeout(() => {
 
 const init = await request('initialize', {
   cwd: work,
-  provider: 'factotum',
+  provider: 'zoneu',
   model: 'deepseek-v4.1-flash',
 })
 console.log('[initialize]', JSON.stringify(init))
 
 const receipt = await request('session/prompt', {
   sessionId: `probe-${Date.now()}`,
-  contentBlocks: [{ type: 'text', text: process.env.FACTOTUM_PROBE_PROMPT ?? 'Reply with exactly: ping' }],
+  contentBlocks: [{ type: 'text', text: process.env.ZONEU_PROBE_PROMPT ?? 'Reply with exactly: ping' }],
 })
 prompted = true
 console.log('[prompt receipt]', JSON.stringify(receipt))

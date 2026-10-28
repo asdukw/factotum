@@ -12,8 +12,8 @@
     <ID>CyclomaticComplexMethod:LlmClient.kt$LlmClient$private fun ProducerScope&lt;AgentStreamEvent&gt;.readStream(call: Call, response: Response)</ID>
     <ID>CyclomaticComplexMethod:Markdown.kt$Markdown$fun inline(source: String): List&lt;InlineToken&gt;</ID>
     <ID>CyclomaticComplexMethod:Markdown.kt$Markdown$fun parse(source: String): List&lt;MarkdownBlock&gt;</ID>
-    <ID>CyclomaticComplexMethod:FactotumAccessibilityService.kt$FactotumAccessibilityService$private fun probeReadTree()</ID>
-    <ID>LargeClass:FactotumAccessibilityService.kt$FactotumAccessibilityService : AccessibilityServiceDeviceBridge</ID>
+    <ID>CyclomaticComplexMethod:ZoneuAccessibilityService.kt$ZoneuAccessibilityService$private fun probeReadTree()</ID>
+    <ID>LargeClass:ZoneuAccessibilityService.kt$ZoneuAccessibilityService : AccessibilityServiceDeviceBridge</ID>
     <ID>LongMethod:ChatScreen.kt$@Composable internal fun ChatScreen( state: ChatUiState, onInputChange: (String) -&gt; Unit, onSend: () -&gt; Unit, onStop: () -&gt; Unit, onNewSession: () -&gt; Unit = {}, onOpenSession: (String) -&gt; Unit = {}, onDeleteSession: (String) -&gt; Unit = {}, onOpenProbe: () -&gt; Unit = {}, onOpenWeb: () -&gt; Unit = {}, onOpenSettings: () -&gt; Unit = {}, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:ChatScreen.kt$@Composable private fun SessionDrawer( sessions: List&lt;ChatSession&gt;, currentId: String?, enabled: Boolean, configSummary: String, onNewSession: () -&gt; Unit, onOpenSession: (String) -&gt; Unit, onDeleteSession: (String) -&gt; Unit, onOpenWeb: () -&gt; Unit, onOpenProbe: () -&gt; Unit, onOpenSettings: () -&gt; Unit, )</ID>
     <ID>LongMethod:ChatViewModel.kt$ChatViewModel$fun send()</ID>
@@ -37,9 +37,9 @@
     <ID>ReturnCount:DeviceBridgeServer.kt$DeviceBridgeServer$private fun dispatch(input: BufferedInputStream): String</ID>
     <ID>ReturnCount:Markdown.kt$Markdown$private fun numberedText(trimmed: String): String?</ID>
     <ID>TooManyFunctions:AgentProgress.kt$AgentProgressCenter</ID>
-    <ID>TooManyFunctions:ChatScreen.kt$com.factotum.app.ui.chat.ChatScreen.kt</ID>
+    <ID>TooManyFunctions:ChatScreen.kt$com.zoneu.app.ui.chat.ChatScreen.kt</ID>
     <ID>TooManyFunctions:NodeRuntime.kt$NodeRuntime : NodeLineListener</ID>
     <ID>TooManyFunctions:SessionStore.kt$SessionStore</ID>
-    <ID>TooManyFunctions:FactotumAccessibilityService.kt$FactotumAccessibilityService : AccessibilityServiceDeviceBridge</ID>
+    <ID>TooManyFunctions:ZoneuAccessibilityService.kt$ZoneuAccessibilityService : AccessibilityServiceDeviceBridge</ID>
   </CurrentIssues>
 </SmellBaseline>

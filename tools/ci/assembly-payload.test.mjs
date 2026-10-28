@@ -102,7 +102,7 @@ function runVerifier(apk, mode = '--proot=required') {
 }
 
 test('strict APK verification requires every native and proot payload', { skip: process.platform === 'win32' ? 'Bash verifier tests run on Linux CI' : false }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'factotum-apk-'))
+  const dir = mkdtempSync(join(tmpdir(), 'zoneu-apk-'))
   try {
     const result = runVerifier(makeApk(dir))
     assert.equal(result.status, 0, `${result.error ?? ''} ${result.stderr}`)
@@ -116,7 +116,7 @@ test('strict APK verification requires every native and proot payload', { skip: 
 })
 
 test('empty payloads and fake or truncated dsh zips fail', { skip: process.platform === 'win32' ? 'Bash verifier tests run on Linux CI' : false }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'factotum-apk-'))
+  const dir = mkdtempSync(join(tmpdir(), 'zoneu-apk-'))
   try {
     for (const entry of [...baseEntries, ...prootEntries]) {
       const empty = runVerifier(makeApk(dir, { empty: [entry] }))
@@ -130,7 +130,7 @@ test('empty payloads and fake or truncated dsh zips fail', { skip: process.platf
 })
 
 test('historical no-proot mode is explicit and rejects injected proot payloads', { skip: process.platform === 'win32' ? 'Bash verifier tests run on Linux CI' : false }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'factotum-apk-'))
+  const dir = mkdtempSync(join(tmpdir(), 'zoneu-apk-'))
   try {
     const historical = runVerifier(makeApk(dir, { omit: prootEntries }), '--proot=absent')
     assert.equal(historical.status, 0, historical.stderr)

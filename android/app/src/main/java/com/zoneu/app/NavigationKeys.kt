@@ -32,3 +32,15 @@ import kotlinx.serialization.Serializable
 
 /** 语音设置（设置 → 语音）：朗读引擎 / 自动朗读 / 语速 / 音色。 */
 @Serializable data object Voice : NavKey
+
+/** 助手（人格）设置（设置 → 助手）：换人格、写自定义 soul、语气契约开关。 */
+@Serializable data object Persona : NavKey
+
+/** 角色库（设置 → 角色）：选一张角色卡开始角色扮演。 */
+@Serializable data object Characters : NavKey
+
+/** 一张角色卡的详情：人设 / 开场 / 世界设定，收藏与开始对话都从这里走。 */
+@Serializable data class CharacterDetail(val characterId: String) : NavKey
+
+/** 酒馆预设（设置 → 角色 → 酒馆预设）：可编辑的系统模板与后置指令。 */
+@Serializable data object TavernPresets : NavKey

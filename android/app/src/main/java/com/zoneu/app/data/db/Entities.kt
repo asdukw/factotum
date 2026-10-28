@@ -6,10 +6,20 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** 会话类型：聊天会话，或后台 agent 任务留下的记录。 */
+/**
+ * 会话类型。
+ *
+ * - [Chat] 日常：干活、问问题，人格是助手本人
+ * - [Background] 后台任务留下的记录
+ * - [Roleplay] 酒馆：绑一张角色卡，开场白、世界设定、卡的人设都只在会话里生效
+ *
+ * 分区不只是界面分组：`kind` 决定这个会话由哪套系统提示驱动，也决定「日常」列表里
+ * 看不到它 —— 聊天记录不该混在待办里。
+ */
 enum class SessionKind {
   Chat,
   Background,
+  Roleplay,
 }
 
 /** 消息角色。比聊天用到的多两种，为后面的工具调用与系统提示留位。 */
@@ -51,7 +61,7 @@ enum class ToolCallStatus {
  */
 @Entity(
   tableName = "session",
-  indices = [Index("updated_at"), Index("kind")],
+  indices = [Index("updated_at"), Index("kind"), Index("character_id")],
 )
 data class SessionEntity(
   @PrimaryKey @ColumnInfo(name = "id") val id: String,
@@ -64,6 +74,27 @@ data class SessionEntity(
   @ColumnInfo(name = "summary_upto") val summaryUpto: String? = null,
   @ColumnInfo(name = "model") val model: String? = null,
   @ColumnInfo(name = "reasoning_effort") val reasoningEffort: String? = null,
+  /**
+   * 酒馆会话绑定的角色卡 id；日常会话为 null。
+   *
+   * 存 id 而不是把卡正文抄进会话：卡是可替换的数据，改卡后旧会话应该跟着新卡走；
+   * 卡被删了则退化成「已删除的角色」，历史记录仍然读得出来。
+   */
+  @ColumnInfo(name = "character_id") val characterId: String? = null,
+  /**
+   * 群聊：这轮在场的所有角色卡 id（JSON 数组）。单角色会话为 null，读出来就是 `[characterId]`。
+   *
+   * 为什么不塞进 `character_id`：那个字段决定「归到哪个角色名下」，而群聊的归属仍然只有一张主卡
+   * （列表里得有个位置）。两件事混在一列，删主卡时整段群聊就会变成孤儿。
+   */
+  @ColumnInfo(name = "character_ids") val characterIds: String? = null,
+  /**
+   * 这条会话是从哪一段分出来的（支线）；主线为 null。
+   *
+   * 只记「根」：支线的支线仍然指向原来那段主线，不建树 —— 侧栏只要能把它们排在
+   * 主线下面并标明是支线就够了，真正的消息树是另一件事。
+   */
+  @ColumnInfo(name = "parent_id") val parentId: String? = null,
 )
 
 /**
@@ -84,7 +115,7 @@ data class SessionEntity(
         onDelete = ForeignKey.CASCADE,
       ),
     ],
-  indices = [Index(value = ["session_id", "seq"], unique = true)],
+  indices = [Index(value = ["session_id", "seq"], unique = true), Index(value = ["anchor_id"])],
 )
 data class MessageEntity(
   @PrimaryKey @ColumnInfo(name = "id") val id: String,
@@ -97,6 +128,22 @@ data class MessageEntity(
   @ColumnInfo(name = "error") val error: String?,
   @ColumnInfo(name = "created_at") val createdAt: Long,
   @ColumnInfo(name = "finished_at") val finishedAt: Long?,
+  /**
+   * 这条助手回复是在回答哪一条用户消息（那条用户消息的 id）。
+   *
+   * 为空表示「没有替代品」——开场白、工具中间步骤、日常任务的步骤都是这一类。
+   * 有了它，「重写」就不用删掉上一份回答：新回答挂同一个 anchor，两份并存，只显示选中的那份。
+   */
+  @ColumnInfo(name = "anchor_id") val anchorId: String? = null,
+  /** 同一个 anchor 下的第几份回答（0 起）。用于「2/3」这种指示与左右切。 */
+  @ColumnInfo(name = "variant_index") val variantIndex: Int = 0,
+  /**
+   * 同一组里当前显示哪一份。
+   *
+   * 查询只取选中的那些，所以屏幕上的历史永远只有一条线 —— 不做并排的树。
+   * 用「选中标记」而不是「组里存一个索引」：删掉中间一份时不会出现「索引指向空气」。
+   */
+  @ColumnInfo(name = "variant_selected") val variantSelected: Boolean = true,
 )
 
 /**

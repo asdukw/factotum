@@ -7,6 +7,11 @@ release 由 `.github/workflows/release.yml` 在 `v*` tag 上生成，每个版�
 
 ## [Unreleased]
 
+### 新增
+
+- 酒馆一体化：角色卡 PNG / JSON 导入导出、世界书、预设、宏与变量、候选回答、续写 / 替我写、支线、群聊、角色记忆和前情提要；日常与酒馆会话分区。
+- 角色卡与预设入口位于设置 → 娱乐；数据库以增量迁移升级到 v6。通道与隐私边界见 `docs/roleplay.md`。
+
 ### 破坏性变更
 
 - **全面改名 zoneu**：GitHub 仓库改为 `asdukw/zoneu`，Android 包名改为 `com.zoneu.app`。

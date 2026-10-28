@@ -47,13 +47,73 @@ object ZoneuDatabaseProvider {
       }
     }
 
+  /**
+   * v2 → v3：会话表加 `character_id`。
+   *
+   * 只加列、不回填：老会话一律是日常会话（`kind = Chat`），character_id 天然为 null，
+   * 这正是它们该有的样子。索引名要跟 Room 生成的一致（`index_session_character_id`），
+   * 否则 Room 的表结构校验会认为 schema 不匹配而拒绝启动。
+   */
+  private val MIGRATION_2_3 =
+    object : Migration(2, 3) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `character_id` TEXT")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_character_id` ON `session` (`character_id`)")
+      }
+    }
+
+  /**
+   * v3 → v4：消息表加「候选回答」三列。
+   *
+   * - `anchor_id`：这份回答在回答哪条用户消息（空 = 没有替代品，比如开场白与工具步骤）；
+   * - `variant_index`：同一 anchor 下的第几份；
+   * - `variant_selected`：组里当前显示哪一份。
+   *
+   * 只加列、全部给默认值：老数据的 anchor_id 为 null、variant_index 为 0、selected 为 1，
+   * 于是查询（只取 selected）读到的历史与升级前一模一样。
+   */
+  private val MIGRATION_3_4 =
+    object : Migration(3, 4) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `anchor_id` TEXT")
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `variant_index` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `variant_selected` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_anchor_id` ON `message` (`anchor_id`)")
+      }
+    }
+
+  /**
+   * 4 → 5：会话加 `character_ids`（群聊在场的所有卡）。
+   *
+   * 只加一列、允许为空：老会话读出来 characterIds 是空的，代码按 `[characterId]` 处理，
+   * 行为与升级前完全一致 —— 不需要在这条迁移里回填任何东西。
+   */
+  private val MIGRATION_4_5 =
+    object : Migration(4, 5) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `character_ids` TEXT")
+      }
+    }
+
+  /**
+   * 5 → 6：会话加 `parent_id`（支线指向它分出来的那段主线）。
+   *
+   * 同样只加一列、允许为空：老会话都是主线，读出来是 null，侧栏顺序与升级前一致。
+   */
+  private val MIGRATION_5_6 =
+    object : Migration(5, 6) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `session` ADD COLUMN `parent_id` TEXT")
+      }
+    }
+
   fun open(context: Context): ZoneuDatabase {
     loadLibrary()
     val appContext = context.applicationContext
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, ZoneuDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2)
+      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

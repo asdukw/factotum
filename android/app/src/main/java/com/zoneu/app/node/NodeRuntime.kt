@@ -7,6 +7,7 @@ import com.zoneu.app.agent.AgentConfig
 import com.zoneu.app.agent.AgentConfigStore
 import com.zoneu.app.agent.LlmPreset
 import com.zoneu.app.agent.ModelModalities
+import com.zoneu.app.agent.PersonaStore
 import com.zoneu.app.agent.llmModelsJson
 import com.zoneu.app.agent.requestApiKey
 import com.zoneu.app.bridge.ApprovalBridgeServer
@@ -556,7 +557,7 @@ object NodeRuntime : NodeLineListener {
 
   /**
    * 写重载用的**非密配置**（env 名 → 值）。密钥不进来：只写一个指向预置 key env 的引用。
-   * launcher 在每次 mount 前读它并覆盖 process.env —— 同一个 Node 进程里这是唯一能改配置的路。
+   * launcher 在每次 mount 前读它并覆盖 process.env；人格与端点配置在同一次重载中生效。
    */
   private fun writeRuntimeConfig(app: Context, config: AgentConfig) {
     val home = File(app.filesDir, "dsh-home").apply { mkdirs() }
@@ -581,6 +582,7 @@ object NodeRuntime : NodeLineListener {
         put("ZONEU_WEB_SEARCH_BASE_URL", config.preset.endpoint.search?.baseUrl.orEmpty())
         put("ZONEU_WEB_SEARCH_MODEL", config.preset.endpoint.search?.model.orEmpty())
         put("ZONEU_WEB_SEARCH_KEY_ENV", webSearchKeyEnv(config.preset))
+        put("ZONEU_PERSONA_PREFIX", PersonaStore.compose(app))
       }
     File(home, "runtime-config.json").writeText(payload.toString())
   }
@@ -636,6 +638,7 @@ object NodeRuntime : NodeLineListener {
     // profile 里的 baseURL 读它（见 tools/dsh-phone/profile/cordis.patch.yml）。
     Os.setenv("ZONEU_LLM_BASE_URL", config.baseUrl, true)
     Os.setenv("ZONEU_LLM_SESSION", persistentSessionId(app), true)
+    Os.setenv("ZONEU_PERSONA_PREFIX", PersonaStore.compose(app), true)
     // 联网搜索（模型可见的 web_search 工具）：dsh 自带的 web seam + dsh-web-search-deepseek
     // provider（Anthropic 兼容 Messages + 原生 web_search 服务器工具）。端点与模型按当前
     // 提供商注入 —— 注意这与聊天用的 api / baseUrl 是**两套**，不能互相推（zen 聊天走

@@ -13,7 +13,38 @@ data class ChatSession(
   val kind: SessionKind,
   val createdAt: Long,
   val updatedAt: Long,
-)
+  /** 酒馆会话绑定的角色卡；日常会话为 null。 */
+  val characterId: String? = null,
+  /**
+   * 群聊在场的**所有**卡 id（含 [characterId] 那张）。单角色会话为空。
+   *
+   * 用逗号分隔存一行：卡 id 是 UUIDv7，不会含逗号；为几个短串引一层 JSON 反而多一处可能解析失败。
+   */
+  val characterIds: List<String> = emptyList(),
+  /**
+   * 这段会话上次用的模型 id；没选过（或一直跟着全局走）为 null。
+   *
+   * 运行时同一时刻只有一个模型，所以这不是「每个会话并行用不同模型」，而是「回到这段
+   * 会话时把当时那个模型装回去」。存下来才有意义 —— 否则酒馆用便宜模型、日常用贵模型
+   * 这件事每次切会话都要手点一遍。
+   */
+  val model: String? = null,
+  /** 前情提要（自动总结写的）；没有就是 null。 */
+  val summary: String? = null,
+  /** 提要盖到哪条消息为止；下一轮从这里之后接着总结。 */
+  val summaryUpto: String? = null,
+  /** 这条会话是从哪一段分出来的（支线），主线为 null。 */
+  val parentId: String? = null,
+) {
+  /** 是否属于酒馆分区。界面按这个分流，而不是按 kind 逐个判断。 */
+  val isRoleplay: Boolean get() = kind == SessionKind.Roleplay
+
+  /** 这场戏里的全部角色；单角色会话就是他自己。 */
+  val cast: List<String> get() = characterIds.ifEmpty { listOfNotNull(characterId) }
+
+  /** 群聊（两个人以上）。 */
+  val isGroup: Boolean get() = cast.size > 1
+}
 
 /** 一条已落库的消息。 */
 data class StoredMessage(
@@ -27,6 +58,10 @@ data class StoredMessage(
   val error: String?,
   val createdAt: Long,
   val finishedAt: Long?,
+  /** 在回答哪条用户消息（空 = 没有替代品）；同一 anchor 下的多条就是「候选」。 */
+  val anchorId: String? = null,
+  /** 组内第几份。 */
+  val variantIndex: Int = 0,
 )
 
 /** 一次已落库的工具调用（挂在发起它的那条助手消息上）。 */
@@ -43,6 +78,53 @@ data class StoredToolCall(
 )
 
 /**
+ * 候选回答的读写。
+ *
+ * 单独一个接口是为了 RoomSessionStore 的**函数数**：那个类已经压在 detekt 的 20 条上限上，
+ * 三个候选方法塞进去就溢出。按能力切开之后，实现可以由一个委托对象提供，类本身的函数数不变。
+ */
+interface VariantStore {
+  /** 同一句提问下的全部候选回答（含未选中的），按 [StoredMessage.variantIndex] 排。 */
+  suspend fun variants(anchorId: String): List<StoredMessage> = emptyList()
+
+  /** 让组里只显示 [keepId] 那一份。 */
+  suspend fun selectVariant(anchorId: String, keepId: String) {}
+
+  /** 把一条已有回复登记成某条提问的第 [index] 份候选。 */
+  suspend fun tagVariant(id: String, anchorId: String, index: Int) {}
+
+  /** 整组候选一起删：只删当前那份的话，未选中的会永远留在库里，且再也访问不到。 */
+  suspend fun deleteGroup(anchorId: String) {}
+}
+
+/** 没有候选能力的替身：单测与「这套存储不认识候选」的实现直接用它。 */
+object NoVariants : VariantStore
+
+/**
+ * 取这份存储在候选上的能力；不认识候选（测试替身、老实现）时返回 [NoVariants]。
+ *
+ * 不做成构造参数是因为 ChatViewModel 的签名已经压到 detekt 的阈值上；也不并进 [SessionStore]，
+ * 因为那个接口的函数数同样卡在上限（接口阈值只有 11）。
+ */
+fun SessionStore.variantsOrNone(): VariantStore = this as? VariantStore ?: NoVariants
+
+/**
+ * 前情提要的写入。
+ *
+ * **不进 [SessionStore]**：那个接口已经贴着 detekt 的 interfaces 阈值（11），而 Room 的实现类
+ * 也贴着 20 只函数。故意让它与「读消息 / 追加消息」分开 —— 前情提要是一只独立的小写入，
+ * 由 `SessionRecap` 单独拿着，不需要把整套会话读写都传进去。
+ */
+interface SessionAdmin {
+  /**
+   * 存一条前情提要，并记下「总结到哪条消息」。
+   *
+   * 二者必须一起写：只写提要而不记位置，下一轮会把同一段再压一遍，提要越来越长却没有任何新信息。
+   */
+  suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) {}
+}
+
+/**
  * 会话存储的窄接口。
  *
  * 抽成接口是为了让 ViewModel 的单测能跑在纯 JVM 上 —— 真实实现走 Room + SQLCipher，
@@ -53,6 +135,35 @@ interface SessionStore {
   suspend fun currentSession(): ChatSession
 
   suspend fun createSession(title: String?): ChatSession
+
+  /**
+   * 最近一段会话（日常或酒馆，不含后台任务），用于冷启动回到「上次在说话的地方」。
+   *
+   * 与 [currentSession] 的区别：那个只看日常会话。分区之后，如果用户上次停在酒馆里，
+   * 重新打开 App 应该回到那段扮演，而不是被扔进一段日常对话。
+   */
+  suspend fun latestSession(): ChatSession? = null
+
+  /**
+   * 按 id 取一段会话；不存在返回 null。
+   *
+   * 需要它是因为「刚建好的会话」可能还没被 [observeSessions] 推上来 —— 交接发生在建库
+   * 之后、列表刷新之前，只从列表里找会找不到，表现成「点了没反应」。
+   */
+  suspend fun session(id: String): ChatSession? = null
+
+  /**
+   * 建一个指定分区/角色的会话。
+   *
+   * 给了默认实现（退化成日常会话），是为了让只关心日常会话的测试替身不用跟着改；
+   * 真实现必须覆盖它，否则酒馆会话会被记成日常会话、分到错的分区里。
+   */
+  suspend fun createSession(
+    title: String?,
+    kind: SessionKind,
+    characterId: String?,
+    parentId: String? = null,
+  ): ChatSession = createSession(title)
 
   /** 全部会话，最近更新在前；用于原生会话列表。 */
   fun observeSessions(): Flow<List<ChatSession>>
@@ -78,6 +189,19 @@ interface SessionStore {
     error: String?,
     finishedAt: Long?,
   )
+
+  /**
+   * 删一条消息（重写 / 删掉这一轮）。
+   *
+   * 给了默认实现：只关心追加的测试替身不必跟着改；真实现必须覆盖，否则界面上删掉的会自己回来。
+   */
+  suspend fun deleteMessage(id: String) {}
+
+  /** 记下这段会话在用的模型（切模型时写，进会话时据此装回去）。 */
+  suspend fun setSessionModel(sessionId: String, model: String?) {}
+
+  /** 记下群聊在场的所有卡；单角色会话不调用。 */
+  suspend fun setSessionCharacters(sessionId: String, ids: List<String>) {}
 
   /** 第一条用户消息写下去时顺手起个标题；已经有标题就不动。 */
   suspend fun setTitleIfEmpty(sessionId: String, title: String)

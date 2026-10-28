@@ -11,7 +11,13 @@ import kotlinx.coroutines.flow.Flow
  *
  * 用抽象类而不是接口，是为了能在 `@Transaction` 方法里写实现（插入消息时
  * 顺带取序号、更新会话时间戳，必须在同一个事务里）。
+ *
+ * 它也刻意保持「一个库的全部读写入口」：拆成两张表两张 DAO 之后，凡是跨会话与消息的操作
+ * （删会话级联、统计、重排）都得在两处各写一遍，调用方还得同时持有两个 DAO。
+ * 方法数顶到 detekt 阈值，是这份职责真实的宽度 —— 所以这里压掉那条规则，而不是从外面
+ * 再拆一张 DAO 出来。
  */
+@Suppress("TooManyFunctions")
 @Dao
 abstract class SessionStoreDao {
   // ---- session ----
@@ -34,6 +40,17 @@ abstract class SessionStoreDao {
   @Query("UPDATE session SET title = :title WHERE id = :id AND title IS NULL")
   abstract suspend fun titleIfEmpty(id: String, title: String)
 
+  /** 前情提要与「总结到哪条」一起写，见 `SessionStore.setSummary`。 */
+  @Query("UPDATE session SET summary = :summary, summary_upto = :upto WHERE id = :id")
+  abstract suspend fun setSummary(id: String, summary: String?, upto: String?)
+
+  /** 群聊在场的所有卡（逗号分隔）。单角色会话不写这一列。 */
+  @Query("UPDATE session SET character_ids = :ids WHERE id = :id")
+  abstract suspend fun setSessionCharacters(id: String, ids: String?)
+
+  @Query("UPDATE session SET model = :model WHERE id = :id")
+  abstract suspend fun setModel(id: String, model: String?)
+
   @Query("UPDATE session SET excluded = :excluded WHERE id = :id")
   abstract suspend fun setExcluded(id: String, excluded: Boolean)
 
@@ -43,8 +60,29 @@ abstract class SessionStoreDao {
 
   // ---- message ----
 
-  @Query("SELECT * FROM message WHERE session_id = :sessionId ORDER BY seq")
+  // 只要选中的那一份：同一句提问的多份回答在库里并存，屏幕上永远只走一条线
+  @Query("SELECT * FROM message WHERE session_id = :sessionId AND variant_selected = 1 ORDER BY seq")
   abstract suspend fun messages(sessionId: String): List<MessageEntity>
+
+  /** 删一条消息；「重写」「删掉这一轮」用它（工具调用跟着 message_id 级联）。 */
+  @Query("DELETE FROM message WHERE id = :id")
+  abstract suspend fun deleteMessage(id: String): Int
+
+  /** 同一个 anchor 下的所有回答（含未选中的），按 variant_index 排。 */
+  @Query("SELECT * FROM message WHERE anchor_id = :anchorId ORDER BY variant_index")
+  abstract suspend fun variantsOf(anchorId: String): List<MessageEntity>
+
+  /** 让同一组里只留下 [keepId] 那一份可见。 */
+  @Query("UPDATE message SET variant_selected = (id = :keepId) WHERE anchor_id = :anchorId")
+  abstract suspend fun selectVariant(anchorId: String, keepId: String)
+
+  /** 整组候选一起删（「删这轮」时用：只删选中的那份，未选中的会永远躺在库里）。 */
+  @Query("DELETE FROM message WHERE anchor_id = :anchorId")
+  abstract suspend fun deleteVariants(anchorId: String)
+
+  /** 把一份已有回复登记成某个 anchor 的第 [index] 份候选（重写时第一步就是它）。 */
+  @Query("UPDATE message SET anchor_id = :anchorId, variant_index = :index WHERE id = :id")
+  abstract suspend fun tagVariant(id: String, anchorId: String, index: Int)
 
   @Query("SELECT COALESCE(MAX(seq), 0) + 1 FROM message WHERE session_id = :sessionId")
   abstract suspend fun nextSeq(sessionId: String): Long

@@ -46,7 +46,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -76,11 +78,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -95,29 +99,50 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zoneu.app.agent.AgentConfigStore
 import com.zoneu.app.agent.AgentModelSwitcher
 import com.zoneu.app.agent.ApprovalHub
+import com.zoneu.app.agent.CharacterMemory
+import com.zoneu.app.agent.CharacterPins
+import com.zoneu.app.agent.CharacterStore
 import com.zoneu.app.agent.ChatMessage
 import com.zoneu.app.agent.ChatRole
 import com.zoneu.app.agent.ChatUiState
 import com.zoneu.app.agent.ChatViewModel
 import com.zoneu.app.agent.DshStreamer
+import com.zoneu.app.agent.GroupCast
+import com.zoneu.app.agent.HttpTavernChannel
 import com.zoneu.app.agent.LlmPreset
 import com.zoneu.app.agent.ModelChoice
+import com.zoneu.app.agent.PersonaStore
+import com.zoneu.app.agent.PrefsVarsStore
+import com.zoneu.app.agent.PrefsWorldTracking
+import com.zoneu.app.agent.RoleplayBinding
+import com.zoneu.app.agent.RoleplayGroup
+import com.zoneu.app.agent.SessionHandoff
+import com.zoneu.app.agent.SessionRecap
+import com.zoneu.app.agent.TavernMacros
+import com.zoneu.app.agent.TavernPresetStore
+import com.zoneu.app.agent.TavernTurns
+import com.zoneu.app.agent.TavernVars
+import com.zoneu.app.agent.Tokens
 import com.zoneu.app.agent.ToolCallState
 import com.zoneu.app.agent.ToolCallView
 import com.zoneu.app.agent.UserQuestionHub
 import com.zoneu.app.data.session.ChatSession
+import com.zoneu.app.data.session.SessionAdmin
 import com.zoneu.app.data.session.SessionStore
 import com.zoneu.app.data.session.zoneuSessionStore
 import com.zoneu.app.device.AccessibilityStatus
 import com.zoneu.app.device.BridgeHealth
 import com.zoneu.app.device.DeviceAction
+import com.zoneu.app.node.NodeRuntime
 import com.zoneu.app.schedule.ScheduledTaskScheduler
 import com.zoneu.app.schedule.needsExactAlarmReminder
 import com.zoneu.app.ui.components.ProviderModelIcon
+import com.zoneu.app.ui.settings.ChevronRight
 import com.zoneu.app.voice.RecognizedText
 import com.zoneu.app.voice.VoiceInput
 import com.zoneu.app.voice.VoiceReader
 import com.zoneu.app.voice.VoiceSettings
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -137,9 +162,14 @@ import java.time.temporal.ChronoUnit
 fun ChatScreen(
   onOpenSettings: () -> Unit,
   modifier: Modifier = Modifier,
+  onOpenCharacters: () -> Unit = {},
+  onOpenCharacterDetail: (String) -> Unit = {},
   store: SessionStore = LocalContext.current.zoneuSessionStore(),
 ) {
   val appContext = LocalContext.current.applicationContext
+  val tavernTurns = rememberTavernTurns(appContext)
+  // 前情提要在协程里跑；作用域取页面的，随页面销毁一起取消
+  val recapScope = rememberCoroutineScope()
   val viewModel: ChatViewModel = viewModel {
     ChatViewModel(
       // 配置来自设置页（密钥走 Keystore 封装）。运行时只在需要时重载：
@@ -148,26 +178,158 @@ fun ChatScreen(
       streamer = DshStreamer(appContext),
       store = store,
       switcher = AgentModelSwitcher(appContext),
+      // 回前台时重读一次配置：设置页里换了模型 / 填了新 key，顶栏不该还写着旧的。
+      configSource = { AgentConfigStore.current(appContext) },
+      roleplay =
+        RoleplayBinding(
+          characters = { CharacterStore.cards(appContext) },
+          pins = { CharacterPins.pinned(appContext) },
+          tavern = tavernTurns,
+          recap = recapFor(store, tavernTurns, recapScope),
+          // 进哪段会话，就换哪套「谁在说话」：酒馆用卡，日常用当前人格。
+          // 载体没变时不重载 —— 同一张卡的多段会话互相切换不该付 1–2 秒。
+          switcher = { characterId ->
+            val current = PersonaStore.selectedCharacter(appContext)?.id
+            if (current != characterId) {
+              if (characterId == null) {
+                PersonaStore.clearCharacter(appContext)
+              } else {
+                PersonaStore.selectCharacter(appContext, characterId)
+              }
+              NodeRuntime.reload(appContext)
+            }
+          },
+        ),
     )
   }
   val state by viewModel.state.collectAsStateWithLifecycle()
+  SessionHandoffEffect(
+    onSession = viewModel::openSession,
+    onNormal = viewModel.roleplayActions::leave,
+  )
+  // 同一处再对齐一次外部状态：收藏 / 模型是在别的页面改的，回来时列表要按新状态重排。
   LifecycleResumeEffect(Unit) {
     viewModel.refreshConfiguration(AgentConfigStore.current(appContext))
-    onPauseOrDispose { }
+    viewModel.resumeRefresh()
+    onPauseOrDispose {}
   }
   ChatScreen(
     state = state,
     onInputChange = viewModel::onInputChange,
     onSend = viewModel::send,
-    onStop = viewModel::stop,
+    onStop = viewModel.stop,
     onNewSession = viewModel::newSession,
     onOpenSession = viewModel::openSession,
     onDeleteSession = viewModel::deleteSession,
+    onNewRoleplaySession = viewModel.roleplayActions::new,
+    onOpenRoleplay = viewModel.roleplayActions::openGroup,
+    onLeaveRoleplay = viewModel.roleplayActions::leave,
     onOpenSettings = onOpenSettings,
+    onOpenCharacters = onOpenCharacters,
+    onOpenCharacterDetail = onOpenCharacterDetail,
     onSwitchModel = viewModel.modelSwitch::switch,
     onPrepareModelSwitch = viewModel.modelSwitch::prepare,
+    onSeedGreeting = viewModel.seedGreeting,
+    onImpersonate = viewModel.replies.impersonate,
+    onStartGroup = viewModel.roleplayActions::newGroup,
+    actions = bubbleActions(viewModel),
     modifier = modifier,
   )
+}
+
+/**
+ * 酒馆直连通道的绑定。
+ *
+ * 抽出来只是为了让 [ChatScreen] 留在 detekt 的行数阈值内 —— 这个函数体的身子本来就是
+ * 一串依赖注入，没有分支。只有 OpenAI 兼容端点能这样发，否则返回 null（会话退回 dsh）。
+ */
+@Composable
+private fun rememberTavernTurns(appContext: Context): TavernTurns =
+  remember(appContext) {
+    TavernTurns(
+      cards = { CharacterStore.cards(appContext) },
+      channel = {
+        val current = AgentConfigStore.current(appContext)
+        if (current.api == "openai-completions" && current.isConfigured) {
+          HttpTavernChannel { AgentConfigStore.current(appContext) }
+        } else {
+          null
+        }
+      },
+      memory = { id -> CharacterMemory.notes(appContext, id) },
+      preset = { id -> TavernPresetStore.forCard(appContext, id) },
+      tracking = { sessionId -> PrefsWorldTracking(appContext, sessionId) },
+      vars = PrefsVarsStore(appContext),
+      nextTurn = { sessionId -> PrefsWorldTracking.nextTurn(appContext, sessionId) },
+    )
+  }
+
+/** 没有提要写入能力的替身（假 store / 单测）。写进去什么都不做。 */
+private val NO_RECAP_WRITER =
+  object : SessionAdmin {
+    override suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) = Unit
+  }
+
+/** 前情提要的绑定（见 `SessionRecap`）：走酒馆通道的一次性补全，不另开 HTTP 客户端。 */
+private fun recapFor(store: SessionStore, tavern: TavernTurns, scope: CoroutineScope) =
+  SessionRecap(
+    store = store,
+    // 生产环境里 store 恒为 RoomSessionStore（同时实现了 SessionAdmin）；
+    // 契约测试里的假 store 没有它，于是前情提要退化成「什么也不写」。
+    admin = store as? SessionAdmin ?: NO_RECAP_WRITER,
+    complete = { sessionId, system, user -> tavern.complete(sessionId, system, user) },
+    start = { block -> scope.launch { block() } },
+  )
+
+/** ViewModel 那边的五个气泡动作绑成一包（包装层只是转发，不在这里写业务）。 */
+private fun bubbleActions(viewModel: ChatViewModel) =
+  BubbleActions(
+    regenerate = viewModel.regenerate,
+    deleteTurn = viewModel.deleteLastTurn,
+    retryFrom = viewModel.retryFrom,
+    swipe = viewModel.variantsSwitch.swipe,
+    continueReply = viewModel.replies.continueReply,
+    fork = viewModel.branching.fork,
+    recapNow = viewModel.recapNow,
+    editVar = viewModel.setSessionVar,
+  )
+
+/**
+ * 气泡上的五个动作。
+ *
+ * 打成一包是因为它们**永远一起传**：五个独立参数要从 ViewModel 一路抄到气泡，
+ * 每多一层就多五行样板（而 ChatScreen 那一串已经贴着 detekt 的 80 行上限）。
+ * 真要加第六个动作时，也是在这一个类里加一行，不会动到任何调用点的参数列表。
+ */
+internal data class BubbleActions(
+  val regenerate: () -> Unit = {},
+  val deleteTurn: () -> Unit = {},
+  val retryFrom: (String) -> Unit = {},
+  val swipe: (Int) -> Unit = {},
+  val continueReply: () -> Unit = {},
+  val fork: (String) -> Unit = {},
+  /** 手动写一条前情提要（见 `SessionRecap.summarizeNow`）。 */
+  val recapNow: () -> Unit = {},
+  /** 手改一个会话变量（卡写错了局的唯一出口）。 */
+  val editVar: (String, String) -> Unit = { _, _ -> },
+)
+
+/**
+ * 消费「去哪个会话」的交接意图。
+ *
+ * 用 LifecycleResumeEffect 而不是 LaunchedEffect：设置页/角色页是压栈进来又弹栈回去的，
+ * **回到聊天页这一刻**才是会话真正该切的时候；LaunchedEffect 只在首次组合时跑一次。
+ */
+@Composable
+private fun SessionHandoffEffect(onSession: (String) -> Unit, onNormal: () -> Unit) {
+  LifecycleResumeEffect(Unit) {
+    when (val target = SessionHandoff.take()) {
+      is SessionHandoff.Target.Session -> onSession(target.id)
+      SessionHandoff.Target.Normal -> onNormal()
+      null -> Unit
+    }
+    onPauseOrDispose { }
+  }
 }
 
 @Composable
@@ -179,9 +341,18 @@ internal fun ChatScreen(
   onNewSession: () -> Unit = {},
   onOpenSession: (String) -> Unit = {},
   onDeleteSession: (String) -> Unit = {},
+  onNewRoleplaySession: (String) -> Unit = {},
+  onOpenRoleplay: (String) -> Unit = {},
+  onLeaveRoleplay: () -> Unit = {},
   onOpenSettings: () -> Unit = {},
+  onOpenCharacters: () -> Unit = {},
+  onOpenCharacterDetail: (String) -> Unit = {},
+  onSeedGreeting: (String) -> Unit = {},
   onSwitchModel: (ModelChoice) -> Unit = {},
   onPrepareModelSwitch: () -> List<ModelChoice> = { emptyList() },
+  onImpersonate: () -> Unit = {},
+  onStartGroup: (List<String>) -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
@@ -189,22 +360,9 @@ internal fun ChatScreen(
   val scope = rememberCoroutineScope()
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
+  val greetings = rememberGreetings(state)
 
-  // 会话一开始跑就收起软键盘。
-  // 理由不是「看着清爽」：agent 接下来要在屏幕上操作（读屏 / 截图 / 点按），
-  // 键盘既占掉小半屏，又会让 IME 窗口出现在控件树与截图里 —— 模型会把键盘本身
-  // 当成页面内容的一部分，去点一个并不存在的按钮。
-  // 挂在 isStreaming 而不是「点了发送」上：重载运行时、恢复中断的会话等路径也会进入
-  // 流式状态，这样一处覆盖得到。
-  LaunchedEffect(state.isStreaming) {
-    if (state.isStreaming) {
-      keyboard?.hide()
-      focus.clearFocus()
-      // 新的任务开始了，上一条还在念的话立刻停 —— 用户接下来要看的是新回复，
-      // 旧回复的声音会和新的正文抢注意力。
-      VoiceReader.stop()
-    }
-  }
+  HideKeyboardWhileStreaming(streaming = state.isStreaming, keyboard = keyboard, focus = focus)
 
   // 模型提问（`ask_user_question`）：面板浮在聊天之上。
   // 状态在 `UserQuestionHub` 这个单例里，不在 ViewModel —— 桥那边挂起的协程属于进程，
@@ -212,14 +370,18 @@ internal fun ChatScreen(
   ChatOverlays()
 
   // 模型切换：sheet 打开时读一次候选；切换成功后自动收起，失败留在 sheet 里显示原因。
-  var modelSheetOpen by remember { mutableStateOf(false) }
-  var pendingSwitch by remember { mutableStateOf(false) }
-  var modelChoices by remember { mutableStateOf(emptyList<ModelChoice>()) }
-  LaunchedEffect(state.switchingModel) {
-    if (pendingSwitch && !state.switchingModel && state.switchError == null) {
-      modelSheetOpen = false
-      pendingSwitch = false
-    }
+  val sheet = remember { ModelSheet() }
+
+  // 群聊选择器：状态与对话框都在 GroupPickerHost 里（它要盖在抽屉之上，抽屉一关人还在）
+  val groupPicker = remember { GroupPickerHost() }
+  LaunchedEffect(state.switchingModel) { sheet.settle(state.switchingModel, state.switchError) }
+
+  // 抽屉里也能打开模型切换：酒馆里换模型是常见动作（便宜的跑日常、好的跑角色），
+  // 不该先关掉抽屉再去输入框找那个入口。
+  val openModelSwitch: () -> Unit = {
+    sheet.choices = onPrepareModelSwitch()
+    sheet.open = true
+    scope.launch { drawerState.close() }
   }
 
   ModalNavigationDrawer(
@@ -229,21 +391,24 @@ internal fun ChatScreen(
     drawerContent = {
       SessionDrawer(
         sessions = state.sessions,
+        roleplayGroups = state.roleplayGroups,
         currentId = state.sessionId,
+        activeCharacterId = state.activeCharacterId,
+        switchingRole = state.switchingRole,
         enabled = state.canSwitchSession,
         configSummary = state.configSummary,
-        onNewSession = {
-          onNewSession()
-          scope.launch { drawerState.close() }
-        },
-        onOpenSession = { id ->
-          onOpenSession(id)
-          scope.launch { drawerState.close() }
-        },
+        onNewSession = closeThen(scope, drawerState, onNewSession),
+        onOpenSession = closeThen(scope, drawerState) { id -> onOpenSession(id) },
         onDeleteSession = onDeleteSession,
-        onOpenSettings = {
-          onOpenSettings()
+        onNewRoleplaySession = closeThen(scope, drawerState) { id -> onNewRoleplaySession(id) },
+        onOpenRoleplay = closeThen(scope, drawerState) { id -> onOpenRoleplay(id) },
+        onOpenCharacters = closeThen(scope, drawerState, onOpenCharacters),
+        onOpenSettings = closeThen(scope, drawerState, onOpenSettings),
+        onOpenCharacterDetail = closeThen(scope, drawerState) { id -> onOpenCharacterDetail(id) },
+        onOpenModelSwitch = openModelSwitch,
+        onNewGroup = {
           scope.launch { drawerState.close() }
+          groupPicker.open = true
         },
       )
     },
@@ -256,33 +421,60 @@ internal fun ChatScreen(
       onSend = onSend,
       onStop = onStop,
       onNewSession = onNewSession,
+      onLeaveRoleplay = onLeaveRoleplay,
+      greetings = greetings,
+      onSeedGreeting = onSeedGreeting,
+      onImpersonate = onImpersonate,
+      actions = actions,
       onOpenSessions = { scope.launch { drawerState.open() } },
       onModelSwitchClick = {
-        modelChoices = onPrepareModelSwitch()
-        modelSheetOpen = true
+        sheet.choices = onPrepareModelSwitch()
+        sheet.open = true
       },
     )
   }
 
-  if (modelSheetOpen) {
+  groupPicker.Render(groups = state.roleplayGroups, onStartGroup = onStartGroup)
+
+  if (sheet.open) {
     ModelSwitchSheet(
-      choices = modelChoices,
+      choices = sheet.choices,
       switching = state.switchingModel,
       error = state.switchError,
       onSelect = { choice ->
-        pendingSwitch = true
+        sheet.pending = true
         onSwitchModel(choice)
       },
-      onDismiss = {
-        modelSheetOpen = false
-        pendingSwitch = false
-      },
+      onDismiss = { sheet.reset() },
     )
   }
 }
 
 /**
- * 朗读失败的提示只在屏幕上停一会儿：它是提示，不是需要用户处理的错误。
+ * 会话一开始跑就收起软键盘。
+ *
+ * 理由不是「看着清爽」：agent 接下来要在屏幕上操作（读屏 / 截图 / 点按），键盘既占掉小半屏，
+ * 又会让 IME 窗口出现在控件树与截图里 —— 模型会把键盘本身当成页面内容的一部分，去点一个
+ * 并不存在的按钮。挂在 isStreaming 而不是「点了发送」上：重载运行时、恢复中断的会话等路径
+ * 也会进入流式状态，这样一处覆盖得到。
+ */
+@Composable
+private fun HideKeyboardWhileStreaming(
+  streaming: Boolean,
+  keyboard: SoftwareKeyboardController?,
+  focus: FocusManager,
+) {
+  LaunchedEffect(streaming) {
+    if (!streaming) return@LaunchedEffect
+    keyboard?.hide()
+    focus.clearFocus()
+    // 新的任务开始了，上一条还在念的话立刻停 —— 用户接下来要看的是新回复，
+    // 旧回复的声音会和新的正文抢注意力。
+    VoiceReader.stop()
+  }
+}
+
+/** 朗读失败的提示只在屏幕上停一会儿：它是提示，不是需要用户处理的错误。
  *
  * 单独一个 composable 是为了让它没有布局职责 —— 效果与界面混在一起时，
  * 「这个分支到底影响布局还是只影响副作用」读不出来。
@@ -502,6 +694,32 @@ private fun isReadableAnswer(message: ChatMessage, pendingId: String?): Boolean 
     message.content.isNotBlank() &&
     message.error == null
 
+/**
+ * 空会话里可用的开场白（v3 的 `alternate_greetings`）。
+ *
+ * 只在一条消息都没有时读卡：选完开场白它就落成第一条助手消息，之后再点「换一条」会把已经
+ * 发生的对话改掉。读过之后按「有没有消息」缓存，发第一句话时自然失效。
+ */
+@Composable
+private fun rememberGreetings(state: ChatUiState): List<String> {
+  val cardContext = LocalContext.current.applicationContext
+  return remember(state.activeCharacterId, state.messages.isEmpty(), state.characterIds) {
+    if (!state.messages.isEmpty() || state.characterIds.size > 1) {
+      // 群聊里没有开场白：开场白是「一个人对你说第一句」，两个人都在场时它没有主语 ——
+      // 给主卡的开场白会变成 Aki 自说自话，另一个人还没出现就已经落后一句话。
+      emptyList()
+    } else {
+      // 展开 {{user}} / {{char}} 与宏：这里既当预览也当落库的正文，留着花括号会直接显示给用户。
+      // 开场白里的宏用**空变量表**渲染：它没有会话上下文（会话还是空的），
+      // 所以开场白里的 {{setvar}} 不会留下痕迹 —— 那种写操作要在正式的一轮里做才有效。
+      state.activeCharacterId
+        ?.let { id -> CharacterStore.byId(cardContext, id) }
+        ?.let { card -> card.greetings.map { CharacterStore.renderText(TavernMacros.render(it, TavernVars()), card) } }
+        .orEmpty()
+    }
+  }
+}
+
 @Composable
 private fun ChatBody(
   state: ChatUiState,
@@ -513,9 +731,17 @@ private fun ChatBody(
   onNewSession: () -> Unit,
   onOpenSessions: () -> Unit,
   onModelSwitchClick: () -> Unit,
+  greetings: List<String> = emptyList(),
+  onSeedGreeting: (String) -> Unit = {},
+  onLeaveRoleplay: () -> Unit = {},
+  onImpersonate: () -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
 ) {
+  // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
-    state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() } ?: "zoneu"
+    state.activeCharacterName?.takeIf { it.isNotBlank() }
+      ?: state.sessions.firstOrNull { it.id == state.sessionId }?.title?.takeIf { it.isNotBlank() }
+      ?: "zoneu"
 
   val voiceState by VoiceReader.state.collectAsStateWithLifecycle()
   val voiceError by VoiceReader.error.collectAsStateWithLifecycle()
@@ -543,33 +769,24 @@ private fun ChatBody(
       listOf(state.providerName, state.model).filter { it.isNotBlank() }.joinToString(" · ")
     ChatTopBar(
       title = sessionTitle,
-      subtitle = modelSubtitle,
+      subtitle = if (state.inRoleplay) "角色扮演 · $modelSubtitle" else modelSubtitle,
       onOpenSessions = onOpenSessions,
       onNewSession = onNewSession,
+      onLeaveRoleplay = if (state.inRoleplay) onLeaveRoleplay else null,
     )
     PermissionPrompts()
-    if (!state.configured) {
-      // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
-      BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
-    }
-    state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
-    voiceError?.let { reason -> BannerText("朗读失败：$reason") }
-    (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
+    StatusBanners(state = state, voiceError = voiceError, dictation = dictation)
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
-      LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-      ) {
-        if (state.messages.isEmpty()) {
-          item { EmptyHint() }
-        }
-        items(items = state.messages, key = { it.id }) { message ->
-          MessageBubble(message, speakingId = voiceState?.messageId)
-        }
-      }
+      MessageList(
+        state = state,
+        listState = listState,
+        speakingId = voiceState?.messageId,
+        greetings = greetings,
+        onPickGreeting = onSeedGreeting,
+        actions = actions,
+        canContinue = state.tavernDirect && !state.isStreaming,
+      )
 
       // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
       if (!following) {
@@ -586,6 +803,12 @@ private fun ChatBody(
       }
     }
 
+    // 前情提要只出现在扮演会话里：日常对话没有「记忆」这回事，摆一行只会让人以为有。
+    if (state.activeCharacterId != null) {
+      SessionRecapBar(recap = state.sessionRecap, canWrite = state.messages.isNotEmpty(), onSummarize = actions.recapNow)
+    }
+    SessionVarsBar(state.sessionVars, onEdit = actions.editVar)
+
     ChatInputBar(
       value = state.input,
       isStreaming = state.isStreaming,
@@ -598,7 +821,210 @@ private fun ChatBody(
       onStop = onStop,
       onModelSwitchClick = onModelSwitchClick,
       onMicClick = onMicClick,
+      onImpersonate = onImpersonate.takeIf { state.tavernDirect && !state.writingLine },
+      writingLine = state.writingLine,
     )
+  }
+}
+
+/**
+ * 前情提要：自动总结写下的那段回忆（`SessionRecap`）。
+ *
+ * 没有提要及时摆一个「记一下这段」的入口，而不是整行藏起来 —— 自动那套要聊到 12 条才动，
+ * 而「我想让模型记住这一场」往往就发生在刚聊完的时候。
+ */
+@Composable
+private fun SessionRecapBar(recap: String?, canWrite: Boolean, onSummarize: () -> Unit) {
+  if (recap == null && !canWrite) return
+  var open by remember { mutableStateOf(false) }
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = if (recap == null) "还没有前情提要" else "前情提要 · ${recap.lineSequence().first().take(28)}",
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
+    TextAction(text = if (recap == null) "记一下这段" else "看全文", onClick = { open = true })
+  }
+  if (open) {
+    AlertDialog(
+      onDismissRequest = { open = false },
+      title = { Text("前情提要") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            recap ?: "还没有。聊过几句之后点下面的按钮，模型会把这一段压成几句话记住。",
+            style = MaterialTheme.typography.bodySmall,
+          )
+          Text(
+            "它每轮都会跟着「记忆」一起进提示词，所以别写太长。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      },
+      confirmButton = { TextButton(onClick = { open = false }) { Text("知道了") } },
+      dismissButton = {
+        TextButton(onClick = {
+          open = false
+          onSummarize()
+        }) { Text("现在就总结") }
+      },
+    )
+  }
+}
+
+/**
+ * 会话变量：卡里 `{{setvar}}` 写下的东西（`好感 3`、`时间 夜` 这种）。
+ *
+ * 以前它们只在 prompt 里生效，界面上完全看不见 —— 卡作者设计了「好感度」，
+ * 玩家却要自己去猜它现在是多少。点开「这一场的状态」可以改值：变量是卡自己的状态机，
+ * 手改一次等于绕过卡的条件分支，所以对话框里写明了这一点 —— 但卡写错数字/自己写死循环时，
+ * 这是唯一能救回这段会话的出口。
+ *
+ * 最多铺三条，其余折成「＋N」：变量名是卡作者起的，可能很长，横向铺开会把输入框挤走。
+ */
+@Composable
+private fun SessionVarsBar(vars: Map<String, String>, onEdit: (String, String) -> Unit = { _, _ -> }) {
+  if (vars.isEmpty()) return
+  var expanded by remember { mutableStateOf(false) }
+  var drafts by remember(vars) { mutableStateOf(vars) }
+  val entries = vars.entries.toList()
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    entries.take(SHOWN_VARS).forEach { (key, value) ->
+      Text(
+        text = "$key $value",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        // 点标签本身就打开对话框：只有 1 个变量时没有「＋N」可点，那样这段状态就永远改不了。
+        modifier =
+          Modifier.clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable { expanded = true }
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+      )
+    }
+    if (entries.size > SHOWN_VARS) {
+      TextAction(text = "＋${entries.size - SHOWN_VARS}", onClick = { expanded = true })
+    }
+  }
+  if (expanded) {
+    AlertDialog(
+      onDismissRequest = { expanded = false },
+      title = { Text("这一场的状态") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          entries.forEach { (key, _) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Text(
+                key,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(84.dp),
+              )
+              OutlinedTextField(
+                value = drafts[key].orEmpty(),
+                onValueChange = { next -> drafts = drafts + (key to next) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+              )
+            }
+          }
+          Text(
+            "手改会绕过卡自己的条件分支（比如「好感 ≥ 5 才留你」）。只在卡写错了、" +
+              "或者你想跳到另一种局面时用。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          drafts.forEach { (key, value) -> if (value != vars[key]) onEdit(key, value) }
+          expanded = false
+        }) { Text("保存") }
+      },
+      dismissButton = { TextButton(onClick = { expanded = false }) { Text("取消") } },
+    )
+  }
+}
+
+/** 状态条上最多铺几个变量（其余折进「＋N」）。 */
+private const val SHOWN_VARS = 3
+
+/**
+ * 模型面板的三个开关合成一个 holder。
+ *
+ * 不是为了省行数：它们是**一起变**的 —— 面板开着、点了某个模型（pending）、切换结束后要收起来。
+ * 拆成三个 remember 时，任何一条路径漏掉 pending 的复位，面板就会「换完不关」。
+ */
+private class ModelSheet {
+  var open by mutableStateOf(false)
+  var pending by mutableStateOf(false)
+  var choices by mutableStateOf<List<ModelChoice>>(emptyList())
+
+  /** 切换结束后收起面板；切换出错时留在原地，让用户看到原因。 */
+  fun settle(switching: Boolean, error: String?) {
+    if (pending && !switching && error == null) open = false
+    if (!switching) pending = false
+  }
+
+  fun reset() {
+    open = false
+    pending = false
+  }
+}
+
+/** 消息列表：空态 + 每一条气泡。「重写 / 删掉这一轮」只挂在最后一条助手消息上。 */
+@Composable
+private fun MessageList(
+  state: ChatUiState,
+  listState: LazyListState,
+  speakingId: String?,
+  greetings: List<String> = emptyList(),
+  onPickGreeting: (String) -> Unit = {},
+  actions: BubbleActions = BubbleActions(),
+  canContinue: Boolean = false,
+) {
+  // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
+  // 而删中间一轮会让后面的对话悬在半空。
+  val tailId = state.messages.lastOrNull { it.role == ChatRole.Assistant }?.id
+  LazyColumn(
+    state = listState,
+    modifier = Modifier.fillMaxSize(),
+    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+    verticalArrangement = Arrangement.spacedBy(18.dp),
+  ) {
+    if (state.messages.isEmpty()) {
+      item {
+        EmptyHint(
+          characterName = state.activeCharacterName,
+          greetings = greetings,
+          onPickGreeting = onPickGreeting,
+        )
+      }
+    }
+    items(items = state.messages, key = { it.id }) { message ->
+      MessageBubble(
+        message = message,
+        speakingId = speakingId,
+        tail = message.id == tailId && !state.isStreaming,
+        actions = actions,
+        canContinue = canContinue,
+      )
+    }
   }
 }
 
@@ -708,6 +1134,7 @@ private fun ChatTopBar(
   subtitle: String,
   onOpenSessions: () -> Unit,
   onNewSession: () -> Unit,
+  onLeaveRoleplay: (() -> Unit)? = null,
 ) {
   Row(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -730,6 +1157,17 @@ private fun ChatTopBar(
           overflow = TextOverflow.Ellipsis,
         )
       }
+    }
+    if (onLeaveRoleplay != null) {
+      Text(
+        text = "退出扮演",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier =
+          Modifier.clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onLeaveRoleplay)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+      )
     }
     IconButton(onClick = onNewSession) { PlusGlyph(tint = MaterialTheme.colorScheme.onSurface) }
   }
@@ -867,6 +1305,18 @@ private fun ExactAlarmPrompt() {
   }
 }
 
+/** 页头下面那一摞黄条/红条：缺 key、存不了盘、朗读失败、语音输入失败。 */
+@Composable
+private fun StatusBanners(state: ChatUiState, voiceError: String?, dictation: VoiceInput.State) {
+  if (!state.configured) {
+    // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
+    BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
+  }
+  state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
+  voiceError?.let { reason -> BannerText("朗读失败：$reason") }
+  (dictation as? VoiceInput.State.Failed)?.let { reason -> BannerText("语音输入：${reason.reason}") }
+}
+
 @Composable
 private fun BannerText(text: String) {
   Text(
@@ -877,55 +1327,289 @@ private fun BannerText(text: String) {
   )
 }
 
+/** 点一下：先做事，再收抽屉。抽出来是因为六个入口都要这一下，写在行内会把版面撑散。 */
+private fun closeThen(scope: CoroutineScope, drawer: DrawerState, action: () -> Unit): () -> Unit =
+  {
+    action()
+    scope.launch { drawer.close() }
+  }
+
+/** 带参数的版本（会话/角色 id），规则同上。 */
+private fun closeThen(
+  scope: CoroutineScope,
+  drawer: DrawerState,
+  action: (String) -> Unit,
+): (String) -> Unit = { id ->
+  action(id)
+  scope.launch { drawer.close() }
+}
+
+/** 抽屉标题行。右侧的「+」随分区变义：日常里是新会话，酒馆里是去挑一张卡。 */
+@Composable
+private fun DrawerHeader(enabled: Boolean, showPlus: Boolean, onPlus: () -> Unit) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Text(
+      text = "会话",
+      style = MaterialTheme.typography.titleMedium,
+      modifier = Modifier.weight(1f).padding(start = 12.dp),
+    )
+    if (showPlus) {
+      IconButton(onClick = onPlus, enabled = enabled) {
+        PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+    }
+  }
+}
+
+/** 侧栏的两个分区：日常（干活）与酒馆（角色扮演）。 */
+private enum class DrawerTab(val label: String) {
+  Normal("日常"),
+  Roleplay("酒馆"),
+}
+
+@Composable
+private fun DrawerTabs(tab: DrawerTab, onSelect: (DrawerTab) -> Unit) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+  ) {
+    DrawerTab.entries.forEach { entry ->
+      val selected = entry == tab
+      Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.weight(1f).clickable { onSelect(entry) },
+      ) {
+        Text(
+          text = entry.label,
+          textAlign = TextAlign.Center,
+          style = MaterialTheme.typography.labelLarge,
+          color =
+            if (selected) {
+              MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            },
+          modifier = Modifier.padding(vertical = 8.dp),
+        )
+      }
+    }
+  }
+}
+
+/**
+ * 酒馆分区：一行一张角色卡，行下面挂它名下的会话。
+ *
+ * 与日常分区的差别不只是分组：这里的每一行都对应一套系统提示（卡的人设 + 世界设定），
+ * 点进去会换掉「谁在说话」。所以每张卡都显示，没有会话的卡也能点 —— 那正是开第一段对话的入口。
+ */
+@Composable
+private fun RoleplayList(
+  modifier: Modifier = Modifier,
+  groups: List<RoleplayGroup>,
+  currentId: String?,
+  activeCharacterId: String?,
+  switchingRole: Boolean,
+  enabled: Boolean,
+  onOpenRoleplay: (String) -> Unit,
+  onNewRoleplaySession: (String) -> Unit,
+  onNewGroup: () -> Unit = {},
+  onOpenSession: (String) -> Unit,
+  onRequestDelete: (ChatSession) -> Unit,
+  onOpenCharacters: () -> Unit,
+  onOpenCharacterDetail: (String) -> Unit = {},
+) {
+  if (groups.isEmpty()) {
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+      Text("酒馆里还没有角色", style = MaterialTheme.typography.bodyMedium)
+      Text(
+        text = "导入一张角色卡（PNG 或 JSON），它的开场白、人设和世界设定只在酒馆会话里生效，不影响日常。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+      )
+      TextButton(onClick = onOpenCharacters, modifier = Modifier.padding(top = 4.dp)) { Text("去导入角色卡") }
+    }
+    return
+  }
+  LazyColumn(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    // 群聊入口放在列表最上面：它是「开一场新的」，不是某张卡名下的动作 ——
+    // 塞进某张卡的行里，用户会以为是给那张卡加台词。
+    item(key = "new-group") {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled) { onNewGroup() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text("＋ 群聊", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(8.dp))
+        Text(
+          text = "挑两张卡，让它们同场",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+    }
+    if (switchingRole) {
+      item(key = "switching") {
+        Text(
+          text = "正在切换角色…",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 4.dp),
+        )
+      }
+    }
+    groups.forEach { group ->
+      item(key = "card-${group.characterId}") {
+        RoleplayHeader(
+          group = group,
+          active = group.characterId == activeCharacterId,
+          enabled = enabled,
+          onOpen = { onOpenRoleplay(group.characterId) },
+          onNew = { onNewRoleplaySession(group.characterId) },
+          onDetail = { onOpenCharacterDetail(group.characterId) },
+        )
+      }
+      items(items = orderedSessions(group.sessions), key = { it.id }) { session ->
+        SessionRow(
+          session = session,
+          selected = session.id == currentId,
+          enabled = enabled,
+          onOpen = { onOpenSession(session.id) },
+          onDelete = { onRequestDelete(session) },
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun RoleplayHeader(
+  group: RoleplayGroup,
+  active: Boolean,
+  enabled: Boolean,
+  onOpen: () -> Unit,
+  onNew: () -> Unit,
+  onDetail: () -> Unit = {},
+) {
+  val subtitle =
+    when {
+      group.isEmpty -> "还没有对话"
+      else -> "${group.sessions.size} 段对话 · ${group.latest?.title?.takeIf { it.isNotBlank() } ?: "新会话"}"
+    }
+  Surface(
+    color = if (active) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+    shape = RoundedCornerShape(12.dp),
+    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clickable(enabled = enabled, onClick = onOpen),
+  ) {
+    Row(
+      modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(Modifier.weight(1f)) {
+        Text(
+          // 收藏的卡带一个星号：侧栏一排名字时，这是唯一能一眼看出「哪张是我常用的」的记号。
+          text = if (group.pinned) "★ ${group.name}" else group.name,
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      // 去详情页：人设、开场、世界设定都在那儿，和「开新会话」是两个动作。
+      IconButton(onClick = onDetail, enabled = enabled) { ChevronRight() }
+      IconButton(onClick = onNew, enabled = enabled) {
+        PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+      }
+    }
+  }
+}
+
 @Composable
 private fun SessionDrawer(
   sessions: List<ChatSession>,
+  roleplayGroups: List<RoleplayGroup>,
   currentId: String?,
+  activeCharacterId: String?,
+  switchingRole: Boolean,
   enabled: Boolean,
   configSummary: String,
   onNewSession: () -> Unit,
   onOpenSession: (String) -> Unit,
   onDeleteSession: (String) -> Unit,
+  onNewRoleplaySession: (String) -> Unit,
+  onNewGroup: () -> Unit = {},
+  onOpenRoleplay: (String) -> Unit,
+  onOpenCharacters: () -> Unit,
   onOpenSettings: () -> Unit,
+  onOpenCharacterDetail: (String) -> Unit = {},
+  onOpenModelSwitch: () -> Unit = {},
 ) {
   var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
-  val grouped = groupSessions(sessions, System.currentTimeMillis())
+  // 在酒馆会话里打开侧栏时直接落在酒馆分区：不然用户要自己找自己在哪。
+  var tab by remember(activeCharacterId) {
+    mutableStateOf(if (activeCharacterId != null) DrawerTab.Roleplay else DrawerTab.Normal)
+  }
+  val normalSessions = sessions.filter { !it.isRoleplay }
+  val grouped = groupSessions(normalSessions, System.currentTimeMillis())
 
   ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
     Column(Modifier.fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          text = "会话",
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.weight(1f).padding(start = 12.dp),
-        )
-        IconButton(onClick = onNewSession, enabled = enabled) {
-          PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-
-      SessionList(
-        // weight 只有 ColumnScope 里能用，所以从调用点传进去
-        modifier = Modifier.weight(1f),
-        grouped = grouped,
-        currentId = currentId,
+      // 酒馆分区不设「新建」：会话必须挂在一张卡上，新建就意味着先选卡 ——
+      // 那件事由各角色行右侧的「+」完成，头部再放一个只会让人以为能凭空开会话。
+      DrawerHeader(
         enabled = enabled,
-        onOpenSession = onOpenSession,
-        onRequestDelete = { pendingDelete = it },
+        showPlus = tab == DrawerTab.Normal,
+        onPlus = onNewSession,
       )
+      DrawerTabs(tab = tab, onSelect = { tab = it })
 
-      HorizontalDivider(Modifier.padding(vertical = 8.dp))
-      DrawerNavRow(label = "设置", onClick = onOpenSettings) {
-        CogGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      when (tab) {
+        DrawerTab.Normal ->
+          SessionList(
+            modifier = Modifier.weight(1f),
+            grouped = grouped,
+            currentId = currentId,
+            enabled = enabled,
+            onOpenSession = onOpenSession,
+            onRequestDelete = { pendingDelete = it },
+          )
+
+        DrawerTab.Roleplay ->
+          RoleplayList(
+            modifier = Modifier.weight(1f),
+            groups = roleplayGroups,
+            currentId = currentId,
+            activeCharacterId = activeCharacterId,
+            switchingRole = switchingRole,
+            enabled = enabled,
+            onOpenRoleplay = onOpenRoleplay,
+            onNewRoleplaySession = onNewRoleplaySession,
+            onNewGroup = onNewGroup,
+            onOpenSession = onOpenSession,
+            onRequestDelete = { pendingDelete = it },
+            onOpenCharacters = onOpenCharacters,
+            onOpenCharacterDetail = onOpenCharacterDetail,
+          )
       }
-      if (configSummary.isNotBlank()) {
-        Text(
-          text = configSummary,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-        )
-      }
+
+      DrawerFooter(
+        roleplayEntries = tab == DrawerTab.Roleplay,
+        configSummary = configSummary,
+        onOpenCharacters = onOpenCharacters,
+        onOpenSettings = onOpenSettings,
+        onOpenModelSwitch = onOpenModelSwitch,
+      )
     }
   }
 
@@ -950,6 +1634,38 @@ private fun SessionDrawer(
         }
       },
       dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+    )
+  }
+}
+
+/** 抽屉底部：酒馆里多两个入口（角色卡 / 本段会话的模型），再加上设置与当前模型摘要。 */
+@Composable
+private fun DrawerFooter(
+  roleplayEntries: Boolean,
+  configSummary: String,
+  onOpenCharacters: () -> Unit,
+  onOpenSettings: () -> Unit,
+  onOpenModelSwitch: () -> Unit,
+) {
+  HorizontalDivider(Modifier.padding(vertical = 8.dp))
+  if (roleplayEntries) {
+    DrawerNavRow(label = "管理角色卡", onClick = onOpenCharacters) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    // 酒馆里的模型入口：每段会话会记住自己用哪个模型（回来时自动装回去）。
+    DrawerNavRow(label = "本段会话的模型", onClick = onOpenModelSwitch) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+  }
+  DrawerNavRow(label = "设置", onClick = onOpenSettings) {
+    CogGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+  if (configSummary.isNotBlank()) {
+    Text(
+      text = configSummary,
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
     )
   }
 }
@@ -1017,6 +1733,26 @@ private fun SessionList(
   }
 }
 
+/**
+ * 侧栏顺序：主线在前，它的支线紧跟在这条主线后面。
+ *
+ * 不按时间混排：支线往往比主线新，混排之后会在列表里把主线顶下去，看起来像两条不相干的历史。
+ * 主线被删掉的支线仍然排在最后 —— 否则那些历史在界面上等于消失了。
+ */
+private fun orderedSessions(sessions: List<ChatSession>): List<ChatSession> {
+  val branches = sessions.filter { it.parentId != null }.groupBy { it.parentId }
+  val placed = mutableSetOf<String>()
+  val out = mutableListOf<ChatSession>()
+  sessions.filter { it.parentId == null }.forEach { root ->
+    out += root
+    branches[root.id].orEmpty().forEach { branch ->
+      if (placed.add(branch.id)) out += branch
+    }
+  }
+  sessions.filter { it.parentId != null && it.id !in placed }.forEach { out += it }
+  return out
+}
+
 @Composable
 private fun SessionRow(
   session: ChatSession,
@@ -1025,18 +1761,25 @@ private fun SessionRow(
   onOpen: () -> Unit,
   onDelete: () -> Unit,
 ) {
+  val isBranch = session.parentId != null
   Surface(
     color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
     shape = RoundedCornerShape(12.dp),
     modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onOpen),
   ) {
     Row(
-      modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+      // 支线缩进一格并加个转折符：侧栏要能一眼看出「这几条是从上面那段分出来的」。
+      modifier = Modifier.padding(start = if (isBranch) 32.dp else 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(
-        text = session.title?.takeIf { it.isNotBlank() } ?: "新会话",
-        style = MaterialTheme.typography.bodyMedium,
+        text =
+          if (isBranch) {
+            "↳ ${session.title?.takeIf { it.isNotBlank() } ?: "新会话"}"
+          } else {
+            session.title?.takeIf { it.isNotBlank() } ?: "新会话"
+          },
+        style = if (isBranch) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f),
@@ -1052,7 +1795,11 @@ private fun SessionRow(
 }
 
 @Composable
-private fun EmptyHint() {
+private fun EmptyHint(
+  characterName: String? = null,
+  greetings: List<String> = emptyList(),
+  onPickGreeting: (String) -> Unit = {},
+) {
   Column(
     modifier = Modifier.fillMaxWidth().padding(top = 96.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1064,26 +1811,88 @@ private fun EmptyHint() {
       Text(text = "M", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimary)
     }
     Text(
-      text = "你好，我是 Zoneu",
+      text = if (characterName != null) characterName else "你好，我是 zoneu",
       style = MaterialTheme.typography.titleMedium,
       modifier = Modifier.padding(top = 18.dp),
     )
     Text(
-      text = "说出要手机做什么，例如「打开设置看看电池电量」。\n任务会实时操作手机界面，工具调用会逐张出现。",
+      // 酒馆里不该出现「说出要手机做什么」：那是干活用的开场，跟扮演是两件事。
+      text =
+        if (characterName != null && greetings.isEmpty()) {
+          "先说一句就行 —— 开场由你这句定调。"
+        } else if (characterName != null) {
+          "先说一句就行 —— 开场由这张卡自己写。"
+        } else {
+          "说出要手机做什么，例如「打开设置看看电池电量」。\n任务会实时操作手机界面，工具调用会逐张出现。"
+        },
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       textAlign = TextAlign.Center,
       modifier = Modifier.padding(top = 8.dp),
     )
+    if (greetings.isNotEmpty()) {
+      Text(
+        text = if (greetings.size == 1) "或者从她写的开场白开始" else "选一条开场白开始（共 ${greetings.size} 条）",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 22.dp, bottom = 10.dp),
+      )
+      greetings.forEachIndexed { index, text ->
+        Text(
+          text = text.trim().lines().take(3).joinToString("\n"),
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 3,
+          overflow = TextOverflow.Ellipsis,
+          modifier =
+            Modifier.fillMaxWidth()
+              .padding(horizontal = 8.dp, vertical = 4.dp)
+              .clip(RoundedCornerShape(14.dp))
+              .clickable { onPickGreeting(text) }
+              .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+              .padding(14.dp),
+        )
+      }
+    }
   }
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, speakingId: String? = null) {
+private fun MessageBubble(
+  message: ChatMessage,
+  speakingId: String? = null,
+  tail: Boolean = false,
+  actions: BubbleActions = BubbleActions(),
+  canContinue: Boolean = false,
+) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
   } else {
-    AssistantMessage(message, speaking = message.id == speakingId)
+    AssistantMessage(
+      message = message,
+      speaking = message.id == speakingId,
+      tail = tail,
+      actions = actions,
+      canContinue = canContinue,
+    )
+  }
+}
+
+/**
+ * 候选回答的「‹ 2/3 ›」。
+ *
+ * 只挂在最后一条助手消息上：上面那些轮次如果也允许换，换完之后**后面所有轮次**都得重建 ——
+ * 而它们当时是照着另一份回答说的。等「换到更早一轮就截断重答」做出来再放开。
+ */
+@Composable
+private fun VariantStepper(index: Int, total: Int, onStep: (Int) -> Unit) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    TextAction(text = "‹", onClick = { onStep(-1) })
+    Text(
+      text = "${index + 1}/$total",
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    TextAction(text = "›", onClick = { onStep(1) })
   }
 }
 
@@ -1108,28 +1917,74 @@ private fun UserBubble(content: String) {
 
 /** 助手消息：全宽正文（无气泡），上面依次挂思考折叠与工具卡，末尾一行操作。 */
 @Composable
-private fun AssistantMessage(message: ChatMessage, speaking: Boolean = false) {
+private fun AssistantMessage(
+  message: ChatMessage,
+  speaking: Boolean = false,
+  tail: Boolean = false,
+  actions: BubbleActions = BubbleActions(),
+  canContinue: Boolean = false,
+) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
     ProcessBlock(message)
 
     val error = message.error
     when {
-      error != null ->
-        Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-
+      // 先看正文：流到一半断了、或者续写时请求失败，已经写出来的字必须留着 ——
+      // 只因为最后出过错就把整段回复藏起来，用户会以为内容丢了（其实是库里还在）。
       message.content.isNotEmpty() ->
         MarkdownText(markdown = message.content + if (message.streaming) STREAMING_CURSOR else "")
+
+      error != null ->
+        Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
 
       message.reasoning.isNullOrBlank() && message.toolCalls.isEmpty() ->
         if (message.thinking) ThinkingIndicator() else Text(text = "…", style = MaterialTheme.typography.bodyMedium)
     }
 
-    if (message.content.isNotBlank() && !message.streaming && error == null) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
+    if (error != null && message.content.isNotEmpty()) {
+      Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+    }
+
+    if (message.content.isNotBlank() && !message.streaming) {
+      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         SpeakAction(messageId = message.id, markdown = message.content, speaking = speaking)
         Spacer(Modifier.width(2.dp))
         CopyAction(text = message.content)
+        if (tail) {
+          if (message.variantTotal > 1) {
+            Spacer(Modifier.width(2.dp))
+            VariantStepper(
+              index = message.variantIndex,
+              total = message.variantTotal,
+              onStep = actions.swipe,
+            )
+          }
+          // 续写只在直连通道下出现：dsh 那边做不到「接着写」，给个按不动的按钮比不给更糟
+          if (canContinue) {
+            Spacer(Modifier.width(2.dp))
+            TextAction(text = "续写", onClick = actions.continueReply)
+          }
+          Spacer(Modifier.width(2.dp))
+          TextAction(text = "重写", onClick = actions.regenerate)
+          // 支线：复制到此为止的历史到新会话。放在「重写」旁边是因为两者回答的是同一个问题
+          // （「这句不满意」），只是重写保留候选、支线保留整条走法。
+          TextAction(text = "开新支线", onClick = { actions.fork(message.id) })
+          TextAction(text = "删这轮", onClick = actions.deleteTurn)
+        } else {
+          // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，
+          // 删了它会让后面悬空。给的是「从此处重来」—— 连同后面的一起丢掉，回到这句话重新回答。
+          Spacer(Modifier.width(2.dp))
+          TextAction(text = "从此处重来", onClick = { actions.retryFrom(message.id) })
+        }
+        // token 计数贴在末尾：它是「这一条花了多少上下文」，不是这句话的一部分，
+        // 所以用最轻的字重与最旁边的位置，不抢正文的注意力。
+        Spacer(Modifier.weight(1f))
+        Text(
+          text = "≈${Tokens.format(Tokens.estimate(message.content))} tokens",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
     }
   }
@@ -1158,6 +2013,23 @@ private fun SpeakAction(messageId: String, markdown: String, speaking: Boolean) 
       color = tint,
     )
   }
+}
+
+/**
+ * 纯文字操作（重写 / 删这轮）。
+ *
+ * 不给图标：这两个动作不常用，且「删」带破坏性 —— 图标在这么小的一行里认不出来，
+ * 误触比多点一步更糟。
+ */
+@Composable
+private fun TextAction(text: String, onClick: () -> Unit) {
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier =
+      Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+  )
 }
 
 /** 复制助手正文（用户点按触发；不打印、不落日志）。 */
@@ -1233,6 +2105,8 @@ private fun ChatInputBar(
   onStop: () -> Unit,
   onModelSwitchClick: () -> Unit,
   onMicClick: () -> Unit,
+  onImpersonate: (() -> Unit)? = null,
+  writingLine: Boolean = false,
 ) {
   val textStyle = MaterialTheme.typography.bodyLarge
   Column(modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
@@ -1285,6 +2159,10 @@ private fun ChatInputBar(
               )
             }
           }
+          if (onImpersonate != null || writingLine) {
+            Spacer(Modifier.width(8.dp))
+            ImpersonateAction(onClick = onImpersonate, writing = writingLine, busy = isStreaming)
+          }
           Spacer(Modifier.weight(1f))
           DictationStatus(dictation)
           Spacer(Modifier.width(6.dp))
@@ -1300,6 +2178,104 @@ private fun ChatInputBar(
       }
     }
   }
+}
+
+/**
+ * 群聊选择器的开合与勾选状态。
+ *
+ * 合成一个 holder 的理由与 [ModelSheet] 相同：`open` 与 `picked` 必须一起复位 ——
+ * 分成两个 remember 时，任何一条「只关了对话框」的路径都会把上次勾的人留在下一次。
+ *
+ * 不做「先建群再拉人」：群聊的上下文从第一条消息起就是多人的，事后拉人会让前面那些
+ * 单人戏突然多出一个「一直在场却没说话」的角色，模型会去解释他为什么不说话。
+ *
+ * 上限 [GroupCast.MAX] 是硬的：勾满之后其余项置灰，而不是勾上再提示超限。
+ */
+private class GroupPickerHost {
+  var open by mutableStateOf(false)
+  var picked by mutableStateOf<List<String>>(emptyList())
+
+  private fun close() {
+    open = false
+    picked = emptyList()
+  }
+
+  @Composable
+  fun Render(groups: List<RoleplayGroup>, onStartGroup: (List<String>) -> Unit) {
+    if (!open) return
+    val choices = groups.filter { !it.orphan }
+    AlertDialog(
+      onDismissRequest = { close() },
+      title = { Text("群聊：挑几个角色") },
+      text = {
+        Column {
+          Text(
+            text = "选 2–${GroupCast.MAX} 张。每轮只会有一个角色说话，用「名字：」开头。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Spacer(Modifier.height(10.dp))
+          LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+            items(items = choices, key = { it.characterId }) { group ->
+              val checked = group.characterId in picked
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = checked || picked.size < GroupCast.MAX) {
+                      picked = if (checked) picked - group.characterId else picked + group.characterId
+                    }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Checkbox(
+                  checked = checked,
+                  onCheckedChange = { picked = if (checked) picked - group.characterId else picked + group.characterId },
+                  enabled = checked || picked.size < GroupCast.MAX,
+                )
+                Text(group.name, style = MaterialTheme.typography.bodyMedium)
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            val ids = picked
+            close()
+            if (ids.size >= 2) onStartGroup(ids)
+          },
+          enabled = picked.size >= 2,
+        ) { Text("开始（${picked.size}）") }
+      },
+      dismissButton = { TextButton(onClick = { close() }) { Text("取消") } },
+    )
+  }
+}
+
+/**
+ * 「替我写」：只在能走直连通道的会话里出现。
+ *
+ * 正在写的时候显示「正在替你写…」而不是置灰按钮：按钮一灰，用户不知道是在等还是在坏。
+ * 这一块单独成函数是因为输入卡那一段已经贴着 detekt 的 80 行上限。
+ */
+@Composable
+private fun ImpersonateAction(onClick: (() -> Unit)?, writing: Boolean, busy: Boolean) {
+  Text(
+    text = if (writing) "正在替你写…" else "替我写",
+    style = MaterialTheme.typography.labelSmall,
+    color =
+      if (writing) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+      } else {
+        MaterialTheme.colorScheme.primary
+      },
+    modifier =
+      Modifier.clip(RoundedCornerShape(10.dp))
+        .clickable(enabled = !writing && !busy && onClick != null) { onClick?.invoke() }
+        .padding(horizontal = 10.dp, vertical = 6.dp),
+  )
 }
 
 @Composable

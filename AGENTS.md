@@ -397,6 +397,7 @@ Full table: `docs/pitfalls.md`.
 | In-app updates, download failure policy | `docs/app-updater.md` | §7.5; `UpdateDownloaderResumeTest` |
 | Linux on the phone (embedded Debian) | `docs/linux-on-phone.md` | `fetch-proot.ps1` + plugin commit first + `bundle-dsh.ps1` |
 | Memory / context injection | `docs/memory.md` | — |
+| Roleplay, character cards, world books, presets, persona, recaps | `docs/roleplay.md` | runtime/profile change → `bundle-dsh.ps1` + device check |
 | Scheduled tasks | `docs/scheduled-tasks.md` | — |
 | `ask_user_question` | `docs/user-questions.md` | — |
 | Approvals, confirmation UI, write-operation gates | `docs/approvals.md` | profile change → `bundle-dsh.ps1` + reinstall |

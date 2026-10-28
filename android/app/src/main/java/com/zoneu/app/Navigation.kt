@@ -1,18 +1,24 @@
 package com.zoneu.app
 
 import androidx.compose.runtime.Composable
+import androidx.navigation3.runtime.EntryProviderScope
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.zoneu.app.ui.chat.ChatScreen
 import com.zoneu.app.ui.settings.AboutScreen
+import com.zoneu.app.ui.settings.CharacterDetailScreen
+import com.zoneu.app.ui.settings.CharacterScreen
 import com.zoneu.app.ui.settings.ConnectorsScreen
 import com.zoneu.app.ui.settings.ExecutionSettingsScreen
 import com.zoneu.app.ui.settings.GmailConnectorScreen
 import com.zoneu.app.ui.settings.ModelServicesScreen
+import com.zoneu.app.ui.settings.PersonaScreen
 import com.zoneu.app.ui.settings.ProviderDetailScreen
 import com.zoneu.app.ui.settings.ProvidersScreen
 import com.zoneu.app.ui.settings.SettingsScreen
+import com.zoneu.app.ui.settings.TavernPresetScreen
 import com.zoneu.app.ui.settings.VoiceScreen
 
 @Composable
@@ -25,7 +31,12 @@ fun MainNavigation() {
     entryProvider =
       entryProvider {
         entry<Main> {
-          ChatScreen(onOpenSettings = { backStack.add(Settings) })
+          ChatScreen(
+            onOpenSettings = { backStack.add(Settings) },
+            // 酒馆侧栏的入口：直接进角色库，不必绕设置（人格页暂时只留在代码里）。
+            onOpenCharacters = { backStack.add(Characters) },
+            onOpenCharacterDetail = { id -> backStack.add(CharacterDetail(id)) },
+          )
         }
         entry<Settings> {
           SettingsScreen(
@@ -34,6 +45,8 @@ fun MainNavigation() {
             onOpenExecution = { backStack.add(ExecutionSettings) },
             onOpenConnectors = { backStack.add(Connectors) },
             onOpenVoice = { backStack.add(Voice) },
+            onOpenCharacters = { backStack.add(Characters) },
+            onOpenTavernPresets = { backStack.add(TavernPresets) },
             onOpenAbout = { backStack.add(About) },
           )
         }
@@ -48,6 +61,9 @@ fun MainNavigation() {
         }
         entry<About> {
           AboutScreen(onBack = { backStack.removeLastOrNull() })
+        }
+        entry<TavernPresets> {
+          TavernPresetScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<Providers> {
           ProvidersScreen(
@@ -73,6 +89,27 @@ fun MainNavigation() {
         entry<Voice> {
           VoiceScreen(onBack = { backStack.removeLastOrNull() })
         }
+        tavernEntries(backStack)
       },
   )
+}
+
+private fun EntryProviderScope<NavKey>.tavernEntries(backStack: MutableList<NavKey>) {
+  entry<Persona> {
+    PersonaScreen(onBack = { backStack.removeLastOrNull() })
+  }
+  entry<Characters> {
+    // 开始对话这件事交给详情页：点一行先看卡在演什么，再决定要不要开。
+    CharacterScreen(
+      onBack = { backStack.removeLastOrNull() },
+      onOpenDetail = { id -> backStack.add(CharacterDetail(id)) },
+    )
+  }
+  entry<CharacterDetail> { key ->
+    CharacterDetailScreen(
+      characterId = key.characterId,
+      onBack = { backStack.removeLastOrNull() },
+      onStartChat = { repeat(backStack.size - 1) { backStack.removeLastOrNull() } },
+    )
+  }
 }

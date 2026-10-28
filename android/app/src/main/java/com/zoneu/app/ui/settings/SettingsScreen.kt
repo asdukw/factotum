@@ -44,6 +44,8 @@ fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenVoice: () -> Unit,
   onOpenAbout: () -> Unit,
+  onOpenCharacters: () -> Unit = {},
+  onOpenTavernPresets: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   // context 必须在外面取：viewModel {} 的工厂 lambda 不是 composable 作用域，
@@ -64,6 +66,8 @@ fun SettingsScreen(
     onOpenConnectors = onOpenConnectors,
     onOpenVoice = onOpenVoice,
     onOpenAbout = onOpenAbout,
+    onOpenCharacters = onOpenCharacters,
+    onOpenTavernPresets = onOpenTavernPresets,
     modifier = modifier,
   )
 }
@@ -77,6 +81,8 @@ internal fun SettingsScreen(
   onOpenConnectors: () -> Unit,
   onOpenVoice: () -> Unit,
   onOpenAbout: () -> Unit,
+  onOpenCharacters: () -> Unit = {},
+  onOpenTavernPresets: () -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -144,6 +150,7 @@ internal fun SettingsScreen(
             ChevronRight()
           }
         }
+        EntertainmentSection(onOpenCharacters, onOpenTavernPresets)
         SectionLabel("关于")
         SettingsGroup {
           SettingsRow(

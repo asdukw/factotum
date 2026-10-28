@@ -187,6 +187,26 @@ internal fun CogGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
   }
 }
 
+/** 人物：头 + 肩线（酒馆侧栏的「角色/人格」入口用）。 */
+@Composable
+internal fun PersonGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {
+  Canvas(modifier) {
+    val w = strokeWidth(size.minDimension)
+    val cx = size.width / 2f
+    drawCircle(tint, size.minDimension * 0.18f, Offset(cx, size.height * 0.32f), style = Stroke(w))
+    // 肩线画半个椭圆：完整椭圆会在下方多出一段，看起来像头上有两个圈。
+    drawArc(
+      color = tint,
+      startAngle = 180f,
+      sweepAngle = 180f,
+      useCenter = false,
+      topLeft = Offset(cx - size.minDimension * 0.32f, size.height * 0.52f),
+      size = Size(size.minDimension * 0.64f, size.minDimension * 0.52f),
+      style = Stroke(w),
+    )
+  }
+}
+
 /** 搜索：圆 + 手柄。 */
 @Composable
 internal fun SearchGlyph(tint: Color, modifier: Modifier = Modifier.size(20.dp)) {

@@ -134,8 +134,7 @@ class ChatViewModelTest {
         config = testConfig(),
         streamer = PacedStreamer(),
         store = store,
-        clock = { testScheduler.currentTime },
-        flushIntervalMs = 200,
+        timing = ChatTiming(clock = { testScheduler.currentTime }, flushIntervalMs = 200),
       )
     advanceUntilIdle()
 
@@ -364,8 +363,15 @@ class ChatViewModelTest {
   @Test
   fun newSession_switchesToAnEmptySessionAndBack() = runTest(dispatcher) {
     val store = FakeSessionStore()
+    // 会话分组要读角色卡（文件 IO），生产代码在 switchDispatcher 上做；测试必须给同一个
+    // 调度器，否则 advanceUntilIdle 不会等那边算完，列表会停在旧值。
     val viewModel =
-      ChatViewModel(config = testConfig(), streamer = FakeStreamer(events = listOf(AgentStreamEvent.TextDelta("你好"))), store = store)
+      ChatViewModel(
+        config = testConfig(),
+        streamer = FakeStreamer(events = listOf(AgentStreamEvent.TextDelta("你好"))),
+        store = store,
+        timing = ChatTiming(dispatcher = dispatcher),
+      )
     advanceUntilIdle()
 
     viewModel.onInputChange("第一句")
@@ -500,7 +506,7 @@ class ChatViewModelTest {
         streamer = FakeStreamer(events = emptyList()),
         store = FakeSessionStore(),
         switcher = switcher,
-        switchDispatcher = dispatcher,
+        timing = ChatTiming(dispatcher = dispatcher),
       )
     advanceUntilIdle()
 
@@ -527,7 +533,7 @@ class ChatViewModelTest {
         streamer = FakeStreamer(events = emptyList()),
         store = FakeSessionStore(),
         switcher = switcher,
-        switchDispatcher = dispatcher,
+        timing = ChatTiming(dispatcher = dispatcher),
       )
     advanceUntilIdle()
     val before = viewModel.state.value.model

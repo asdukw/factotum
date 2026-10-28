@@ -19,6 +19,8 @@ class ChatModelSwitchController(
   private val snapshot: () -> ChatUiState,
   private val update: ((ChatUiState) -> ChatUiState) -> Unit,
   private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+  /** 切换成功后的回调：把这次选择记到当前会话上（会话级模型的「记」这一半）。 */
+  private val onApplied: (ModelChoice) -> Unit = {},
 ) {
   /** 打开选择 sheet 前调用：清掉上次的错误并返回候选。 */
   fun prepare(): List<ModelChoice> {
@@ -45,6 +47,7 @@ class ChatModelSwitchController(
               configSummary = "${choice.model} · $reasoningLabel",
             )
           }
+          onApplied(choice)
         }
         .onFailure { throwable ->
           update {

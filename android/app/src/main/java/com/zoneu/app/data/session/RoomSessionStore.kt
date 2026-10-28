@@ -5,6 +5,7 @@ import com.zoneu.app.data.db.MessageRole
 import com.zoneu.app.data.db.MessageStatus
 import com.zoneu.app.data.db.SessionEntity
 import com.zoneu.app.data.db.SessionKind
+import com.zoneu.app.data.db.SessionStoreDao
 import com.zoneu.app.data.db.ToolCallEntity
 import com.zoneu.app.data.db.ToolCallStatus
 import com.zoneu.app.data.db.Uuids
@@ -18,7 +19,9 @@ import kotlinx.coroutines.sync.withLock
 class RoomSessionStore(
   database: ZoneuDatabase,
   private val clock: () -> Long = System::currentTimeMillis,
-) : SessionStore {
+) : SessionStore,
+  VariantStore by RoomVariants(database.store()),
+  SessionAdmin by RoomAdmin(database.store()) {
   private val dao = database.store()
   private val bootstrap = Mutex()
 
@@ -27,17 +30,48 @@ class RoomSessionStore(
       dao.latestSession(SessionKind.Chat)?.toDomain() ?: newSessionLocked(title = null)
     }
 
-  override suspend fun createSession(title: String?): ChatSession = bootstrap.withLock { newSessionLocked(title) }
+  /**
+   * 「上次在说话的地方」＝ 日常与酒馆两段里更新的那段。
+   *
+   * 不用一条 `kind != 'Background'` 的查询：DAO 的方法数已经顶到 detekt 阈值，
+   * 而这两个 kind 恰好就是「人会回来的」全部，组合起来比再加一个抽象方法更省。
+   */
+  override suspend fun latestSession(): ChatSession? =
+    listOfNotNull(
+      dao.latestSession(SessionKind.Chat),
+      dao.latestSession(SessionKind.Roleplay),
+    )
+      .maxByOrNull { it.updatedAt }
+      ?.toDomain()
 
-  private suspend fun newSessionLocked(title: String?): ChatSession {
+  override suspend fun session(id: String): ChatSession? = dao.session(id)?.toDomain()
+
+  override suspend fun createSession(title: String?): ChatSession =
+    createSession(title, SessionKind.Chat, characterId = null)
+
+  override suspend fun createSession(
+    title: String?,
+    kind: SessionKind,
+    characterId: String?,
+    parentId: String?,
+  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId, parentId) }
+
+  private suspend fun newSessionLocked(
+    title: String?,
+    kind: SessionKind = SessionKind.Chat,
+    characterId: String? = null,
+    parentId: String? = null,
+  ): ChatSession {
     val now = clock()
     val entity =
       SessionEntity(
         id = Uuids.v7(now),
         title = title,
-        kind = SessionKind.Chat,
+        kind = kind,
         createdAt = now,
         updatedAt = now,
+        characterId = characterId,
+        parentId = parentId,
       )
     dao.insertSession(entity)
     return entity.toDomain()
@@ -52,6 +86,10 @@ class RoomSessionStore(
 
   override suspend fun messages(sessionId: String): List<StoredMessage> =
     dao.messages(sessionId).map { it.toDomain() }
+
+  override suspend fun deleteMessage(id: String) {
+    dao.deleteMessage(id)
+  }
 
   override suspend fun appendMessage(
     sessionId: String,
@@ -92,6 +130,10 @@ class RoomSessionStore(
     )
   }
 
+  override suspend fun setSessionModel(sessionId: String, model: String?) {
+    dao.setModel(sessionId, model)
+  }
+
   override suspend fun setTitleIfEmpty(sessionId: String, title: String) {
     dao.titleIfEmpty(sessionId, title)
   }
@@ -126,9 +168,35 @@ class RoomSessionStore(
   override suspend fun toolCalls(sessionId: String): List<StoredToolCall> =
     dao.toolCalls(sessionId).map { it.toDomain() }
 
+  override suspend fun setSessionCharacters(sessionId: String, ids: List<String>) =
+    dao.setSessionCharacters(sessionId, ids.filter { it.isNotBlank() }.joinToString(","))
+
   override suspend fun markStreamingAsInterrupted(): Int =
     // 半截回复保留；会话时间戳不因这次改判往前跳，所以不走 touchSession。
     dao.reclassify(MessageStatus.Streaming, MessageStatus.Interrupted, clock())
+}
+
+/**
+ * 会话行管理写操作的实现：群聊名单与前情提要。
+ *
+ * 与 [RoomVariants] 同理委托出去 —— 主类已经贴着 detekt 的 20 个函数上限，
+ * 每加一只写操作都要从别处挪一只出来，不如按职责分开。
+ */
+internal class RoomAdmin(private val dao: SessionStoreDao) : SessionAdmin {
+  override suspend fun setSummary(sessionId: String, text: String, uptoMessageId: String) =
+    dao.setSummary(sessionId, text, uptoMessageId)
+}
+
+/** 候选回答的读写实现；被 [RoomSessionStore] 委托，好让那个类不超函数上限。 */
+internal class RoomVariants(private val dao: SessionStoreDao) : VariantStore {
+  override suspend fun variants(anchorId: String): List<StoredMessage> =
+    dao.variantsOf(anchorId).map { it.toDomain() }
+
+  override suspend fun selectVariant(anchorId: String, keepId: String) = dao.selectVariant(anchorId, keepId)
+
+  override suspend fun tagVariant(id: String, anchorId: String, index: Int) = dao.tagVariant(id, anchorId, index)
+
+  override suspend fun deleteGroup(anchorId: String) = dao.deleteVariants(anchorId)
 }
 
 private fun SessionEntity.toDomain() =
@@ -138,6 +206,12 @@ private fun SessionEntity.toDomain() =
     kind = kind,
     createdAt = createdAt,
     updatedAt = updatedAt,
+    characterId = characterId,
+    characterIds = characterIds.orEmpty().split(',').filter { it.isNotBlank() },
+    parentId = parentId,
+    summary = summary?.takeIf { it.isNotBlank() },
+    summaryUpto = summaryUpto,
+    model = model,
   )
 
 private fun MessageEntity.toDomain() =
@@ -152,6 +226,8 @@ private fun MessageEntity.toDomain() =
     error = error,
     createdAt = createdAt,
     finishedAt = finishedAt,
+    anchorId = anchorId,
+    variantIndex = variantIndex,
   )
 
 private fun ToolCallEntity.toDomain() =

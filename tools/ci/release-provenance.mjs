@@ -66,7 +66,11 @@ export function releaseProvenance(env) {
       ],
     },
     runDetails: {
-      builder: { id: `${server}/${workflowRef}` },
+      // builder.id 是「谁执行的构建」，GitHub Actions 规定的取值是 runner 环境。
+      // 之前填的是 workflow 地址，attest-build-provenance 会拿它和真实签名身份比对后拒绝
+      // （v2.0.0 发布就是死在这一步）。workflow 身份放在 externalParameters 与
+      // resolvedDependencies 里，那里才是它的位置。
+      builder: { id: `https://github.com/actions/runner/${requireValue('RUNNER_ENVIRONMENT')}` },
       metadata: {
         invocationId: `${repositoryUrl}/actions/runs/${requireValue('GITHUB_RUN_ID')}/attempts/${requireValue('GITHUB_RUN_ATTEMPT')}`,
       },

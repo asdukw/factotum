@@ -23,7 +23,9 @@ test('Android package, components, JNI and schema share the new identity', () =>
     assert.ok(existsSync(join(root, path)));
     assert.ok(!existsSync(join(root, `android/app/src/${set}/java/com/factotum/app`)));
     for (const file of sources(join(root, path))) {
-      assert.match(readFileSync(file, 'utf8'), /^package com\.zoneu\.app\b/);
+      // Kotlin 允许文件级注解出现在 package 之前（@file:OptIn），它不算身份漂移。
+      const text = readFileSync(file, 'utf8').replace(/^(?:@file:[^\n]*\n\s*)+/, '');
+      assert.match(text, /^package com\.zoneu\.app\b/);
     }
   }
   assert.ok(existsSync(join(root, 'android/app/schemas/com.zoneu.app.data.db.ZoneuDatabase/2.json')));

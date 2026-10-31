@@ -12,6 +12,7 @@ test('old cached stream patch is normalized by effect and stays single after rep
   const directory = mkdtempSync(join(tmpdir(), 'zoneu-patch-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const paths = {
+    world: '@deepseek-ai/dsh-llm-pi-ai/lib/index.js',
     flock: '@deepseek-ai/node-addon-system/lib/flock.js',
     jsonl: '@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js',
     stream: '@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js',
@@ -23,10 +24,43 @@ test('old cached stream patch is normalized by effect and stays single after rep
     writeFileSync(path, text);
   }
   const read = name => readFileSync(join(directory, paths[name]), 'utf8');
+  // The provider projection patch needs all three anchors; a fixture without them
+  // fails closed by design, so keep every anchor the patcher looks for.
+  write('world', [
+    '\tconst adapter = new PiAiAdapter({',
+    '\t\tprofiles,',
+    '\t\tresolveApiKey,',
+    '\t});',
+    '\tasync function run() {',
+    '\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {',
+    '\t\t\t\t\tbody: payload,',
+    '\t\t\t\t\theaders: requestHeaders(profile.headers)',
+    '\t\t\t\t}), model.contextWindow',
+    '\t\t\t\t});',
+    '\t}',
+  ].join('\n'));
   write('flock', 'export async function tryLockExclusive(fd) {\n}\n');
   write('jsonl', 'import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";\nawait link(tmp, finalPath);');
   write('welcome', 'if (state.status === "idle" || state.status === "loading" || state.acknowledged) return null;');
-  write('stream', 'class Server {\n mount(ctx) {\n\t\tthis.disposers.push(ctx.on("session/created", (session) => {\n\t\t}));\n }\n}\nServer');
+  // Lifecycle patch anchors live in the same module as the stream patch; the
+  // fixture must carry both or the patch fails closed.
+  write('stream', [
+    'class Server {',
+    '\tmount(ctx) {',
+    '\t\tthis.disposers.push(ctx.on("session/created", (session) => {',
+    '\t\t}));',
+    '\t}',
+    '\tasync prompt(params) {',
+    '\t\trec.handle.agent.followup(message);',
+    '\t}',
+    '\tdispatch(params) {',
+    '\t\tswitch (params.type) {',
+    '\t\t\tcase "session/prompt": return this.prompt(params);',
+    '\t\t}',
+    '\t}',
+    '}',
+    'Server',
+  ].join('\n'));
   const run = () => {
     const result = spawnSync(process.execPath, [patcher, directory], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stdout + result.stderr);

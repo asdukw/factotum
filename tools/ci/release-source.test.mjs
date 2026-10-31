@@ -106,7 +106,12 @@ test('dispatch provenance names actual tag source, not a fictitious tag-triggere
   assert.deepEqual(definition.externalParameters.inputs, { tag: 'v0.16.0' });
   assert.equal(definition.internalParameters.github.event_name, 'workflow_dispatch');
   assert.equal(definition.internalParameters.github.sha, f.eventSha);
-  assert.equal(predicate.runDetails.builder.id, 'https://github.com/fixture/project/.github/workflows/release.yml@refs/heads/master');
+  // builder 是 runner 身份，不是 workflow 地址；两者不能混。
+  assert.equal(predicate.runDetails.builder.id, 'https://github.com/actions/runner/github-hosted');
+  assert.equal(
+    createProvenance({ ...env, RUNNER_ENVIRONMENT: 'self-hosted' }).runDetails.builder.id,
+    'https://github.com/actions/runner/self-hosted',
+  );
   assert.equal(predicate.buildDefinition.resolvedDependencies[1].digest.gitCommit, f.eventSha);
   assert.equal(predicate.runDetails.metadata.invocationId, 'https://github.com/fixture/project/actions/runs/123/attempts/2');
   const output = join(f.directory, 'predicate.json');

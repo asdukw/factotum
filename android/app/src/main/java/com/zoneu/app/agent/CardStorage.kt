@@ -10,11 +10,12 @@ internal object CardStorageTransactions {
 internal class CardStorage(
   private val read: (String) -> CardSnapshot?,
   private val all: () -> List<CardSnapshot>,
-  private val write: (CharacterCard, ByteArray?) -> Unit,
+  private val write: (CharacterCard) -> Unit,
   private val remove: (String) -> Unit,
   val readReceipt: (String) -> CardRequestReceipt?,
   val writeReceipt: (CardRequestReceipt) -> Unit,
   private val browse: (() -> CardSnapshotListing)? = null,
+  private val writeAsset: (CharacterCard, ByteArray?) -> Unit = { card, _ -> write(card) },
 ) {
   fun <T> transaction(block: CardStorage.() -> T): T = synchronized(CardStorageTransactions.lock) { block() }
 
@@ -89,7 +90,7 @@ internal class CardStorage(
     val instance = evidence?.targetInstance?.takeIf { it.isNotBlank() }
       ?: card.storageState()?.instanceId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
     val stored = card.withStorage(CardStorageState(revision, evidence, instance))
-    write(stored, png)
+    writeAsset(stored, png)
     val saved = read(card.id) ?: throw CardOperationException("CARD_SAVE_UNCONFIRMED")
     if (!saved.editable || saved.revision != revision || saved.card != stored) throw CardOperationException("CARD_SAVE_UNCONFIRMED")
     return saved

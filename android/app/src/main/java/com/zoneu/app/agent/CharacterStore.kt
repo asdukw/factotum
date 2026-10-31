@@ -390,7 +390,16 @@ object CharacterStore {
   internal fun storage(context: Context): CardStorage {
     val files = CardStorageFiles(context, decoder, encoder)
     val journal = CardRequestJournal(File(context.filesDir, "roleplay/card-requests"))
-    return CardStorage(files::read, files::snapshots, files::write, files::delete, journal::read, journal::write, files::listing)
+    return CardStorage(
+      files::read,
+      files::snapshots,
+      files::write,
+      files::delete,
+      journal::read,
+      journal::write,
+      files::listing,
+      files::write,
+    )
   }
 
   /**

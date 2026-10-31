@@ -131,7 +131,13 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
             parsed.card.importMetadata?.contentHash?.let { hash ->
               CharacterStore.cards(appContext).firstOrNull { it.importMetadata?.contentHash == hash }
             }
-          if (existing == null) CharacterStore.createImported(appContext, parsed.card)
+          if (existing == null) {
+            CharacterStore.createImported(
+              appContext,
+              parsed.card,
+              bytes.takeIf { it.size >= 8 && it.copyOfRange(0, 8).contentEquals(byteArrayOf(137.toByte(), 80, 78, 71, 13, 10, 26, 10)) },
+            )
+          }
           parsed
         }
       outcome

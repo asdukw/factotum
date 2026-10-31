@@ -10,7 +10,7 @@ internal object CardStorageTransactions {
 internal class CardStorage(
   private val read: (String) -> CardSnapshot?,
   private val all: () -> List<CardSnapshot>,
-  private val write: (CharacterCard) -> Unit,
+  private val write: (CharacterCard, ByteArray?) -> Unit,
   private val remove: (String) -> Unit,
   val readReceipt: (String) -> CardRequestReceipt?,
   val writeReceipt: (CardRequestReceipt) -> Unit,
@@ -27,7 +27,7 @@ internal class CardStorage(
     read(id)
   }
 
-  fun create(card: CharacterCard): CardSnapshot = transaction { createWithEvidence(card, null) }
+  fun create(card: CharacterCard, png: ByteArray? = null): CardSnapshot = transaction { createWithEvidence(card, null, png) }
 
   fun update(id: String, expected: String, transform: (CharacterCard) -> CharacterCard): CardSnapshot = transaction {
     val before = writable(id, expected)
@@ -64,7 +64,7 @@ internal class CardStorage(
     return current
   }
 
-  fun createWithEvidence(card: CharacterCard, evidence: CardRequestReceipt?): CardSnapshot {
+  fun createWithEvidence(card: CharacterCard, evidence: CardRequestReceipt?, png: ByteArray? = null): CardSnapshot {
     requireId(card.id)
     val prior = read(card.id)
     if (prior != null) {
@@ -78,18 +78,18 @@ internal class CardStorage(
         source
       }
     }
-    return persist(card.copy(imported = true, importMetadata = metadata).withStorage(null), evidence)
+    return persist(card.copy(imported = true, importMetadata = metadata).withStorage(null), evidence, png)
   }
 
   fun updateWithEvidence(before: CardSnapshot, candidate: CharacterCard, evidence: CardRequestReceipt): CardSnapshot =
     persist(CardStorageIdentity.commit(before.card, sanitize(before.card, candidate)), evidence)
 
-  private fun persist(card: CharacterCard, evidence: CardRequestReceipt?): CardSnapshot {
+  private fun persist(card: CharacterCard, evidence: CardRequestReceipt?, png: ByteArray? = null): CardSnapshot {
     val revision = evidence?.appliedRevision ?: UUID.randomUUID().toString()
     val instance = evidence?.targetInstance?.takeIf { it.isNotBlank() }
       ?: card.storageState()?.instanceId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
     val stored = card.withStorage(CardStorageState(revision, evidence, instance))
-    write(stored)
+    write(stored, png)
     val saved = read(card.id) ?: throw CardOperationException("CARD_SAVE_UNCONFIRMED")
     if (!saved.editable || saved.revision != revision || saved.card != stored) throw CardOperationException("CARD_SAVE_UNCONFIRMED")
     return saved

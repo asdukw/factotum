@@ -29,7 +29,7 @@ internal class CardCommitter(private val storage: CardStorage) {
     current.card
   }
 
-  fun submit(request: String, parameters: String, card: CharacterCard, control: CardDownloadControl): Pair<CharacterCard, Boolean> =
+  fun submit(request: String, parameters: String, card: CharacterCard, control: CardDownloadControl, png: ByteArray? = null): Pair<CharacterCard, Boolean> =
     storage.transaction {
       existing(request, parameters)?.let { return@transaction it to true }
       control.check()
@@ -67,7 +67,7 @@ internal class CardCommitter(private val storage: CardStorage) {
       writeReceipt(receipt)
       control.check()
       val candidate = card.copy(id = targetId, importMetadata = card.importMetadata.copy(contentHash = hash))
-      val saved = createWithEvidence(candidate, receipt)
+      val saved = createWithEvidence(candidate, receipt, png)
       acknowledge(saved)
       saved.card to false
     }

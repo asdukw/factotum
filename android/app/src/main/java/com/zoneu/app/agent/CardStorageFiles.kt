@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.AtomicFile
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.FileOutputStream
 
 /** The only file writer. Location, not serialized flags, decides mutability. */
 internal class CardStorageFiles(
@@ -41,7 +42,7 @@ internal class CardStorageFiles(
     return CardSnapshotListing(candidates.filter { it.card.id !in collisions }, unreadable)
   }
 
-  fun write(card: CharacterCard) {
+  fun write(card: CharacterCard, png: ByteArray? = null) {
     CardStorage.requireId(card.id)
     check(directory.isDirectory || directory.mkdirs())
     val atomic = AtomicFile(File(directory, "${card.id}.json"))
@@ -52,14 +53,21 @@ internal class CardStorageFiles(
       stream.write(bytes)
       atomic.finishWrite(stream)
       finished = true
+      if (png != null) FileOutputStream(File(directory, "${card.id}.png")).use { it.write(png) }
     } finally {
       if (!finished) atomic.failWrite(stream)
     }
   }
 
+  fun avatarFile(id: String): File? {
+    CardStorage.requireId(id)
+    return File(directory, "$id.png").takeIf { it.isFile && it.length() > 0L }
+  }
+
   fun delete(id: String) {
     CardStorage.requireId(id)
     AtomicFile(File(directory, "$id.json")).delete()
+    File(directory, "$id.png").delete()
   }
 
   private fun builtins(): List<CardSnapshot> = context.assets.list(ASSET_DIR).orEmpty()

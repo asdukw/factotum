@@ -58,6 +58,7 @@ object CharacterCardOperations {
         ),
         "imported",
         control,
+        downloaded.takeIf { it.isPng() },
       )
     }
   }
@@ -93,8 +94,9 @@ object CharacterCardOperations {
     card: CharacterCard,
     disposition: String,
     control: CardDownloadControl,
+    png: ByteArray? = null,
   ): DeviceActionResult {
-    val (read, duplicate) = committer(context).submit(request, params, card, control)
+    val (read, duplicate) = committer(context).submit(request, params, card, control, png)
     return success(read, if (duplicate) "existing" else disposition)
   }
 
@@ -185,3 +187,5 @@ object CharacterCardOperations {
     }
   }
 }
+
+private fun ByteArray.isPng(): Boolean = size >= 8 && copyOfRange(0, 8).contentEquals(byteArrayOf(137.toByte(), 80, 78, 71, 13, 10, 26, 10))

@@ -1,7 +1,9 @@
 package com.zoneu.app.ui.settings
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -427,24 +431,41 @@ private fun AboutCard(card: CharacterCard) {
 
 @Composable
 private fun CardHero(card: CharacterCard) {
+  val context = LocalContext.current
+  val avatar = remember(card.id) {
+    CharacterStore.avatarFile(context, card.id)?.let { BitmapFactory.decodeFile(it.path)?.asImageBitmap() }
+  }
   SettingsGroup {
-    Column(Modifier.fillMaxWidth().padding(18.dp)) {
-      Text(card.name, style = MaterialTheme.typography.headlineSmallEmphasized)
-      if (card.tagline.isNotBlank()) {
-        Spacer(Modifier.height(6.dp))
-        Text(
-          text = card.tagline,
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(18.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      if (avatar != null) {
+        Image(
+          bitmap = avatar,
+          contentDescription = card.name,
+          modifier = Modifier.size(88.dp),
         )
+        Spacer(Modifier.width(14.dp))
       }
-      if (card.tags.isNotEmpty()) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-          text = card.tags.joinToString("  ·  "),
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.primary,
-        )
+      Column(Modifier.weight(1f)) {
+        Text(card.name, style = MaterialTheme.typography.headlineSmallEmphasized)
+        if (card.tagline.isNotBlank()) {
+          Spacer(Modifier.height(6.dp))
+          Text(
+            text = card.tagline,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        if (card.tags.isNotEmpty()) {
+          Spacer(Modifier.height(8.dp))
+          Text(
+            text = card.tags.joinToString("  ·  "),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+          )
+        }
       }
     }
   }

@@ -371,7 +371,9 @@ object CharacterStore {
 
   fun byId(context: Context, id: String): CharacterCard? = readSnapshot(context, id)?.card
 
-  fun createImported(context: Context, card: CharacterCard): CardSnapshot = storage(context).create(card)
+  fun avatarFile(context: Context, id: String): File? = CardStorageFiles(context, decoder, encoder).avatarFile(id)
+
+  fun createImported(context: Context, card: CharacterCard, png: ByteArray? = null): CardSnapshot = storage(context).create(card, png)
 
   fun updateImported(
     context: Context,

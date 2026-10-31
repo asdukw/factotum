@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -368,6 +369,11 @@ internal fun ChatScreen(
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
   val greetings = rememberGreetings(state)
+
+  // 侧栏不是导航目的地：系统返回 / 侧边返回手势应先收起侧栏，而不是退出 App。
+  BackHandler(enabled = drawerState.isOpen) {
+    scope.launch { drawerState.close() }
+  }
 
   HideKeyboardWhileStreaming(streaming = state.isStreaming, keyboard = keyboard, focus = focus)
 

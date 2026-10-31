@@ -48,9 +48,6 @@ import kotlinx.serialization.Serializable
 /** 一张角色卡的详情：人设 / 开场 / 世界设定，收藏与开始对话都从这里走。 */
 @Serializable data class CharacterDetail(val characterId: String) : NavKey
 
-/** 酒馆预设（设置 → 角色 → 酒馆预设）：可编辑的系统模板与后置指令。 */
-@Serializable data object TavernPresets : NavKey
-
 /** 独立共享世界书库，可从精确工具回执打开指定资产。 */
 @Serializable data class WorldBooks(val bookId: String? = null) : NavKey
 

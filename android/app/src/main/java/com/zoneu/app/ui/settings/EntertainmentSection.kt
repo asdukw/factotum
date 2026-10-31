@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import com.zoneu.app.ui.chat.LocalWorldNavigation
 
 @Composable
-internal fun EntertainmentSection(onOpenCharacters: () -> Unit, onOpenTavernPresets: () -> Unit) {
+internal fun EntertainmentSection(onOpenCharacters: () -> Unit) {
   val worlds = LocalWorldNavigation.current
   SectionLabel("娱乐")
   SettingsGroup {
@@ -16,12 +16,5 @@ internal fun EntertainmentSection(onOpenCharacters: () -> Unit, onOpenTavernPres
     ) { ChevronRight() }
     SettingsDivider()
     SettingsRow(GlyphKind.Sparkles, "世界书", "独立书库、共享引用与固定修订", onClick = worlds.openLibrary) { ChevronRight() }
-    SettingsDivider()
-    SettingsRow(
-      glyph = GlyphKind.Sparkles,
-      title = "酒馆预设",
-      subtitle = "系统模板与后置指令",
-      onClick = onOpenTavernPresets,
-    ) { ChevronRight() }
   }
 }

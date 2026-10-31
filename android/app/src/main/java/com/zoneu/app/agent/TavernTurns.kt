@@ -19,8 +19,8 @@ class TavernTurns(
   private val channel: () -> TavernChannel? = { null },
   private val memory: (String) -> String = { "" },
   /**
-   * 每次现取，且**按卡取**：预设可以绑在某张卡上（[TavernPresetStore.forCard]），
-   * 换卡就换写法，不用每张卡手动切一次。参数是角色 id，null 表示当前不是角色扮演。
+   * 每次现取：预设随版本内置，不开放用户编辑。参数是角色 id，null 表示当前不是角色扮演；
+   * 留着这个钩子是为了测试替身和以后可能的分卡写法。
    */
   private val preset: (String?) -> TavernPreset = { TavernPreset.DEFAULT },
   /**

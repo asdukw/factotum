@@ -23,7 +23,6 @@ import com.zoneu.app.ui.settings.ProvidersScreen
 import com.zoneu.app.ui.settings.ScheduledTaskRunScreen
 import com.zoneu.app.ui.settings.ScheduledTaskScreen
 import com.zoneu.app.ui.settings.SettingsScreen
-import com.zoneu.app.ui.settings.TavernPresetScreen
 import com.zoneu.app.ui.settings.VoiceScreen
 import com.zoneu.app.ui.settings.WorldBindingScreen
 import com.zoneu.app.ui.settings.WorldBookScreen
@@ -61,7 +60,6 @@ fun MainNavigation() {
               onOpenVoice = { backStack.add(Voice) },
               onOpenScheduledTasks = { backStack.add(ScheduledTasks) },
               onOpenCharacters = { backStack.add(Characters) },
-              onOpenTavernPresets = { backStack.add(TavernPresets) },
               onOpenAbout = { backStack.add(About) },
             )
           }
@@ -75,9 +73,6 @@ fun MainNavigation() {
             ExecutionSettingsScreen(onBack = { backStack.removeLastOrNull() })
           }
           entry<About> { AboutScreen(onBack = { backStack.removeLastOrNull() }) }
-          entry<TavernPresets> {
-            TavernPresetScreen(onBack = { backStack.removeLastOrNull() })
-          }
           entry<Providers> {
             ProvidersScreen(
               onBack = { backStack.removeLastOrNull() },

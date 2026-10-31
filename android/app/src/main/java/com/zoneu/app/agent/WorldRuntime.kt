@@ -105,17 +105,13 @@ object WorldRuntime {
     } else {
       emptyList()
     }
-    val (cards, memory, preset) = CharacterStore.transaction {
+    val (cards, memory) = CharacterStore.transaction {
       val library = CharacterStore.cards(context)
       val cards = session.cast.distinct().take(GroupCast.MAX).map { id ->
         library.firstOrNull { it.id == id } ?: throw WorldBookException("WORLD_CHARACTER_MISSING")
       }
       worldCheck(cards.isNotEmpty(), "WORLD_CHARACTER_MISSING")
-      Triple(
-        cards,
-        if (readOnly) "" else CharacterMemory.notes(context, cards.first().id),
-        if (readOnly) TavernPresetStore.peekForCard(context, cards.first().id) else TavernPresetStore.forCard(context, cards.first().id),
-      )
+      cards to if (readOnly) "" else CharacterMemory.notes(context, cards.first().id)
     }
     return Snapshot(
       session,
@@ -126,7 +122,7 @@ object WorldRuntime {
       // 读取是安全的：解释器要用真实变量渲染，才能和生成时的预算判定一致。
       PrefsVarsStore(context).load(sessionId),
       memory,
-      preset,
+      TavernPreset.DEFAULT,
     )
   }
 

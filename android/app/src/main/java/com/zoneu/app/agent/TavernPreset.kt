@@ -5,8 +5,8 @@ import kotlinx.serialization.Serializable
 /**
  * 酒馆的一套 prompt 骨架：一段系统模板 + 一段后置指令。
  *
- * 之前这两段是写死在 [TavernPrompt] 里的常量，改一个字就要发版。抽成数据之后，能存、能切、能改顺序 ——
  * 这是 ST（SillyTavern）的 Prompt Manager 里最有用的那部分：调 prompt 的人绝大部分时间都在改这两段。
+ * 现在它随版本内置，不开放用户编辑；调整直接改这里的常量，所有角色卡共用同一套。
  *
  * 模板变量（渲染见 [TavernTemplate]）：
  * - `{{char}}` `{{user}}` 角色名 / 用户名
@@ -16,7 +16,7 @@ import kotlinx.serialization.Serializable
  * - `{{#名字}}…{{/名字}}` 条件块：对应变量为空时整块不出现（`{{#first}}` 是「是否为第一轮」）
  *
  * 写法上不给「完全没有设定」的模板留空：卡的四段正文是扮演的全部依据，删掉它们等于让模型自由发挥。
- * 用户可以重排、加自己的规则，但默认模板里每一段都在。
+ * 默认模板里每一段都在，改的时候有一份完整骨架可对照。
  */
 @Serializable
 data class TavernPreset(
@@ -26,7 +26,7 @@ data class TavernPreset(
   val system: String,
   /** 后置指令：放在历史之后，最靠近生成位置，用来压住最后一句的语气与禁令。 */
   val postHistory: String,
-  /** 内置预设：不可删，可复制成自定义。 */
+  /** 内置预设标记；目前只保留这一套，不开放用户编辑。 */
   val builtIn: Boolean = false,
   /**
    * 世界书的递归层数：命中的条目正文里提到了谁，就再带上谁，最多几层。
@@ -54,7 +54,7 @@ data class TavernPreset(
     /** 递归上限。再高就会出现「一条设定牵出半本书」，而代价是每轮多带几百 token。 */
     const val RECURSION_MAX = 3
 
-    /** 系统模板。刻意保留每一段的位置，让用户能照着改而不是从空白开始。 */
+    /** 系统模板。刻意保留每一段的位置，改的时候照着补而不是从空白开始。 */
     val DEFAULT_SYSTEM =
       """
       你现在要扮演「{{char}}」。

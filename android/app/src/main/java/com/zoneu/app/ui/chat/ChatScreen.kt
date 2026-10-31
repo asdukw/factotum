@@ -126,7 +126,6 @@ import com.zoneu.app.agent.RoleplayGroup
 import com.zoneu.app.agent.SessionHandoff
 import com.zoneu.app.agent.SessionRecap
 import com.zoneu.app.agent.TavernMacros
-import com.zoneu.app.agent.TavernPresetStore
 import com.zoneu.app.agent.TavernTurns
 import com.zoneu.app.agent.TavernVars
 import com.zoneu.app.agent.Tokens
@@ -267,7 +266,6 @@ private fun rememberTavernTurns(appContext: Context): TavernTurns =
         }
       },
       memory = { id -> CharacterMemory.notes(appContext, id) },
-      preset = { id -> TavernPresetStore.forCard(appContext, id) },
       vars = PrefsVarsStore(appContext),
       world = WorldRuntime.direct(appContext),
     )

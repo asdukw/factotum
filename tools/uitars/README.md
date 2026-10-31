@@ -59,7 +59,7 @@ node tools/uitars/measure.mjs --serial $D --task "打开计算器应用" --max-s
 单步拆解（1024）：视觉+prefill 2.2 s、decode 1.8 s、动作执行 0.1 s。
 
 - **速度随图像 token 数超线性增长**（token 数 4.3×，时间 5.4×）—— 与
-  `docs/on-device-inference.md` 第 6 节的观察一致。
+  `docs/on-device-inference.md` 的观察一致。
 - **但降分辨率并没有让行为变好**：4096 下它照样在 `press_home` 上循环、把别的 App 图标
   当成通往计算器的第一步。所以行为差**不是** 1024 这个旋钮造成的。
 

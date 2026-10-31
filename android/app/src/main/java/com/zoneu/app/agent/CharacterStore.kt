@@ -83,6 +83,8 @@ data class WorldEntry(
    * 卡作者用它保护那些「只在明确提到时才该出现」的条目（比如真相、结局条件）。
    */
   val excludeRecursion: Boolean = false,
+  /** 应用内部来源身份，不作为外部 id，也不参与运行去重。 */
+  val sourceToken: String = "",
 ) {
   /**
    * 这组关键词是否命中 [text]。
@@ -221,9 +223,8 @@ enum class SecondaryLogic {
  * 这些名字都一样），这样导入一张社区卡时不用另建一套模型。
  *
  * 与卡规范的两处差异是有意的：
- * - `mes_example`（示例对话）**不存**：占 token、收益低，而且示例里的口癖会被模型过度模仿；
- * - 不存 `system_prompt` / `post_history_instructions`：那两段经常写着「忽略一切规则」，
- *   与手机 agent 的操作契约直接冲突，导入时必须拦掉（见 `docs` 里的导入说明）。
+ * - 外部提示与示例只存于隔离的 importMetadata，供主动导出恢复；
+ * - 运行字段仍是白名单，不从原始对象拼 prompt（见 `docs/roleplay.md`）。
  */
 @Serializable
 data class CharacterCard(
@@ -242,7 +243,15 @@ data class CharacterCard(
   val license: String = "",
   /** 用户导入的卡放在这里（内置卡为 false），用于界面上区分与删除。 */
   val imported: Boolean = false,
+  val importMetadata: CardImportMetadata? = null,
+  @SerialName("_zoneu_storage") private val storage: CardStorageState? = null,
 ) {
+  internal fun storageState(): CardStorageState? = storage
+
+  internal fun withStorage(state: CardStorageState?): CharacterCard = copy(storage = state)
+
+  val storageRevision: String? get() = storage?.revision
+
   /** 所有可选开场白：第一条永远是 [firstMes]，后面是备用。空串不算。 */
   val greetings: List<String>
     get() = (listOf(firstMes) + alternateGreetings).map { it.trim() }.filter { it.isNotEmpty() }
@@ -255,8 +264,6 @@ data class CharacterCard(
  * 也不需要重新打包 profile。渲染出来的那一段直接当人格正文用（与 [PersonaStore] 的 soul 同级）。
  */
 object CharacterStore {
-  private const val ASSET_DIR = "roleplay/characters"
-
   /** 宽松解析：社区卡字段多、还常有 null；多出来的键一律忽略。 */
   private val json = Json {
     ignoreUnknownKeys = true
@@ -272,63 +279,38 @@ object CharacterStore {
     explicitNulls = false
   }
 
-  /**
-   * 全部可选角色，内置的排前面。
-   *
-   * 读 assets 失败时返回空列表而不是抛：角色库空了要能用（人格页还在），
-   * 一个打不开的设置页比「没有角色」更糟。
-   */
-  fun cards(context: Context): List<CharacterCard> {
-    val builtin =
-      runCatching {
-        context.assets
-          .list(ASSET_DIR)
-          .orEmpty()
-          .filter { it.endsWith(".json") }
-          .mapNotNull { readAsset(context, it) }
-          .sortedBy { it.id }
-      }
-        .getOrDefault(emptyList())
-    return builtin + importedCards(context)
+  /** Browsing can retain healthy cards while callers present the count of unreadable files. */
+  fun cards(context: Context): List<CharacterCard> = library(context).cards
+
+  fun library(context: Context): CardLibraryListing = storage(context).listing().let {
+    CardLibraryListing(it.snapshots.map { snapshot -> snapshot.card }, it.unreadable)
   }
 
-  /** 用户导入的卡放应用私有目录：跟着 App 走、卸载即清，不进 git。 */
-  private fun importedDir(context: Context): File =
-    File(context.filesDir, "roleplay/characters").apply { mkdirs() }
+  fun readSnapshot(context: Context, id: String): CardSnapshot? = storage(context).snapshot(id)
 
-  private fun importedCards(context: Context): List<CharacterCard> =
-    runCatching {
-      importedDir(context)
-        .listFiles { file -> file.isFile && file.name.endsWith(".json") }
-        .orEmpty()
-        .mapNotNull { file -> runCatching { decoder.decodeFromString<CharacterCard>(file.readText()) }.getOrNull() }
-        .sortedBy { it.name }
-    }
-      .getOrDefault(emptyList())
+  fun snapshots(context: Context): List<CardSnapshot> = storage(context).snapshots()
 
-  /** 存一张导入的卡（按 id 落一个文件）；返回是否写成功。 */
-  fun saveImported(context: Context, card: CharacterCard): Boolean =
-    runCatching {
-      File(importedDir(context), "${card.id}.json").writeText(encoder.encodeToString(card))
-      true
-    }
-      .getOrDefault(false)
+  fun byId(context: Context, id: String): CharacterCard? = readSnapshot(context, id)?.card
 
-  /** 删一张导入的卡。内置卡在 assets 里，删不掉也不该删。 */
-  fun deleteImported(context: Context, id: String): Boolean =
-    runCatching { File(importedDir(context), "$id.json").delete() }.getOrDefault(false)
+  fun createImported(context: Context, card: CharacterCard): CardSnapshot = storage(context).create(card)
 
-  fun byId(context: Context, id: String): CharacterCard? =
-    cards(context).firstOrNull { it.id == id }
+  fun updateImported(
+    context: Context,
+    id: String,
+    expectedRevision: String,
+    transform: (CharacterCard) -> CharacterCard,
+  ): CardSnapshot = storage(context).update(id, expectedRevision, transform = transform)
 
-  private fun readAsset(context: Context, fileName: String): CharacterCard? =
-    runCatching {
-      val raw = context.assets.open("$ASSET_DIR/$fileName").bufferedReader().use { it.readText() }
-      val card = json.decodeFromString<CharacterCard>(raw)
-      // 文件名即身份：卡里漏了 id 时用它兜底，避免两张卡撞成同一个 id。
-      if (card.id.isBlank()) card.copy(id = fileName.removeSuffix(".json")) else card
-    }
-      .getOrNull()
+  fun deleteImported(context: Context, id: String, expectedRevision: String): CardSnapshot =
+    storage(context).delete(id, expectedRevision)
+
+  internal fun <T> transaction(block: () -> T): T = synchronized(CardStorageTransactions.lock) { block() }
+
+  internal fun storage(context: Context): CardStorage {
+    val files = CardStorageFiles(context, decoder, encoder)
+    val journal = CardRequestJournal(File(context.filesDir, "roleplay/card-requests"))
+    return CardStorage(files::read, files::snapshots, files::write, files::delete, journal::read, journal::write, files::listing)
+  }
 
   /**
    * 卡里的正文渲染：先换宏，再把剩下的花括号转成全角。

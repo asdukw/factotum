@@ -31,7 +31,7 @@ object CharacterMemory {
       val text = notes.trim()
       val target = file(context, characterId)
       if (text.isEmpty()) {
-        target.delete()
+        check(!target.exists() || target.delete()) { "记忆清除失败" }
       } else {
         target.writeText(text)
       }

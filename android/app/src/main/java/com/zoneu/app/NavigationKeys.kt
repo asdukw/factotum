@@ -44,3 +44,9 @@ import kotlinx.serialization.Serializable
 
 /** 酒馆预设（设置 → 角色 → 酒馆预设）：可编辑的系统模板与后置指令。 */
 @Serializable data object TavernPresets : NavKey
+
+/** 独立共享世界书库，可从精确工具回执打开指定资产。 */
+@Serializable data class WorldBooks(val bookId: String? = null) : NavKey
+
+/** 角色默认绑定或会话固定清单，scope 不混用。 */
+@Serializable data class WorldBindings(val scope: String, val targetId: String) : NavKey

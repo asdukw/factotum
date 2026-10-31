@@ -10,6 +10,14 @@
 
 ---
 
+## 独立世界书适配的实施边界
+
+实现合同见 [worldbooks.md](worldbooks.md)。新增适配不修改 dsh 冻结请求或持久消息，也不关闭 loop 的重建校验；纯装配补丁仅在 pi-ai 请求转换后暴露可选应用投影服务。服务缺省完全透传，锚点、版本或部分补丁状态不符即停止打包。
+
+内部 SDK 扩展负责在真实用户消息创建后、followup 前绑定宿主请求身份；定向取消和持久化结算经专用内部 RPC 完成，不发送 shutdown、不退出 Node。普通日常和辅助标题／压缩调用不注入。最终提供商协议无法表达的角色／位置明确报不兼容，不能静默改写成 user。
+
+这些模块先由本地 fake provider 验证最终 wire 与生命周期，再接 Room 和 UI；尚未完成的接线与真机验证不能写成已支持。角色／世界书仓库的 fs 包装保护不等于同 UID shell 沙箱，长期记忆工作区仍保持可写。
+
 ## 1. 查证事实（2026-10-03，来源均为官方仓库/文档）
 
 | 事实 | 值 | 影响 |
@@ -126,7 +134,9 @@ adb shell am broadcast --include-stopped-packages `
 - **opencode zen 强制要求 `x-opencode-session` 头**，已在 pi-ai 路由的 `headers` 中补上。
 - 运行时 staging：`npm install @deepseek-ai/dsh@0.2.0-rc.2 --os=android --cpu=arm64`
   = 222MB / ~25.8k 文件（对比不限平台 452MB），由 `tools/bundle-dsh.ps1` 打包成
-  assets 里的 zip。
+  assets 里的 zip。`android/.dsh-cache/runtime` 是**未打补丁**的 npm 原始树：每次装配
+  复制到 `.dsh-cache/staging` 后才打补丁、放插件并压 zip。插件测试直接读原始树，
+  所以先打包再跑测试也不会被补丁污染。
 - 验证：仓库版 `tools/dsh-phone/launcher.mjs` 在 PC 上跑通完整内核 + zen 端点，
   `2+2 等于几？` → `2+2 等于 4。`（exit 0）。
 

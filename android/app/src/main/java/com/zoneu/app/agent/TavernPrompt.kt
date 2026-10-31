@@ -59,6 +59,7 @@ object TavernPrompt {
      */
     state: TurnState = TurnState(),
   ): List<TavernMessage> {
+    state.injections?.let { return planned(card, memory, turns, preset, state, it) }
     val vars = state.vars
     val tail = state.tail
     // 先按预算裁历史：裁完再算关键词，否则命中的条目可能来自一段已经被丢掉的对话
@@ -78,6 +79,51 @@ object TavernPrompt {
     out += TavernMessage(TavernMessage.SYSTEM, renderPreset(preset.postHistory, values, vars))
     // 空的 tail 不能发：一条内容为空的 system 会让部分提供商直接 400
     if (!tail.isNullOrBlank()) out += TavernMessage(TavernMessage.SYSTEM, tail.trim())
+    return out
+  }
+
+  /** Fixed host plan: no scanning, random selection, or activation writes here. */
+  private fun planned(
+    card: CharacterCard,
+    memory: String,
+    turns: List<TavernMessage>,
+    preset: TavernPreset,
+    state: TurnState,
+    injections: List<WorldInjection>,
+  ): List<TavernMessage> {
+    val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }).turns
+    val values = values(
+      card.copy(world = emptyList()),
+      memory,
+      history.none { it.role == TavernMessage.ASSISTANT },
+      injections.isNotEmpty(),
+      state.vars,
+    ) +
+      mapOf("world_before" to "", "world_after" to "")
+    val before = injections.filter { it.position == "before" }.joinToString("\n\n") { it.content }
+    val after = injections.filter { it.position == "after" }.joinToString("\n\n") { it.content }
+
+    // An old template without exact slots cannot express character-relative placement.
+    fun requireSlot(content: String, slot: String) {
+      if (content.isBlank()) return
+      worldCheck(
+        preset.system.indexOf(slot) >= 0 && preset.system.indexOf(slot) == preset.system.lastIndexOf(slot),
+        "WORLD_CHARACTER_ANCHOR_INCOMPATIBLE",
+      )
+    }
+    requireSlot(before, "{{world_before}}")
+    requireSlot(after, "{{world_after}}")
+    val system = renderPreset(preset.system, values + mapOf("world_before" to before, "world_after" to after), state.vars)
+    val out = arrayListOf(TavernMessage(TavernMessage.SYSTEM, system))
+    out += history
+    injections.filter { it.position == "depth" }
+      .groupBy { (1 + history.size - it.depth.coerceIn(0, MAX_DEPTH)).coerceIn(1, 1 + history.size) }
+      .toSortedMap(reverseOrder()).forEach { (at, entries) ->
+        out.addAll(at, entries.map { TavernMessage(it.role, it.content) })
+      }
+    val post = renderPreset(preset.postHistory, values, state.vars)
+    if (post.isNotBlank()) out += TavernMessage(TavernMessage.SYSTEM, post)
+    state.tail?.takeIf { it.isNotBlank() }?.let { out += TavernMessage(TavernMessage.SYSTEM, it.trim()) }
     return out
   }
 
@@ -210,6 +256,7 @@ object TavernPrompt {
    * [onHits] 是给调用方记账/打日志用的，单测里默认什么都不做。
    */
   data class TurnState(
+    val injections: List<WorldInjection>? = null,
     val turn: Int = 0,
     val tracking: WorldTracking = WorldTracking.NONE,
     val onHits: (List<WorldEntry>) -> Unit = {},

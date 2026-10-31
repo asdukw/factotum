@@ -1,5 +1,8 @@
 package com.zoneu.app.data.session
 
+import androidx.room.withTransaction
+import com.zoneu.app.agent.WorldBookRepository
+import com.zoneu.app.agent.initializeSession
 import com.zoneu.app.data.db.MessageEntity
 import com.zoneu.app.data.db.MessageRole
 import com.zoneu.app.data.db.MessageStatus
@@ -17,7 +20,7 @@ import kotlinx.coroutines.sync.withLock
 
 /** [SessionStore] 的 Room + SQLCipher 实现。 */
 class RoomSessionStore(
-  database: ZoneuDatabase,
+  private val database: ZoneuDatabase,
   private val clock: () -> Long = System::currentTimeMillis,
 ) : SessionStore,
   VariantStore by RoomVariants(database.store()),
@@ -54,14 +57,18 @@ class RoomSessionStore(
     kind: SessionKind,
     characterId: String?,
     parentId: String?,
-  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId, parentId) }
+    characterIds: List<String>,
+    worldParentId: String?,
+  ): ChatSession = bootstrap.withLock { newSessionLocked(title, kind, characterId, parentId, characterIds, worldParentId) }
 
   private suspend fun newSessionLocked(
     title: String?,
     kind: SessionKind = SessionKind.Chat,
     characterId: String? = null,
     parentId: String? = null,
-  ): ChatSession {
+    characterIds: List<String> = emptyList(),
+    worldParentId: String? = null,
+  ): ChatSession = database.withTransaction {
     val now = clock()
     val entity =
       SessionEntity(
@@ -72,9 +79,14 @@ class RoomSessionStore(
         updatedAt = now,
         characterId = characterId,
         parentId = parentId,
+        characterIds = characterIds.distinct().takeIf { it.isNotEmpty() }?.joinToString(","),
       )
     dao.insertSession(entity)
-    return entity.toDomain()
+    if (kind == SessionKind.Roleplay) {
+      val cast = (characterIds + listOfNotNull(characterId)).distinct()
+      WorldBookRepository(database).initializeSession(entity.id, cast, worldParentId)
+    }
+    entity.toDomain()
   }
 
   override fun observeSessions(): Flow<List<ChatSession>> =

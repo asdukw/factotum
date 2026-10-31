@@ -113,7 +113,6 @@ import com.zoneu.app.agent.LlmPreset
 import com.zoneu.app.agent.ModelChoice
 import com.zoneu.app.agent.PersonaStore
 import com.zoneu.app.agent.PrefsVarsStore
-import com.zoneu.app.agent.PrefsWorldTracking
 import com.zoneu.app.agent.RoleplayBinding
 import com.zoneu.app.agent.RoleplayGroup
 import com.zoneu.app.agent.SessionHandoff
@@ -126,6 +125,7 @@ import com.zoneu.app.agent.Tokens
 import com.zoneu.app.agent.ToolCallState
 import com.zoneu.app.agent.ToolCallView
 import com.zoneu.app.agent.UserQuestionHub
+import com.zoneu.app.agent.WorldRuntime
 import com.zoneu.app.data.session.ChatSession
 import com.zoneu.app.data.session.SessionAdmin
 import com.zoneu.app.data.session.SessionStore
@@ -258,9 +258,8 @@ private fun rememberTavernTurns(appContext: Context): TavernTurns =
       },
       memory = { id -> CharacterMemory.notes(appContext, id) },
       preset = { id -> TavernPresetStore.forCard(appContext, id) },
-      tracking = { sessionId -> PrefsWorldTracking(appContext, sessionId) },
       vars = PrefsVarsStore(appContext),
-      nextTurn = { sessionId -> PrefsWorldTracking.nextTurn(appContext, sessionId) },
+      world = WorldRuntime.direct(appContext),
     )
   }
 
@@ -427,6 +426,7 @@ internal fun ChatScreen(
       onImpersonate = onImpersonate,
       actions = actions,
       onOpenSessions = { scope.launch { drawerState.open() } },
+      onOpenCharacterDetail = onOpenCharacterDetail,
       onModelSwitchClick = {
         sheet.choices = onPrepareModelSwitch()
         sheet.open = true
@@ -436,14 +436,19 @@ internal fun ChatScreen(
 
   groupPicker.Render(groups = state.roleplayGroups, onStartGroup = onStartGroup)
 
+  ModelSheetContent(sheet, state.switchingModel, state.switchError, onSwitchModel)
+}
+
+@Composable
+private fun ModelSheetContent(sheet: ModelSheet, switching: Boolean, error: String?, onSelect: (ModelChoice) -> Unit) {
   if (sheet.open) {
     ModelSwitchSheet(
       choices = sheet.choices,
-      switching = state.switchingModel,
-      error = state.switchError,
+      switching = switching,
+      error = error,
       onSelect = { choice ->
         sheet.pending = true
-        onSwitchModel(choice)
+        onSelect(choice)
       },
       onDismiss = { sheet.reset() },
     )
@@ -736,6 +741,7 @@ private fun ChatBody(
   onLeaveRoleplay: () -> Unit = {},
   onImpersonate: () -> Unit = {},
   actions: BubbleActions = BubbleActions(),
+  onOpenCharacterDetail: (String) -> Unit = {},
 ) {
   // 酒馆会话的标题就是角色名：顶栏要让人一眼看出「现在在跟谁说话」。
   val sessionTitle =
@@ -779,6 +785,7 @@ private fun ChatBody(
 
     Box(Modifier.weight(1f).fillMaxWidth()) {
       MessageList(
+        onOpenCharacterDetail = onOpenCharacterDetail,
         state = state,
         listState = listState,
         speakingId = voiceState?.messageId,
@@ -997,6 +1004,7 @@ private fun MessageList(
   onPickGreeting: (String) -> Unit = {},
   actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
+  onOpenCharacterDetail: (String) -> Unit = {},
 ) {
   // 挂在最后一条助手消息上而不是每一条：中间那几条重写没有意义，
   // 而删中间一轮会让后面的对话悬在半空。
@@ -1018,6 +1026,7 @@ private fun MessageList(
     }
     items(items = state.messages, key = { it.id }) { message ->
       MessageBubble(
+        onOpenCharacterDetail = onOpenCharacterDetail,
         message = message,
         speakingId = speakingId,
         tail = message.id == tailId && !state.isStreaming,
@@ -1609,6 +1618,7 @@ private fun SessionDrawer(
         onOpenCharacters = onOpenCharacters,
         onOpenSettings = onOpenSettings,
         onOpenModelSwitch = onOpenModelSwitch,
+        currentId = currentId,
       )
     }
   }
@@ -1646,11 +1656,21 @@ private fun DrawerFooter(
   onOpenCharacters: () -> Unit,
   onOpenSettings: () -> Unit,
   onOpenModelSwitch: () -> Unit,
+  currentId: String?,
 ) {
+  val worldNavigation = LocalWorldNavigation.current
   HorizontalDivider(Modifier.padding(vertical = 8.dp))
   if (roleplayEntries) {
     DrawerNavRow(label = "管理角色卡", onClick = onOpenCharacters) {
       PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    DrawerNavRow(label = "管理世界书", onClick = worldNavigation.openLibrary) {
+      PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (currentId != null) {
+      DrawerNavRow(label = "本段会话的世界配置", onClick = { worldNavigation.openBindings("session", currentId) }) {
+        PersonGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
     }
     // 酒馆里的模型入口：每段会话会记住自己用哪个模型（回来时自动装回去）。
     DrawerNavRow(label = "本段会话的模型", onClick = onOpenModelSwitch) {
@@ -1863,11 +1883,13 @@ private fun MessageBubble(
   tail: Boolean = false,
   actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
+  onOpenCharacterDetail: (String) -> Unit = {},
 ) {
   if (message.role == ChatRole.User) {
     UserBubble(message.content)
   } else {
     AssistantMessage(
+      onOpenCharacterDetail = onOpenCharacterDetail,
       message = message,
       speaking = message.id == speakingId,
       tail = tail,
@@ -1923,10 +1945,13 @@ private fun AssistantMessage(
   tail: Boolean = false,
   actions: BubbleActions = BubbleActions(),
   canContinue: Boolean = false,
+  onOpenCharacterDetail: (String) -> Unit = {},
 ) {
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
     ProcessBlock(message)
+    CharacterCardResultActions(message.toolCalls, onOpenCharacterDetail)
+    WorldBookResultActions(message.toolCalls)
 
     val error = message.error
     when {

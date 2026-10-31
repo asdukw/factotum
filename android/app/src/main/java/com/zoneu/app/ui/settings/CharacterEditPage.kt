@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.zoneu.app.agent.CardStorageIdentity
 import com.zoneu.app.agent.CharacterCard
 import com.zoneu.app.agent.SecondaryLogic
 import com.zoneu.app.agent.WorldEntry
@@ -42,6 +44,7 @@ import java.util.UUID
  * 用户改到一半时不该被自动重排版打断。
  */
 private data class WorldDraft(
+  val original: WorldEntry? = null,
   val keys: String,
   val content: String,
   val constant: Boolean,
@@ -66,16 +69,18 @@ private data class WorldDraft(
  * 「改文案去源文件改、重导一次」在 PC 上还行，在手机上等于做不到。所以这里给一张表单，
  * 让导入的卡能就地改；也给「新建空白卡」用同一条路，从零写一张。
  *
- * 只改**人设与语气这几层**（与导入时的白名单一致）：卡里的 `system_prompt` / 示例对话本来
- * 就没进来，这里也没有对应的输入框 —— 编辑页不该成为绕过那道闸门的后门。
+ * 只改**人设与语气这几层**（与导入时的白名单一致）：卡里的 `system_prompt` / 示例对话只存归档、不参与运行，这里也没有对应的输入框 —— 编辑页不该成为绕过那道闸门的后门。
  */
 @Composable
 internal fun CharacterEditPage(
   card: CharacterCard,
   memory: String = "",
   onCancel: () -> Unit,
-  onSave: (CharacterCard, String) -> Unit,
+  onSave: (CharacterCard, String) -> CharacterSaveResult,
+  onReload: () -> Unit = {},
 ) {
+  var baseline by remember(card.id) { mutableStateOf(card) }
+  var conflict by remember(card.id) { mutableStateOf(false) }
   var name by remember(card.id) { mutableStateOf(card.name) }
   var tagline by remember(card.id) { mutableStateOf(card.tagline) }
   var description by remember(card.id) { mutableStateOf(card.description) }
@@ -84,7 +89,7 @@ internal fun CharacterEditPage(
   var firstMes by remember(card.id) { mutableStateOf(card.firstMes) }
   var tags by remember(card.id) { mutableStateOf(card.tags.joinToString("、")) }
   var memoryText by remember(card.id) { mutableStateOf(memory) }
-  val world = remember(card.id) { worldDrafts(card) }
+  val world = remember(card.id) { worldDrafts(CardStorageIdentity.draft(card)) }
 
   Surface(Modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -97,6 +102,7 @@ internal fun CharacterEditPage(
             .padding(bottom = 28.dp),
       ) {
         Field("名字", name, singleLine = true) { name = it }
+        if (conflict) ConflictReload(onReload)
         Field("一句话介绍", tagline, singleLine = true) { tagline = it }
         Field("标签", tags, singleLine = true, hint = "用、或逗号分隔") { tags = it }
         Field("人设（身份与外貌）", description, minLines = 4) { description = it }
@@ -125,23 +131,66 @@ internal fun CharacterEditPage(
           enabled = name.isNotBlank(),
           onCancel = onCancel,
           onSave = {
-            onSave(
-              card.copy(
+            val result = onSave(
+              baseline.copy(
                 name = name.trim().ifBlank { "未命名角色" },
                 tagline = tagline.trim(),
                 description = description.trim(),
                 personality = personality.trim(),
                 scenario = scenario.trim(),
                 firstMes = firstMes.trim(),
-                tags = splitTokens(tags),
+                tags = if (tags == baseline.tags.joinToString("、")) baseline.tags else splitTokens(tags),
                 world = toWorldEntries(world),
                 imported = true,
               ),
               memoryText,
             )
+            conflict = result is CharacterSaveResult.NotCommitted
+            val saved = when (result) {
+              is CharacterSaveResult.Saved -> result.snapshot.card
+              is CharacterSaveResult.MemoryFailed -> result.snapshot.card
+              is CharacterSaveResult.NotCommitted -> null
+            }
+            if (saved != null) {
+              baseline = saved
+              rebaseWorldDrafts(world, saved)
+            }
           },
         )
       }
+    }
+  }
+}
+
+/** Reload is an explicit user decision, never a silent revision rebase of the dirty draft. */
+@Composable
+private fun ConflictReload(onReload: () -> Unit) {
+  var confirming by remember { mutableStateOf(false) }
+  TextButton(onClick = { confirming = true }) { Text("重新读取当前卡") }
+  if (confirming) {
+    AlertDialog(
+      onDismissRequest = { confirming = false },
+      title = { Text("放弃草稿并重新读取？") },
+      text = { Text("当前文本与记忆草稿仍保留。重新读取将放弃这份未保存草稿，读取最新卡片；不会自动覆盖其他修改。") },
+      confirmButton = {
+        TextButton(onClick = {
+          confirming = false
+          onReload()
+        }) { Text("放弃草稿并读取") }
+      },
+      dismissButton = { TextButton(onClick = { confirming = false }) { Text("保留草稿") } },
+    )
+  }
+}
+
+/** Keep text drafts and only rebase identities of entries that were actually saved. */
+private fun rebaseWorldDrafts(world: SnapshotStateList<WorldDraft>, saved: CharacterCard) {
+  val savedDraft = CardStorageIdentity.draft(saved)
+  var slot = 0
+  world.indices.forEach { index ->
+    val draft = world[index]
+    if (toWorldEntries(listOf(draft)).isNotEmpty()) {
+      world[index] = draft.copy(original = savedDraft.world[slot++])
     }
   }
 }
@@ -302,6 +351,7 @@ private fun worldDrafts(card: CharacterCard): SnapshotStateList<WorldDraft> =
     card.world.forEach { entry ->
       add(
         WorldDraft(
+          original = entry,
           keys = entry.keys.joinToString("、"),
           content = entry.content,
           constant = entry.constant,
@@ -342,6 +392,7 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
     val entry =
       WorldEntryDraft.build(
         WorldEntryDraft.Draft(
+          original = draft.original,
           primary = draft.keys,
           content = draft.content,
           constant = draft.constant,
@@ -359,7 +410,7 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
           caseSensitive = draft.caseSensitive,
         ),
       )
-    entry.takeIf { WorldEntryDraft.isSavable(it) }
+    entry.takeIf { draft.original != null || WorldEntryDraft.isSavable(it) }
   }
 
 @Composable

@@ -10,6 +10,9 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $cache = Join-Path $root "android/.dsh-cache/runtime"
+# npm 安装的原始树必须保持**未打补丁**：插件测试要拿它当上游基线（打完包再跑测试
+# 时仍然能证明补丁做了什么）。每次装配复制一份到 staging，所有修改只落在 staging。
+$stage = Join-Path $root "android/.dsh-cache/staging"
 $zipOut = Join-Path $root "android/app/src/main/assets/dsh-runtime.zip"
 $src = Join-Path $root "tools/dsh-phone"
 
@@ -36,44 +39,62 @@ if (-not (Test-Path -LiteralPath (Join-Path $cache "node_modules/@deepseek-ai/ds
   Write-Host "using cached runtime at $cache"
 }
 
-node (Join-Path $src "patch-runtime.mjs") (Join-Path $cache "node_modules")
+# staging 每次都从原始树重建，避免上一轮补丁/插件残留在 zip 里累积。
+# 用 tar 而不是 Copy-Item：node_modules/.bin 里是符号链接，Copy-Item 在 Linux 上会
+# 把链接当目录递归或直接报 already exists；tar 原样保留链接。
+if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $stage | Out-Null
+# tar 用相对路径：Git 自带的 GNU tar 会把 -C/‑f 里的 `C:` 当成远端主机名。
+$stageArchive = Join-Path $root "android/.dsh-cache/staging.tar"
+if (Test-Path -LiteralPath $stageArchive) { Remove-Item -LiteralPath $stageArchive -Force }
+Push-Location $cache
+try { tar -cf "../staging.tar" . } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw "归档运行时缓存失败（exit $LASTEXITCODE），已中止装配" }
+Push-Location $stage
+try { tar -xf "../staging.tar" } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw "解包 staging 失败（exit $LASTEXITCODE），已中止装配" }
+Remove-Item -LiteralPath $stageArchive -Force
+$work = $stage
+
+node (Join-Path $src "patch-runtime.mjs") (Join-Path $work "node_modules")
 # 补丁失败必须硬停：否则会拿一个没打补丁（或半打）的运行时去打 zip，装到机器上才炸
 if ($LASTEXITCODE -ne 0) { throw "patch-runtime.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
-Copy-Item -Force (Join-Path $src "launcher.mjs") $cache
+Copy-Item -Force (Join-Path $src "launcher.mjs") $work
 # launcher 的兄弟模块（zen 会话头补丁），必须一起进运行时 —— 漏了会在设备上以
 # 「Cannot find module」起不来，而那是最难查的一类错。
-Copy-Item -Force (Join-Path $src "zen-session-fetch.mjs") $cache
+Copy-Item -Force (Join-Path $src "zen-session-fetch.mjs") $work
 
 # profile 先过一遍**真解析器**再打包：overlay 的 YAML 写坏时 dsh 启动即报错，而内嵌 Node
 # 与宿主同进程 —— 报错就是整个 App 崩。CI 上没有 dsh 运行时跑不了这一步，所以关口放在这里。
 # js-yaml 从刚装好的运行时里借，本仓库不引入 npm 依赖。
-node (Join-Path $src "check-profile.mjs") (Join-Path $src "profile/cordis.patch.yml") (Join-Path $cache "node_modules")
+node (Join-Path $src "check-profile.mjs") (Join-Path $src "profile/cordis.patch.yml") (Join-Path $work "node_modules")
 if ($LASTEXITCODE -ne 0) { throw "check-profile.mjs 失败（exit $LASTEXITCODE），已中止装配" }
 
 # 模型模态索引：设置页徽章与 ZONEU_LLM_MODELS 的 input 声明共用这一份结论。
 # 从同一个缓存运行时抽出来，保证索引与打进 APK 的 pi-ai 是同一版本。
-$dataDir = Join-Path $cache "node_modules/@earendil-works/pi-ai/dist/providers/data"
+$dataDir = Join-Path $work "node_modules/@earendil-works/pi-ai/dist/providers/data"
 $modalityOut = Join-Path $root "android/app/src/main/assets/model-modalities.json"
 node (Join-Path $src "modality-index.mjs") $dataDir $modalityOut
 if ($LASTEXITCODE -ne 0) { throw "生成模型模态索引失败（exit $LASTEXITCODE），已中止装配" }
 
-$profileOut = Join-Path $cache "profiles/phone"
+$profileOut = Join-Path $work "profiles/phone"
 New-Item -ItemType Directory -Force -Path $profileOut | Out-Null
 Copy-Item -Force (Join-Path $src "profile/package.json") $profileOut
 Copy-Item -Force (Join-Path $src "profile/cordis.patch.yml") $profileOut
 $plugins = @(
   @{ Package = "dsh-plugin-android-tools"; Src = "plugins/android-tools" }
   @{ Package = "dsh-android-attachments"; Src = "android-attachments" }
+  @{ Package = "dsh-plugin-character-cards"; Src = "character-cards" }
   @{ Package = "dsh-plugin-gmail"; Src = "plugins/gmail" }
   @{ Package = "dsh-plugin-approval"; Src = "plugins/approval" }
   @{ Package = "dsh-plugin-user-questions"; Src = "plugins/user-questions" }
 )
 
-# chat-tools 已下线：从持久缓存里删掉，避免旧包被 tar 通配符重新打进运行时。
-$removedPlugin = Join-Path $cache "node_modules/dsh-plugin-chat-tools"
+# chat-tools 已下线：从 staging 里删掉，避免旧包被一起打进运行时。
+$removedPlugin = Join-Path $work "node_modules/dsh-plugin-chat-tools"
 if (Test-Path -LiteralPath $removedPlugin) {
-  $resolvedCache = (Resolve-Path -LiteralPath $cache).Path
+  $resolvedCache = (Resolve-Path -LiteralPath $work).Path
   $resolvedRemoved = (Resolve-Path -LiteralPath $removedPlugin).Path
   if (-not $resolvedRemoved.StartsWith($resolvedCache, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "拒绝删除缓存目录之外的路径：$resolvedRemoved"
@@ -81,18 +102,25 @@ if (Test-Path -LiteralPath $removedPlugin) {
   Remove-Item -LiteralPath $resolvedRemoved -Recurse -Force
 }
 # 清理历史包名残留（缓存目录持久存在，旧插件会被一起打进 zip）
-Remove-Item -Recurse -Force (Join-Path $cache "node_modules/@factotum") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $work "node_modules/@factotum") -ErrorAction SilentlyContinue
 foreach ($plugin in $plugins) {
   $pluginDir = Join-Path $src $plugin.Src
   if (-not (Test-Path -LiteralPath (Join-Path $pluginDir "index.mjs"))) {
     throw "插件源码缺失：$pluginDir（先运行 git submodule update --init --recursive）"
   }
-  $pluginOut = Join-Path $cache "node_modules/$($plugin.Package)"
+  $pluginOut = Join-Path $work "node_modules/$($plugin.Package)"
   New-Item -ItemType Directory -Force -Path $pluginOut | Out-Null
   # cordis.patch.yml 是**可选**的（有的插件需要自带的 patch 层，有的不需要）。
   # 早先这里无条件拷三个文件，结果一个没有那个文件的插件会让装配整个失败 ——
   # 报的是「找不到路径」，看着像插件缺文件，其实是脚本假设太强。
-  foreach ($file in "package.json", "index.mjs", "cordis.patch.yml") {
+  $pluginFiles = @("package.json", "index.mjs", "cordis.patch.yml")
+  if ($plugin.Package -eq "dsh-plugin-character-cards") {
+    $pluginFiles += @("world-tools.mjs", "world-runtime.mjs", "world-lifecycle.mjs", "protected-fs.mjs")
+    foreach ($required in $pluginFiles | Where-Object { $_ -ne "cordis.patch.yml" }) {
+      if (-not (Test-Path -LiteralPath (Join-Path $pluginDir $required))) { throw "世界书模块缺失：$required" }
+    }
+  }
+  foreach ($file in $pluginFiles) {
     $source = Join-Path $pluginDir $file
     if (Test-Path -LiteralPath $source) { Copy-Item -Force $source $pluginOut }
   }
@@ -102,7 +130,7 @@ foreach ($plugin in $plugins) {
 # darwin / win32 / linux），而 dsh-tool-fs-search 靠 `(await import("@vscode/ripgrep")).rgPath`
 # 拿二进制 —— 不换掉的话模型侧的 glob / grep 一调用就炸。桩包只做一件事：把 rgPath 指向
 # 我们交叉编译的那份（tools/fetch-rg.ps1 拉进 jniLibs，NodeRuntime 注入 ZONEU_RG_PATH）。
-$rgStub = Join-Path $cache "node_modules/@vscode/ripgrep"
+$rgStub = Join-Path $work "node_modules/@vscode/ripgrep"
 if (Test-Path -LiteralPath $rgStub) { Remove-Item -LiteralPath $rgStub -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $rgStub | Out-Null
 Copy-Item -Force (Join-Path $src "ripgrep-stub/package.json") $rgStub
@@ -117,7 +145,7 @@ Write-Host "packing $zipOut ..."
 #   - App 侧是用 ZipInputStream 解压的，包的必须是真 zip。tar 冒充 zip 会在设备上才炸。
 [System.Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem") | Out-Null
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
-  $cache,
+  $work,
   $zipOut,
   [System.IO.Compression.CompressionLevel]::Optimal,
   $false

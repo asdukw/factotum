@@ -40,8 +40,9 @@ class Branching(
             characterId = session.characterId,
             // 支线的支线仍挂到原来那段主线：侧栏只要「主线 + 它的支线」两层。
             parentId = session.parentId ?: session.id,
+            characterIds = session.characterIds,
+            worldParentId = session.id,
           )
-        if (session.cast.size > 1) store.setSessionCharacters(forked.id, session.cast)
         copied.forEach { row ->
           store.appendMessage(forked.id, row.role, row.content, statusOf(row), row.reasoning)
         }

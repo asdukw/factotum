@@ -60,10 +60,10 @@ class CardExporterTest {
   }
 
   @Test
-  fun dropsTheFieldsWeRefuseToImport() {
+  fun cardsWithoutRawSourceUseEmptyPromptFields() {
     val data = data(CardExporter.toV3(sample()))
 
-    // 这三项导入时就被丢掉，导出必须是空串 —— 不能凭空造一份指令出来
+    // 无原始来源时只能补空串，不能凭空造指令。
     assertEquals("", data["system_prompt"]!!.jsonPrimitive.content)
     assertEquals("", data["post_history_instructions"]!!.jsonPrimitive.content)
     assertEquals("", data["mes_example"]!!.jsonPrimitive.content)
@@ -85,7 +85,7 @@ class CardExporterTest {
 
     assertEquals(1, back.world.size)
     // 编排参数一个都不能丢：position / role / 概率 / 粘性 / 冷却 / 整词 / 大小写 / 副词 / 排除
-    assertEquals(sample().world.first(), back.world.first())
+    assertEquals(sample().world.first(), back.world.first().copy(sourceToken = ""))
   }
 
   @Test

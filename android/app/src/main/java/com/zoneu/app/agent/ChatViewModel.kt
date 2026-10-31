@@ -429,9 +429,7 @@ class ChatViewModel(
     if (!snapshot.canSend) return
     val sessionId = snapshot.sessionId ?: return
     val prompt = snapshot.input.trim()
-    // 真正发出去的文本可能比用户打的多一段世界书资料；界面与库里存的仍是 `prompt`。
-    // 酒馆会话走直连通道时这句话用不上（设定由 TavernPrompt 排进 messages），但 fallback 到
-    // dsh 的那条路要用它 —— 所以照算，不在这里分叉。
+    // Both channels use the prepared world plan; never duplicate lore in a user-message prefix.
     val wire = withLore(snapshot, prompt)
     val tavern = roleplay.tavern?.enabled == true && snapshot.activeCharacterId != null
 
@@ -497,6 +495,7 @@ class ChatViewModel(
     base: String = "",
     tail: String? = null,
   ) {
+    val requestId = Uuids.v7()
     val turn = StreamTurn(sessionId, draftId, base, turnHost)
     // 酒馆通道自己拿整段历史（含刚落库的这一问）；拼不出来（卡被删、没配提供商）就退回 dsh。
     val direct =
@@ -508,6 +507,7 @@ class ChatViewModel(
           tail,
           _state.value.characterIds,
           recap = _state.value.sessionRecap,
+          requestId = requestId,
         )
       } else {
         null
@@ -528,7 +528,23 @@ class ChatViewModel(
     ) {
       turn.failure = throwable
     } finally {
-      withContext(NonCancellable) { turn.finish() }
+      withContext(NonCancellable) {
+        finishWorldTurn(persist = {
+          persistWorldAnswer(turn) {
+            if (direct != null) roleplay.tavern?.settle(requestId, false, "WORLD_LOCAL_PERSISTENCE_FAILED")
+          }
+        }) {
+          if (direct != null) {
+            // 直连通道的流正常收完就是「本轮结束」；它不发 AgentStreamEvent.Completed，
+            // 拿 dsh 的事件当成功条件会让每次直连都结算成失败（sticky/冷却/变量都不推进）。
+            roleplay.tavern?.settle(
+              requestId,
+              !turn.stopped && turn.failure == null && turn.hasAdoptedAnswer,
+              WorldResolver.digest("$sessionId:$requestId:$draftId:${turn.content}"),
+            )
+          }
+        }
+      }
       // 这一轮可能写了变量（卡里的 {{setvar}}）：界面上的状态块得跟着动，
       // 否则用户会看着「好感 3」聊了半天却发现一直没涨。
       sessionVars.refresh(sessionId)
@@ -537,17 +553,8 @@ class ChatViewModel(
     }
   }
 
-  /**
-   * 给这一轮补上命中的世界书条目。
-   *
-   * 只在发送这一刻算：卡是数据，随时可能被改；把结果缓存下来会让「改了设定但没生效」变成一个
-   * 说不清的状态。最近三条用户消息一起当关键词来源 —— 「她呢」这种指代只有连着上文才命中。
-   */
-  private val withLore: (ChatUiState, String) -> String = { snapshot, text ->
-    val card = snapshot.activeCharacterId?.let { id -> roleplay.characters().firstOrNull { it.id == id } }
-    val recent = snapshot.messages.filter { it.role == ChatRole.User }.map { it.content }.takeLast(3)
-    LoreInject.augment(card, text, recent)
-  }
+  /** Lore belongs to the prepared request plan in both channels, never the user message. */
+  private val withLore: (ChatUiState, String) -> String = { _, text -> text }
 
   /**
    * 重写最后一条回复。

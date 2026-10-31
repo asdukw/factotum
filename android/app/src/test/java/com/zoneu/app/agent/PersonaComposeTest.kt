@@ -90,4 +90,38 @@ class PersonaComposeTest {
     assertEquals(PersonaStore.DEFAULT_ID, defaultSoul.id)
     assertNull(defaultSoul.summary.ifEmpty { null })
   }
+
+  @Test
+  fun worldCastUsesExactOrderedIdentityAndExcludesAllOldWorldContent() {
+    val first = CharacterCard(
+      id = "one",
+      name = "First",
+      description = "First identity",
+      world = listOf(
+        WorldEntry(content = "PRIVATE_CONSTANT", constant = true),
+        WorldEntry(content = "PRIVATE_KEYWORD", keys = listOf("First")),
+      ),
+    )
+    val second = CharacterCard(id = "two", name = "Second", description = "Second identity", world = first.world)
+    val cast = worldPersonaCast(listOf(first, second), "Lead memory")
+    assertEquals(listOf("one", "two"), cast.ids)
+    assertTrue(cast.body.contains("First identity"))
+    assertTrue(cast.body.contains("Second identity"))
+    assertTrue(cast.body.contains("Lead memory"))
+    assertTrue(cast.body.contains(GroupCast.rule(listOf(first, second))))
+    assertFalse(cast.body.contains("PRIVATE_CONSTANT"))
+    assertFalse(cast.body.contains("PRIVATE_KEYWORD"))
+    assertEquals(cast, worldPersonaCast(listOf(first.copy(world = emptyList()), second), "Lead memory"))
+    assertFalse(cast == worldPersonaCast(listOf(second, first), "Lead memory"))
+    assertFalse(cast == worldPersonaCast(listOf(first, second), "Changed memory"))
+  }
+
+  @Test
+  fun worldSingleCastRendersTheSameMemoryWithoutGroupRules() {
+    val card = CharacterCard(id = "single", name = "Solo", description = "Identity")
+    assertEquals(CharacterStore.renderPrompt(card, "Memory"), worldPersonaCast(listOf(card), "Memory").body)
+    org.junit.Assert.assertThrows(WorldBookException::class.java) { worldPersonaCast(emptyList(), "") }
+    org.junit.Assert.assertThrows(WorldBookException::class.java) { worldPersonaCast(listOf(card, card), "") }
+    org.junit.Assert.assertThrows(WorldBookException::class.java) { worldPersonaCast(List(5) { card.copy(id = "$it") }, "") }
+  }
 }

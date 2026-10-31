@@ -212,8 +212,33 @@ private fun writeToolDetail(name: String, args: JsonObject?): String? =
     else -> null
   }
 
+private val WORLD_TOOL_NAMES = setOf(
+  "list_world_books",
+  "read_world_book",
+  "create_world_book",
+  "update_world_book",
+  "copy_world_book",
+  "delete_world_book",
+  "read_world_book_bindings",
+  "update_world_book_bindings",
+  "explain_world_activation",
+  "preview_world_book_action",
+  "cancel_world_book_action",
+  "bind_world_request",
+  "resolve_world_request",
+)
+
 private val RESULT_TITLES =
   mapOf(
+    "list_world_books" to "查找独立世界书完成",
+    "read_world_book" to "读取世界书完成",
+    "create_world_book" to "创建世界书完成",
+    "update_world_book" to "修改世界书完成",
+    "copy_world_book" to "复制世界书完成",
+    "delete_world_book" to "删除世界书完成",
+    "read_world_book_bindings" to "查看世界书绑定完成",
+    "update_world_book_bindings" to "修改世界书绑定完成",
+    "explain_world_activation" to "解释世界书激活完成",
     "read_ui_tree" to "屏幕读取完成",
     "tap_node" to "点击已完成",
     "tap_point" to "点击已完成",
@@ -231,6 +256,11 @@ private val RESULT_TITLES =
     "delete_calendar_event" to "日程已删除",
     "list_calendar_events" to "日程已读取",
     "run_command" to "命令已执行",
+    "create_character_card" to "角色卡已创建",
+    "import_character_card_url" to "角色卡已导入",
+    "list_character_cards" to "角色库查询完成",
+    "read_character_card" to "角色卡读取完成",
+    "update_character_card" to "角色卡修改完成",
   )
 
 internal fun toolResultTitle(name: String?, ok: Boolean): String {
@@ -239,6 +269,21 @@ internal fun toolResultTitle(name: String?, ok: Boolean): String {
 }
 
 internal fun summarizeToolResult(name: String?, text: String?): String? {
+  if (name in WORLD_TOOL_NAMES) {
+    return "详见世界书工具结果"
+  }
+  if (name in setOf(
+      "create_character_card",
+      "import_character_card_url",
+      "update_character_card",
+      "list_character_cards",
+      "read_character_card",
+      "preview_character_card_update",
+      "cancel_character_card",
+    )
+  ) {
+    return "详见角色卡工具结果"
+  }
   val clean = text?.trim().orEmpty()
   if (clean.isEmpty()) return null
   return if (name == "read_ui_tree") summarizeScreenResult(clean) else summarizeText(clean, 110)

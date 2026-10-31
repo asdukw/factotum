@@ -35,7 +35,7 @@ interface WorldTracking {
      * 它的粘性/冷却 —— 那是可以接受的（改了内容本来就等于换了一条），错位不行。
      */
     fun key(entry: WorldEntry): String =
-      (entry.keys.joinToString(",") + "#" + entry.content.take(48)).hashCode().toString()
+      WorldResolver.digest(kotlinx.serialization.json.Json.encodeToString(WorldEntry.serializer(), entry))
   }
 }
 

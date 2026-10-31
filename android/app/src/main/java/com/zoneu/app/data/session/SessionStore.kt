@@ -163,6 +163,8 @@ interface SessionStore {
     kind: SessionKind,
     characterId: String?,
     parentId: String? = null,
+    characterIds: List<String> = emptyList(),
+    worldParentId: String? = null,
   ): ChatSession = createSession(title)
 
   /** 全部会话，最近更新在前；用于原生会话列表。 */

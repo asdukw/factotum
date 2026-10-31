@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.zoneu.app.agent.CardExporter
+import com.zoneu.app.agent.CardInput
 import com.zoneu.app.agent.CharacterCard
 import com.zoneu.app.agent.CharacterStore
 import com.zoneu.app.agent.WorldBookIo
@@ -56,24 +57,31 @@ internal fun CardTransferRow(
     }
   val exportWorld =
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-      export(uri, WorldBookIo.exportText(card.world))
+      export(uri, WorldBookIo.exportText(card))
     }
   val importWorld =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       val target = uri ?: return@rememberLauncherForActivityResult
       scope.launch {
         val text = readText(context, target)
-        val added = text?.let { WorldBookIo.importText(it) }.orEmpty()
-        if (added.isEmpty()) {
-          toast(context, "没读到条目：这个文件里没有世界设定")
+        val saved = runCatching {
+          withContext(Dispatchers.IO) {
+            CharacterStore.updateImported(context, card.id, card.storageRevision.orEmpty()) { current ->
+              WorldBookIo.appendText(current, text ?: error("读不到文件，或文件超过 32 MiB 上限"))
+            }
+          }
+        }.getOrElse {
+          toast(context, "世界书导入未确认：卡片可能已改变，请重新读取。")
           return@launch
         }
-        // 去重按整条相等：同一份文件导两次不该变成两份
-        val merged = (card.world + added).distinct()
-        val updated = card.copy(world = merged)
-        CharacterStore.saveImported(context, updated)
-        onCardChanged(updated)
-        toast(context, "导入 ${merged.size - card.world.size} 条世界设定")
+        onCardChanged(saved.card)
+        val added = saved.card.world.size - card.world.size
+        val message = if (saved.revision == card.storageRevision) {
+          "这份世界书已导入，未修改现有条目"
+        } else {
+          "新增 $added 条运行设定；兼容报告见角色详情"
+        }
+        toast(context, message)
       }
     }
 
@@ -113,7 +121,7 @@ private suspend fun writeText(context: Context, uri: Uri, text: String): Boolean
 /** 读 SAF 文件；读不出来返回 null。 */
 private suspend fun readText(context: Context, uri: Uri): String? =
   withContext(Dispatchers.IO) {
-    runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
+    runCatching { context.contentResolver.openInputStream(uri)?.use { CardInput.read(it) } }
       .getOrNull()
       ?.let { String(it, Charsets.UTF_8) }
   }

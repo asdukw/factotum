@@ -56,6 +56,50 @@ class AgentProgressTest {
   }
 
   @Test
+  fun characterToolsNeverCopyBodyOrQueryIntoProgress() {
+    val tools = mapOf(
+      "create_character_card" to "创建角色卡",
+      "import_character_card_url" to "下载并导入角色卡",
+      "list_character_cards" to "查找本地角色卡",
+      "read_character_card" to "读取角色卡",
+      "update_character_card" to "修改角色卡",
+    )
+    for ((name, label) in tools) {
+      assertEquals(label to null, describeToolCall(name, """{"query":"PRIVATE","fields":{"name":"PRIVATE","personality":"PRIVATE"}}"""))
+      assertEquals("详见角色卡工具结果", summarizeToolResult(name, "PRIVATE_BODY"))
+    }
+    for (name in listOf("preview_character_card_update", "cancel_character_card")) {
+      assertEquals("详见角色卡工具结果", summarizeToolResult(name, "PRIVATE_BODY"))
+    }
+    assertEquals("角色卡读取完成", toolResultTitle("read_character_card", true))
+    assertEquals("角色卡修改完成", toolResultTitle("update_character_card", true))
+  }
+
+  @Test
+  fun worldToolsNeverCopyAnyUntrustedTextIntoProgress() {
+    val tools = listOf(
+      "list_world_books",
+      "read_world_book",
+      "create_world_book",
+      "update_world_book",
+      "copy_world_book",
+      "delete_world_book",
+      "read_world_book_bindings",
+      "update_world_book_bindings",
+      "explain_world_activation",
+    )
+    for (name in tools) {
+      val call = describeToolCall(name, """{"query":"PRIVATE","fields":{"name":"PRIVATE"},"text":"PRIVATE"}""")
+      assertEquals(null, call.second)
+      assertTrue(!call.first.contains("PRIVATE"))
+      assertEquals("详见世界书工具结果", summarizeToolResult(name, "PRIVATE_BODY"))
+    }
+    for (name in listOf("preview_world_book_action", "cancel_world_book_action", "bind_world_request", "resolve_world_request")) {
+      assertEquals("详见世界书工具结果", summarizeToolResult(name, "PRIVATE_BODY"))
+    }
+  }
+
+  @Test
   fun truncatesLongOutputToOneLine() {
     val summary = summarizeText("# 第一行\n第二行", 40)
     assertEquals("第一行", summary)

@@ -35,11 +35,8 @@
 # dsh 没有独立的「记忆」插件 —— 官方的长期记忆机制就是**指令文件**（见下面的
 # agent-instructions）。文件要能被写，模型就得有 read / write / edit 三个文件工具。
 #
-# **边界如实记着**：dsh-fs-local 的 `cwd` 只是「相对路径的解析基准」，**不是围栏**
-# （源码原话：a resolution default, NOT a containment boundary）。拿到 tool-fs 之后，
-# 模型能读写的是 **App uid 能碰到的全部路径** —— 包括 files/dsh-home/ 下的会话记录，
-# 以及 databases/zoneu.db（SQLCipher 加密，但删得掉）。要收紧得换更严的 fs 后端，
-# 或挂 permission / sandbox 那一层（本 profile 现在没挂）。
+# 通用write/edit由应用fs包装层阻止写角色/世界书、数据库、运行模块与配置。
+# cwd仍不是围栏，读取不受此保护；经审批的同UID shell不属于此沙箱。
 - id: tool-fs
   disabled: false
 # tool-fs-search（模型的 glob / grep）也开：记忆文件一多，没有检索模型就只能靠 INDEX 猜。
@@ -274,7 +271,7 @@
 # dsh-fs-local 的 koffi 只在 win32 分支懒加载，Android 上走 node:fs 直连。
 - insert:
     - id: fs
-      name: '@deepseek-ai/dsh-fs-local'
+      name: 'dsh-plugin-character-cards/protected-fs'
 # --- 附件存储：工具结果里的图要经它落盘才能进模型请求 ---
 # dsh 自带的 @deepseek-ai/dsh-attachment-local 依赖 sharp（无 Android 产物），
 # 这里换成纯 JS 的等价实现（源码在 tools/dsh-phone/android-attachments）。
@@ -334,3 +331,15 @@
       name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
       config:
         maxTokensAsSuccess: true
+
+# 角色卡宿主工具：创建与网络导入均走官方写审批。
+- insert:
+    - id: character-cards
+      name: dsh-plugin-character-cards
+
+# 精确请求身份先于可选的提供商投影；日常与辅助模型调用保持不注入。
+- insert:
+    - id: world-lifecycle
+      name: dsh-plugin-character-cards/world-lifecycle
+    - id: world-runtime
+      name: dsh-plugin-character-cards/world-runtime

@@ -1,9 +1,11 @@
 package com.zoneu.app.ui.settings
 
 import androidx.compose.runtime.Composable
+import com.zoneu.app.ui.chat.LocalWorldNavigation
 
 @Composable
 internal fun EntertainmentSection(onOpenCharacters: () -> Unit, onOpenTavernPresets: () -> Unit) {
+  val worlds = LocalWorldNavigation.current
   SectionLabel("娱乐")
   SettingsGroup {
     SettingsRow(
@@ -12,6 +14,8 @@ internal fun EntertainmentSection(onOpenCharacters: () -> Unit, onOpenTavernPres
       subtitle = "仅用于酒馆会话，日常助手不受影响",
       onClick = onOpenCharacters,
     ) { ChevronRight() }
+    SettingsDivider()
+    SettingsRow(GlyphKind.Sparkles, "世界书", "独立书库、共享引用与固定修订", onClick = worlds.openLibrary) { ChevronRight() }
     SettingsDivider()
     SettingsRow(
       glyph = GlyphKind.Sparkles,

@@ -8,6 +8,7 @@ import com.zoneu.app.agent.AgentConfigStore
 import com.zoneu.app.agent.LlmPreset
 import com.zoneu.app.agent.ModelModalities
 import com.zoneu.app.agent.PersonaStore
+import com.zoneu.app.agent.WorldRuntime
 import com.zoneu.app.agent.llmModelsJson
 import com.zoneu.app.agent.requestApiKey
 import com.zoneu.app.bridge.ApprovalBridgeServer
@@ -169,6 +170,10 @@ object NodeRuntime : NodeLineListener {
   private val operationGate = Any()
   private var taskActive = false
   private var reloadActive = false
+  private var taskPreparation: TaskPreparation? = null
+  private val unsettledWorldRequests = ConcurrentHashMap.newKeySet<String>()
+
+  @Volatile private var appContext: Context? = null
 
   @Volatile private var initResult: JsonObject? = null
 
@@ -209,6 +214,7 @@ object NodeRuntime : NodeLineListener {
 
   /** SDK 握手；成功后 status 变 Ready，之后可反复 prompt。 */
   suspend fun initialize(context: Context): JsonObject {
+    appContext = context.applicationContext
     initResult?.let { return it }
     ensureStarted(context)
     // 等 native 管道就绪（Running 在 prepareStdio 之后才置位），避免早写 stdin。
@@ -247,10 +253,12 @@ object NodeRuntime : NodeLineListener {
    * 重载后必须重新 initialize（SDK 服务是新建的），并换 session 命名空间，
    * 否则会撞上磁盘上已有的同名 dsh 会话。
    */
-  suspend fun reload(context: Context): JsonObject =
+  suspend fun reload(context: Context): JsonObject = reloadForPreparation(context, null)
+
+  internal suspend fun reloadForPreparation(context: Context, preparation: TaskPreparation?): JsonObject =
     reloadMutex.withLock {
       synchronized(operationGate) {
-        check(!taskActive) { "运行中任务未完成，暂不能应用设置" }
+        check(!taskActive && (taskPreparation == null || taskPreparation === preparation)) { "运行中任务未完成，暂不能应用设置" }
         reloadActive = true
       }
       try {
@@ -278,6 +286,8 @@ object NodeRuntime : NodeLineListener {
     }
     pending.clear()
     runtimeTag = newRuntimeTag()
+    WorldRuntime.clearBindings()
+    unsettledWorldRequests.clear()
     dshSessionIds.clear()
     callerSessionIds.clear()
     initResult = null
@@ -308,7 +318,7 @@ object NodeRuntime : NodeLineListener {
     }
     while (true) {
       synchronized(operationGate) {
-        if (!taskActive && !reloadActive && status.value is Status.Ready) break
+        if (!admissionBusy() && taskPreparation == null && status.value is Status.Ready) break
         if (status.value is Status.Failed || status.value is Status.Exited) return false
       }
       delay(100)
@@ -323,15 +333,37 @@ object NodeRuntime : NodeLineListener {
    */
   suspend fun applyWhenIdle(context: Context): Boolean = reloadIfRunning(context)
 
+  internal class TaskPreparation
+
   internal class TaskLease
 
   private var activeTaskLease: TaskLease? = null
   private var taskIdle = CompletableDeferred<Unit>().apply { complete(Unit) }
   private var taskSubmitted = false
 
-  internal fun beginTask(): TaskLease? =
+  private fun admissionBusy(): Boolean = taskActive || reloadActive || unsettledWorldRequests.isNotEmpty()
+
+  /** Reserves persona/config preparation without holding a task lease across reload. */
+  internal fun beginTaskPreparation(): TaskPreparation? = synchronized(operationGate) {
+    if (admissionBusy() || taskPreparation != null) return null
+    TaskPreparation().also { taskPreparation = it }
+  }
+
+  /** Explicit recovery may reserve admission while an unknown world request blocks ordinary tasks. */
+  internal fun beginWorldRecovery(): TaskPreparation? = synchronized(operationGate) {
+    if (taskActive || reloadActive || taskPreparation != null) return null
+    TaskPreparation().also { taskPreparation = it }
+  }
+
+  internal fun endTaskPreparation(preparation: TaskPreparation) = synchronized(operationGate) {
+    if (taskPreparation === preparation) taskPreparation = null
+  }
+
+  internal fun beginTask(preparation: TaskPreparation? = null): TaskLease? =
     synchronized(operationGate) {
-      if (taskActive || reloadActive) return null
+      if (admissionBusy() || (taskPreparation != null && taskPreparation !== preparation)) return null
+      if (preparation != null && taskPreparation !== preparation) return null
+      taskPreparation = null
       TaskLease().also {
         taskActive = true
         taskIdle = CompletableDeferred()
@@ -361,11 +393,39 @@ object NodeRuntime : NodeLineListener {
     if (shouldWait) withContext(NonCancellable) { taskIdle.await() }
   }
 
-  suspend fun prompt(sessionId: String, text: String): String {
+  suspend fun prompt(sessionId: String, text: String): String = submitPrompt(sessionId, text)
+
+  /** Roleplay streams register their exact pending identity before the SDK creates the user message. */
+  suspend fun worldPrompt(context: Context, sessionId: String, text: String, onRegistered: (String?) -> Unit): String {
+    val dshId = dshSessionId(sessionId)
+    val requestId = WorldRuntime.register(context, sessionId, dshId, text)
+    requestId?.let(unsettledWorldRequests::add)
+    onRegistered(requestId)
+    return submitPrompt(sessionId, text, requestId)
+  }
+
+  suspend fun worldControl(context: Context, requestId: String, cancel: Boolean): Boolean {
+    if (cancel) WorldRuntime.cancel(requestId)
+    val binding = WorldRuntime.binding(requestId) ?: return unsettledWorldRequests.remove(requestId).let { true }
+    val trigger = binding.trigger ?: return false
+    val params = buildJsonObject {
+      put("op", if (cancel) "cancel" else "settle")
+      put("sessionId", binding.dshSessionId)
+      put("requestId", requestId)
+      put("trigger", trigger)
+    }
+    val result = request("zoneu/world-request", params, PROMPT_TIMEOUT_MS)
+    val terminal = WorldRuntime.converge(context, requestId, result)
+    if (terminal) unsettledWorldRequests.remove(requestId)
+    return terminal
+  }
+
+  private suspend fun submitPrompt(sessionId: String, text: String, worldRequestId: String? = null): String {
     val dshId = dshSessionId(sessionId)
     val params =
       buildJsonObject {
         put("sessionId", dshId)
+        if (worldRequestId != null) put("world_request_id", worldRequestId)
         put(
           "contentBlocks",
           buildJsonArray {
@@ -378,8 +438,18 @@ object NodeRuntime : NodeLineListener {
           },
         )
       }
-    val result = request("session/prompt", params, PROMPT_TIMEOUT_MS)
-    return result["messageId"]?.jsonPrimitive?.contentOrNull ?: error("session/prompt 未返回 messageId")
+    val result = try {
+      request("session/prompt", params, PROMPT_TIMEOUT_MS)
+    } catch (
+      // Any failed SDK submission must retain cancellation identity, including transport failures.
+      @Suppress("TooGenericExceptionCaught") error: Exception,
+    ) {
+      worldRequestId?.let { WorldRuntime.cancel(it) }
+      throw error
+    }
+    val trigger = result["messageId"]?.jsonPrimitive?.contentOrNull ?: error("session/prompt 未返回 messageId")
+    worldRequestId?.let { WorldRuntime.confirmPrompt(it, dshId, trigger) }
+    return trigger
   }
 
   /**
@@ -388,7 +458,15 @@ object NodeRuntime : NodeLineListener {
    */
   suspend fun runTask(sessionId: String, text: String, timeoutMs: Long = 15 * 60_000L): TaskOutcome =
     withTimeout(timeoutMs) {
-      val lease = checkNotNull(beginTask()) { "运行时正忙，无法提交任务" }
+      val preparing = checkNotNull(beginTaskPreparation()) { "运行时正忙，无法提交任务" }
+      val lease = try {
+        appContext?.let { app ->
+          if (PersonaStore.activateWorldCast(app, null)) reloadForPreparation(app, preparing)
+        }
+        checkNotNull(beginTask(preparing)) { "运行时正忙，无法提交任务" }
+      } finally {
+        endTaskPreparation(preparing)
+      }
       try {
         val assistant = StringBuilder()
         var toolCalls = 0

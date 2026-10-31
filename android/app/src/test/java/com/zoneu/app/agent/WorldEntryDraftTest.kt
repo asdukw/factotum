@@ -126,4 +126,28 @@ class WorldEntryDraftTest {
     // useProbability=false 时概率形同虚设，实际生效的永远是 100
     assertEquals(100, entry.copy(probability = 30).effectiveProbability)
   }
+
+  @Test
+  fun unchangedImportedDraftKeepsEveryFieldAndOversizedValues() {
+    val old = WorldEntry(
+      keys = listOf("a,b", "x"),
+      content = "长".repeat(5000),
+      order = 91,
+      preventRecursion = true,
+      excludeRecursion = true,
+      sourceToken = "source-id",
+      sticky = 99,
+      depth = 0,
+    )
+    val draft = WorldEntryDraft.Draft(
+      original = old,
+      primary = WorldEntryDraft.formatKeys(old.keys),
+      content = old.content,
+      depth = old.depth,
+      sticky = old.sticky,
+    )
+    assertEquals(old, WorldEntryDraft.build(draft))
+    val edited = WorldEntryDraft.build(draft.copy(content = "新正文"))
+    assertEquals(old.copy(content = "新正文"), edited)
+  }
 }

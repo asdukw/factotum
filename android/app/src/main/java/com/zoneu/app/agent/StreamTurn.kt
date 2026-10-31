@@ -43,7 +43,12 @@ class StreamTurn(
   val reasoning = StringBuilder()
   var failure: Throwable? = null
   var stopped = false
+  var completed = false
+    private set
   private var statusOnly = false
+  private val baseLength = base.length
+  private var receivedAnswer = false
+  val hasAdoptedAnswer: Boolean get() = receivedAnswer && !statusOnly && content.length > baseLength
 
   // 增量合并：UI 最多每 uiFlushMs 刷一次；DB 那边另有 timing.flushIntervalMs 的节流。
   private var lastFlush = host.timing.clock()
@@ -65,7 +70,7 @@ class StreamTurn(
       is AgentStreamEvent.ToolCallFinished -> host.finishToolCall(draftId, event)
       is AgentStreamEvent.TextDelta -> onTextDelta(event)
       is AgentStreamEvent.StepFinal -> onStepFinal(event)
-      AgentStreamEvent.Completed -> Unit
+      AgentStreamEvent.Completed -> completed = true
     }
   }
 
@@ -94,6 +99,7 @@ class StreamTurn(
   }
 
   private suspend fun onTextDelta(event: AgentStreamEvent.TextDelta) {
+    if (event.text.isNotBlank()) receivedAnswer = true
     settleThinking()
     // 第一条正文到达时清掉状态文案：否则「正在调用 xxx…」会留在气泡里。
     if (statusOnly) {
@@ -120,6 +126,7 @@ class StreamTurn(
       host.markReasoning(draftId, reasoning.toString())
     }
     event.text?.let { full ->
+      if (full.isNotBlank()) receivedAnswer = true
       content.setLength(stepStart.coerceAtMost(content.length))
       content.append(full)
       host.appendText(draftId, content.toString(), true)

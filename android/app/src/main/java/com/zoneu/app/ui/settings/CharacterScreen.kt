@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zoneu.app.agent.CharacterCard
@@ -47,6 +48,10 @@ fun CharacterScreen(
   val appContext = LocalContext.current.applicationContext
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
+  LifecycleResumeEffect(Unit) {
+    viewModel.refresh()
+    onPauseOrDispose { }
+  }
   // 系统文件选择器：不申请存储权限，拿到的是单次可读的 content:// Uri。
   val picker =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -98,6 +103,13 @@ internal fun CharacterScreen(
         }
 
         SectionLabel("角色卡")
+        if (state.unreadableCards > 0) {
+          Text(
+            "有 ${state.unreadableCards} 份角色文件损坏或身份冲突，已隔离且未覆盖；正常卡仍可管理。请从原文件重新导入恢复。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+          )
+        }
         CardSourceRows(importing = state.importing, onImport = onImport, onCreateBlank = onCreateBlank)
         CardList(
           cards = state.cards,
@@ -154,7 +166,7 @@ internal fun CharacterScreen(
   }
 }
 
-/** 导入结果：成功一行 + 被丢弃字段的说明（这正是「不信任外部卡」对用户可见的部分）。 */
+/** 导入结果：成功一行 + 兼容报告摘要（这正是「不信任外部卡」对用户可见的部分）。 */
 @Composable
 private fun ImportMessage(message: String, notes: List<String>, onDismiss: () -> Unit) {
   SettingsGroup {
@@ -178,7 +190,7 @@ private fun EmptyCards() {
       Spacer(Modifier.height(6.dp))
       Text(
         text = "点上面的「导入角色卡」，选一张 SillyTavern 的 PNG 卡或 .json 文件。" +
-          "导入后只取人设与语气：卡里的 system_prompt、示例对话会被丢弃。",
+          "运行只用受支持的人设与语气；原始提示字段仅保存供导出，兼容报告可在详情查看。",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )

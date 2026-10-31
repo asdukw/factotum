@@ -1,0 +1,19 @@
+{
+  "name": "dsh-plugin-character-cards",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./world-runtime": "./world-runtime.mjs",
+    "./world-lifecycle": "./world-lifecycle.mjs",
+    "./protected-fs": "./protected-fs.mjs"
+  },
+  "private": true,
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

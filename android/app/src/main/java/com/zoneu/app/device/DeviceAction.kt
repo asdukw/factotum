@@ -2,6 +2,7 @@ package com.zoneu.app.device
 
 import com.zoneu.app.schedule.ScheduleRule
 import com.zoneu.app.schedule.ScheduleRulePatch
+import kotlinx.serialization.json.JsonObject
 
 /**
  * 设备执行层的原子动作。App 无关：工具循环把 LLM 的 function call 映射到这里，
@@ -85,6 +86,35 @@ sealed interface DeviceAction {
    * 它改的是文件系统，没有撤销。
    */
   data class RunCommand(val cmd: String, val timeoutMs: Long) : DeviceAction
+
+  /** 角色卡宿主动作：通过官方写审批后调用，不依赖无障碍。 */
+  data class CreateCharacterCard(val requestId: String, val fields: JsonObject) : DeviceAction
+
+  data class ImportCharacterCard(val requestId: String, val url: String) : DeviceAction
+
+  /** 只读角色库查询；不经过写审批。 */
+  data class ListCharacterCards(val arguments: JsonObject) : DeviceAction
+
+  data class ReadCharacterCard(val arguments: JsonObject) : DeviceAction
+
+  /** 内部只读审批预检，不作为模型工具注册。 */
+  data class PreviewCharacterCardUpdate(val requestId: String, val arguments: JsonObject) : DeviceAction
+
+  data class UpdateCharacterCard(val requestId: String, val arguments: JsonObject, val fingerprint: String) : DeviceAction
+
+  /** 内部取消通道，不作为模型工具注册。 */
+  data class CancelCharacterCard(val requestId: String) : DeviceAction
+
+  /** Exact named host management operation; never executed through accessibility. */
+  data class WorldBookOperation(
+    val name: String,
+    val requestId: String?,
+    val arguments: JsonObject,
+    val fingerprint: String? = null,
+  ) : DeviceAction
+
+  /** Internal runtime transport only; not registered as a model tool. */
+  data class WorldRuntimeAction(val name: String, val arguments: JsonObject) : DeviceAction
 
   /**
    * 新建日程。**直接写 `CalendarContract`**（`ContentResolver.insert`）—— 不开界面、不用点保存。

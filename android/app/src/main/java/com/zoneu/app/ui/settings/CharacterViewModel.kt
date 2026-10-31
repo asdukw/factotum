@@ -4,12 +4,15 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zoneu.app.agent.CardInput
+import com.zoneu.app.agent.CardSnapshot
 import com.zoneu.app.agent.CharacterCard
 import com.zoneu.app.agent.CharacterImporter
 import com.zoneu.app.agent.CharacterMemory
 import com.zoneu.app.agent.CharacterStore
 import com.zoneu.app.agent.PersonaStore
 import com.zoneu.app.agent.SessionHandoff
+import com.zoneu.app.agent.worldBookRepository
 import com.zoneu.app.data.db.SessionKind
 import com.zoneu.app.data.session.zoneuSessionStore
 import com.zoneu.app.node.NodeRuntime
@@ -33,7 +36,8 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     val applying: Boolean = false,
     val importing: Boolean = false,
     val message: String? = null,
-    /** 导入时被丢掉的字段说明（system_prompt 之类），给用户看一次就够。 */
+    val unreadableCards: Int = 0,
+    /** 导入兼容报告摘要；完整报告随卡保存，在详情页可回看。 */
     val notes: List<String> = emptyList(),
   ) {
     val active: CharacterCard? get() = cards.firstOrNull { it.id == activeId }
@@ -47,11 +51,13 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
   }
 
   fun refresh() {
+    val listing = runCatching { CharacterStore.library(appContext) }.getOrElse {
+      _state.update { state -> state.copy(message = "角色库读取失败；保留现有列表，请稍后重新打开。") }
+      return
+    }
+    val selected = runCatching { PersonaStore.selectedCharacter(appContext)?.id }.getOrNull()
     _state.update {
-      it.copy(
-        cards = CharacterStore.cards(appContext),
-        activeId = PersonaStore.selectedCharacter(appContext)?.id,
-      )
+      it.copy(cards = listing.cards, unreadableCards = listing.unreadable, activeId = selected)
     }
   }
 
@@ -116,16 +122,14 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
       val outcome =
         runCatching {
           val bytes =
-            appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            appContext.contentResolver.openInputStream(uri)?.use { CardInput.read(it) }
               ?: throw CharacterImporter.ImportException("读不到这个文件")
-          CharacterImporter.fromBytes(bytes, displayName(uri))
+          val parsed = CharacterImporter.fromBytes(bytes, displayName(uri))
+          CharacterStore.createImported(appContext, parsed.card)
+          parsed
         }
       outcome
         .onSuccess { result ->
-          if (!CharacterStore.saveImported(appContext, result.card)) {
-            _state.update { it.copy(importing = false, message = "导入失败：写不进应用目录") }
-            return@onSuccess
-          }
           refresh()
           _state.update {
             it.copy(importing = false, message = "已导入「${result.card.name}」", notes = result.notes)
@@ -139,44 +143,68 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     }
   }
 
-  /** 删掉一张导入的卡；正在扮演的卡被删时顺手退出角色，免得界面停在「扮演中」。 */
-  fun delete(id: String) {
-    CharacterMemory.forget(appContext, id)
-    CharacterStore.deleteImported(appContext, id)
-    if (_state.value.activeId == id) {
+  /** The library list supplies its already-loaded baseline, never a fresh revision on deletion. */
+  fun delete(id: String): Boolean = _state.value.cards.firstOrNull { it.id == id }?.let(::delete) ?: false
+
+  /** Cleanup follows successful deletion; stale drafts cannot delete a newer card. */
+  fun delete(card: CharacterCard): Boolean {
+    val deleted = runCatching {
+      CharacterStore.deleteImported(appContext, card.id, card.storageRevision.orEmpty())
+    }
+    if (deleted.isFailure) {
+      _state.update { it.copy(message = "删除失败：角色卡可能已改变，请重新读取。") }
+      return false
+    }
+    CharacterMemory.forget(appContext, card.id)
+    // Card files are outside Room: drop the dead default bindings so their books
+    // do not stay blocked by a character that no longer exists.
+    viewModelScope.launch { runCatching { appContext.worldBookRepository().forgetCharacter(card.id) } }
+    if (_state.value.activeId == card.id) {
       PersonaStore.clearCharacter(appContext)
-      apply("已删除「${_state.value.cards.firstOrNull { it.id == id }?.name ?: "角色"}」，已退出扮演")
-      return
+      apply("已删除角色卡，已退出扮演")
     }
     refresh()
     _state.update { it.copy(message = "已删除") }
+    return true
   }
 
-  /**
-   * 新建一张空白卡：先落盘再进编辑页。
-   *
-   * 落盘在前，用户中途退出也不会在列表里留下半张卡；而「空页」本身就是他要的东西 ——
-   * 不用再靠导入一张别人的卡来获得一个能写字的地方。
-   */
   fun createBlank(onCreated: (String) -> Unit) {
-    val card = blankCard().copy(name = "")
-    if (!CharacterStore.saveImported(appContext, card)) {
-      _state.update { it.copy(message = "新建失败：写不进应用目录") }
+    val saved = runCatching { CharacterStore.createImported(appContext, blankCard()) }.getOrElse {
+      _state.update { it.copy(message = "新建失败：写不进应用目录或身份冲突") }
       return
     }
     refresh()
-    onCreated(card.id)
+    onCreated(saved.card.id)
   }
 
-  /** 保存编辑结果（只对应用目录里的卡有意义）；[memory] 一并写这张卡记忆的那份文件。 */
-  fun save(card: CharacterCard, memory: String = "") {
-    if (!CharacterStore.saveImported(appContext, card)) {
-      _state.update { it.copy(message = "保存失败：写不进应用目录") }
-      return
+  /** Return the actual card baseline even when the separate memory commit fails. */
+  fun save(card: CharacterCard, memory: String = ""): CharacterSaveResult {
+    val outcome = runCatching {
+      CharacterStore.updateImported(appContext, card.id, card.storageRevision.orEmpty()) { current ->
+        current.copy(
+          name = card.name,
+          tagline = card.tagline,
+          tags = card.tags,
+          description = card.description,
+          personality = card.personality,
+          scenario = card.scenario,
+          firstMes = card.firstMes,
+          world = card.world,
+        )
+      }
     }
-    CharacterMemory.save(appContext, card.id, memory)
+    val saved = outcome.getOrElse { error ->
+      val code = (error as? com.zoneu.app.agent.CardOperationException)?.code ?: "CARD_SAVE_UNCONFIRMED"
+      _state.update { it.copy(message = "保存失败（$code）：草稿保留；请重新读取卡片后再编辑。") }
+      return CharacterSaveResult.NotCommitted(code)
+    }
     refresh()
-    _state.update { it.copy(message = "已保存「${card.name}」") }
+    if (!CharacterMemory.save(appContext, card.id, memory)) {
+      _state.update { it.copy(message = "角色卡已保存，但角色记忆保存失败；草稿保留，请重试。") }
+      return CharacterSaveResult.MemoryFailed(saved)
+    }
+    _state.update { it.copy(message = "已保存角色卡") }
+    return CharacterSaveResult.Saved(saved)
   }
 
   private fun displayName(uri: Uri): String {
@@ -201,4 +229,13 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
       _state.update { it.copy(applying = false, message = outcome) }
     }
   }
+}
+
+/** A Boolean cannot distinguish a conflict from a new card with unsaved memory. */
+sealed interface CharacterSaveResult {
+  data class NotCommitted(val code: String) : CharacterSaveResult
+
+  data class MemoryFailed(val snapshot: CardSnapshot) : CharacterSaveResult
+
+  data class Saved(val snapshot: CardSnapshot) : CharacterSaveResult
 }

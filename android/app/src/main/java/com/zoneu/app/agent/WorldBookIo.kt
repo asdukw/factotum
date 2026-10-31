@@ -45,6 +45,20 @@ object WorldBookIo {
   fun exportText(entries: List<WorldEntry>): String =
     pretty.encodeToString(JsonArray.serializer(), toJson(entries))
 
+  /** 带来源书头与未投影条目的独立导出。 */
+  fun exportText(card: CharacterCard): String =
+    pretty.encodeToString(JsonObject.serializer(), CardRoundTrip.book(card))
+
+  /** 解析并追加来源；同一份书再次导入不会复活本地已删除的条目。 */
+  fun appendText(card: CharacterCard, text: String): CharacterCard {
+    require(text.toByteArray(Charsets.UTF_8).size <= CardInput.MAX_JSON) { "世界书 JSON 超过 8 MiB 上限" }
+    val root = runCatching { json.parseToJsonElement(text) }.getOrNull()
+      ?: throw CharacterImporter.ImportException("世界书不是合法的 JSON")
+    val book = CardRoundTrip.findBook(root)
+      ?: throw CharacterImporter.ImportException("这个文件里没有世界书 entries")
+    return CardRoundTrip.appendBook(card, book)
+  }
+
   /**
    * 从一段 JSON 里读出条目。
    *
@@ -53,17 +67,17 @@ object WorldBookIo {
    */
   fun importText(text: String): List<WorldEntry> {
     val trimmed = text.trim()
-    if (trimmed.isEmpty()) return emptyList()
+    if (trimmed.isEmpty() || trimmed.toByteArray(Charsets.UTF_8).size > CardInput.MAX_JSON) return emptyList()
     val root = runCatching { json.parseToJsonElement(trimmed) }.getOrNull() ?: return emptyList()
-    // 三种外壳摊平成 entries 数组，解析本身交给 [CharacterImporter.worldEntriesOf]：
+    // 三种外壳摊平成 entries 数组，字段投影统一交给 WorldEntryReader：
     // 那里的字段兼容（keys/key、v2 的顶层字段、extensions 两套拼法）是真机上验证过的
     val entries =
       when (root) {
         is JsonArray -> root
 
         is JsonObject -> {
-          val data = root["data"]?.jsonObject ?: root
-          val book = data["character_book"]?.jsonObject ?: data["world"]?.jsonObject ?: data
+          val data = (root["data"] as? JsonObject) ?: root
+          val book = (data["character_book"] as? JsonObject) ?: (data["world"] as? JsonObject) ?: data
           (book["entries"] ?: book["items"]) as? JsonArray ?: root["entries"] as? JsonArray
         }
 
@@ -80,11 +94,12 @@ object WorldBookIo {
     put("content", entry.content)
     // 导出的条目一律 enabled：导出的就是「现在真的在用的这些」
     put("enabled", true)
+    put("use_regex", false)
     put("insertion_order", entry.order)
     put("case_sensitive", entry.caseSensitive)
     put("selective", entry.secondary.isNotEmpty())
     put("constant", entry.constant)
-    put("position", entry.position)
+    put("position", if (entry.position == WorldEntry.POSITION_BEFORE) "before_char" else "after_char")
     put("comment", "")
     // 递归开关：ST 的字段名是驼峰、写在条目顶层；extensions 里再放一份下划线写法，两边的阅读器都能认。
     put("preventRecursion", entry.preventRecursion)

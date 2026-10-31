@@ -203,4 +203,15 @@ class NodeRuntimeProfileTest {
       text.contains("deepseek-v4.1-flash"),
     )
   }
+
+  @Test
+  fun `character card host plugin is bundled and mounted at host scope`() {
+    val profile = File("../../tools/dsh-phone/profile/cordis.patch.yml")
+    assumeTrue(profile.isFile)
+    val name = "dsh-plugin-character-cards"
+    assertTrue(profile.readText().contains("- id: character-cards"))
+    assertTrue(profile.readText().contains("name: $name"))
+    assertTrue(File("../../tools/bundle-dsh.ps1").readText().contains("Package = \"$name\"; Src = \"character-cards\""))
+    assertTrue(File("../../tools/dsh-phone/character-cards/package.json").readText().contains(name))
+  }
 }

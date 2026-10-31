@@ -47,6 +47,7 @@ object WorldEntryDraft {
 
   /** 编辑框里的原始文本。字段全用文本/布尔/整数，切成条目由 [build] 负责。 */
   data class Draft(
+    val original: WorldEntry? = null,
     val primary: String = "",
     val content: String = "",
     val constant: Boolean = false,
@@ -69,24 +70,28 @@ object WorldEntryDraft {
    *
    * 常驻条目不需要关键词（它每轮都在），但保留用户填的东西 —— 从常驻切回按需时不用重填。
    */
-  fun build(draft: Draft): WorldEntry =
-    WorldEntry(
-      keys = parseKeys(draft.primary),
-      content = clampContent(draft.content),
+  fun build(draft: Draft): WorldEntry {
+    val old = draft.original
+
+    fun <T> changed(value: T, before: T?, normalized: () -> T): T = if (old != null && value == before) value else normalized()
+    return (old ?: WorldEntry()).copy(
+      keys = if (old != null && draft.primary == formatKeys(old.keys)) old.keys else parseKeys(draft.primary),
+      content = changed(draft.content, old?.content) { clampContent(draft.content) },
       constant = draft.constant,
-      depth = clampDepth(draft.depth),
-      secondary = parseKeys(draft.secondary),
+      depth = changed(draft.depth, old?.depth) { clampDepth(draft.depth) },
+      secondary = if (old != null && draft.secondary == formatKeys(old.secondary)) old.secondary else parseKeys(draft.secondary),
       secondaryLogic = draft.logic,
-      exclude = parseKeys(draft.exclude),
-      probability = clampProbability(draft.probability),
-      sticky = draft.sticky.coerceIn(0, MAX_STICKY),
-      cooldown = draft.cooldown.coerceIn(0, MAX_STICKY),
-      position = clampPosition(draft.position),
-      role = clampRole(draft.role),
+      exclude = if (old != null && draft.exclude == formatKeys(old.exclude)) old.exclude else parseKeys(draft.exclude),
+      probability = changed(draft.probability, old?.probability) { clampProbability(draft.probability) },
+      sticky = changed(draft.sticky, old?.sticky) { draft.sticky.coerceIn(0, MAX_STICKY) },
+      cooldown = changed(draft.cooldown, old?.cooldown) { draft.cooldown.coerceIn(0, MAX_STICKY) },
+      position = changed(draft.position, old?.position) { clampPosition(draft.position) },
+      role = changed(draft.role, old?.role) { clampRole(draft.role) },
       useProbability = draft.useProbability,
       matchWholeWords = draft.matchWholeWords,
       caseSensitive = draft.caseSensitive,
     )
+  }
 
   /** 只认三种落点；卡里写别的数字（老版本 ST 有 2/3）一律回到「按深度」。 */
   fun clampPosition(position: Int): Int =

@@ -6,8 +6,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * 把一张卡里的 `character_book.entries` 读成我们的 [WorldEntry]。
@@ -25,14 +23,15 @@ object WorldEntryReader {
   private fun toEntry(entry: JsonObject): WorldEntry? {
     val content = entry["content"]?.string()?.trim().orEmpty()
     if (content.isEmpty()) return null
-    if (entry["enabled"]?.jsonPrimitive?.booleanOrNull == false) return null
+    if ((entry["enabled"] as? JsonPrimitive)?.booleanOrNull == false) return null
+    if ((entry["use_regex"] as? JsonPrimitive)?.booleanOrNull == true) return null
     val extensions = entry["extensions"] as? JsonObject
     return WorldEntry(
       keys = readKeys(entry, "keys", "key"),
       content = content,
-      order = entry["insertion_order"]?.jsonPrimitive?.intOrNull ?: 0,
+      order = (entry["insertion_order"] as? JsonPrimitive)?.intOrNull ?: 0,
       // `constant` 在 v2 规范里是「每轮都注入」
-      constant = entry["constant"]?.jsonPrimitive?.booleanOrNull == true,
+      constant = (entry["constant"] as? JsonPrimitive)?.booleanOrNull == true,
       // 编排参数在 v3 卡里放在 extensions，v2 卡偶尔放顶层 —— 两处都认
       depth = extInt(extensions, entry, 4, "depth"),
       secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
@@ -50,7 +49,7 @@ object WorldEntryReader {
       probability = extInt(extensions, entry, 100, "probability"),
       sticky = extInt(extensions, entry, 0, "sticky"),
       cooldown = extInt(extensions, entry, 0, "cooldown"),
-      position = extInt(extensions, entry, WorldEntry.POSITION_DEPTH, "position"),
+      position = extInt(extensions, entry, standardPosition(entry), "position"),
       role = extInt(extensions, entry, WorldEntry.ROLE_SYSTEM, "role"),
       useProbability = extBool(extensions, entry, true, "useProbability", "use_probability"),
       matchWholeWords = extBool(extensions, entry, false, "matchWholeWords", "match_whole_words"),
@@ -66,14 +65,21 @@ object WorldEntryReader {
    */
   private fun extBool(extensions: JsonObject?, entry: JsonObject, fallback: Boolean, vararg names: String): Boolean =
     names.firstNotNullOfOrNull { name ->
-      extensions?.get(name)?.jsonPrimitive?.booleanOrNull ?: entry[name]?.jsonPrimitive?.booleanOrNull
+      (extensions?.get(name) as? JsonPrimitive)?.booleanOrNull ?: (entry[name] as? JsonPrimitive)?.booleanOrNull
     } ?: fallback
 
   /** 读一个整型编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
   private fun extInt(extensions: JsonObject?, entry: JsonObject, fallback: Int, vararg names: String): Int =
     names.firstNotNullOfOrNull { name ->
-      extensions?.get(name)?.jsonPrimitive?.intOrNull ?: entry[name]?.jsonPrimitive?.intOrNull
+      (extensions?.get(name) as? JsonPrimitive)?.intOrNull ?: (entry[name] as? JsonPrimitive)?.intOrNull
     } ?: fallback
+
+  private fun standardPosition(entry: JsonObject): Int =
+    when ((entry["position"] as? JsonPrimitive)?.content) {
+      "before_char" -> WorldEntry.POSITION_BEFORE
+      "after_char" -> WorldEntry.POSITION_AFTER
+      else -> WorldEntry.POSITION_DEPTH
+    }
 
   /** 读一组关键词：数组取每项，单字符串当一条；空串丢掉（真卡里偶有空元素）。 */
   private fun readKeys(entry: JsonObject, vararg names: String): List<String> =

@@ -1,5 +1,6 @@
 package com.zoneu.app.ui.settings
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +43,7 @@ import com.zoneu.app.agent.CharacterStore
 import com.zoneu.app.agent.SecondaryLogic
 import com.zoneu.app.agent.TavernPresetStore
 import com.zoneu.app.agent.WorldEntry
+import com.zoneu.app.ui.chat.LocalWorldNavigation
 
 /**
  * 一张角色卡的详情页。
@@ -49,8 +52,7 @@ import com.zoneu.app.agent.WorldEntry
  * 「这张卡在演什么、开场是什么、世界设定有几条」—— 那些字段导入时都读过来了，之前却
  * 只显示了一行 tagline，等于白存。
  *
- * 页面上不放编辑入口：卡是导入的数据，改文案在源文件里改，重导一次比在手机上打一段
- * 长文靠谱。
+ * 导入卡可就地编辑并导出，归档字段的兼容范围通过报告说明。
  */
 @Composable
 fun CharacterDetailScreen(
@@ -63,23 +65,51 @@ fun CharacterDetailScreen(
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
   // 本地持一份，编辑保存后不用等列表刷新回来（列表是另一条流，回来晚一步就会闪一下旧文案）。
-  var card by remember(characterId) { mutableStateOf(CharacterStore.byId(appContext, characterId)) }
+  var card by remember(characterId) { mutableStateOf(runCatching { CharacterStore.byId(appContext, characterId) }.getOrNull()) }
+  var editEpoch by remember(characterId) { mutableStateOf(0) }
   var pinned by remember(characterId) { mutableStateOf(CharacterPins.isPinned(appContext, characterId)) }
   // 空白卡建完直接进编辑：它的第一个动作一定是「写名字」，没有别的可看。
   var editing by remember(characterId) { mutableStateOf(card?.name.isNullOrBlank()) }
 
   val current = card
   if (editing && current != null) {
-    CharacterEditPage(
-      card = current,
-      memory = CharacterMemory.notes(appContext, characterId),
-      onCancel = { editing = false },
-      onSave = { updated, memory ->
-        viewModel.save(updated, memory)
-        card = updated
-        editing = false
-      },
-    )
+    key(editEpoch) {
+      CharacterEditPage(
+        card = current,
+        memory = CharacterMemory.notes(appContext, characterId),
+        onCancel = {
+          card = runCatching { CharacterStore.byId(appContext, characterId) }.getOrNull()
+          editing = false
+        },
+        onReload = {
+          val latest = runCatching { CharacterStore.readSnapshot(appContext, characterId) }
+          if (latest.isSuccess) {
+            card = latest.getOrNull()?.card
+            editEpoch++
+            if (card == null) editing = false
+          } else {
+            Toast.makeText(appContext, "读取失败，草稿仍保留", Toast.LENGTH_LONG).show()
+          }
+        },
+        onSave = { updated, memory ->
+          val result = viewModel.save(updated, memory)
+          when (result) {
+            is CharacterSaveResult.Saved -> {
+              card = result.snapshot.card
+              editing = false
+            }
+
+            is CharacterSaveResult.MemoryFailed -> card = result.snapshot.card
+
+            is CharacterSaveResult.NotCommitted -> Unit
+          }
+          if (result !is CharacterSaveResult.Saved) {
+            Toast.makeText(appContext, viewModel.state.value.message ?: "保存失败", Toast.LENGTH_LONG).show()
+          }
+          result
+        },
+      )
+    }
     return
   }
 
@@ -94,9 +124,12 @@ fun CharacterDetailScreen(
     onEdit = { editing = true },
     onCardChanged = { card = it },
     onDelete = {
-      viewModel.delete(characterId)
-      CharacterPins.forget(appContext, characterId)
-      onBack()
+      if (current != null && viewModel.delete(current)) {
+        CharacterPins.forget(appContext, characterId)
+        onBack()
+      } else {
+        Toast.makeText(appContext, viewModel.state.value.message ?: "删除失败", Toast.LENGTH_LONG).show()
+      }
     },
     modifier = modifier,
   )
@@ -169,10 +202,15 @@ internal fun CharacterDetailScreen(
         ProseSection("开场白", card.firstMes)
         GreetingSection(card)
 
+        val worldNavigation = LocalWorldNavigation.current
+        TextButton(onClick = { worldNavigation.openBindings("character", card.id) }) { Text("管理默认共享世界书") }
+        Text("默认绑定只用于未来新会话。下面是卡内设定，不等于共享世界书。", style = MaterialTheme.typography.bodySmall)
         WorldSection(card)
+        SharedWorldCardExport(card)
 
         MemoryCard(memory)
         AboutCard(card)
+        CardCompatibilityReport(card)
 
         if (card.imported) {
           Spacer(Modifier.height(16.dp))
@@ -406,9 +444,9 @@ private fun AboutCard(card: CharacterCard) {
       if (card.license.isNotBlank()) Detail("许可", card.license)
       if (card.tags.isNotEmpty()) Detail("标签", card.tags.joinToString(" · "))
       Detail(
-        "这两样都不进来",
-        "卡里的 system_prompt / 示例对话在导入时就被丢弃 —— 前者常写着「忽略一切规则」，" +
-          "后者占 token 且口癖会被过度模仿。编辑页也没有这两个输入框，那里不该成为绕过去的路。",
+        "运行边界",
+        "卡内 system_prompt / post_history_instructions / 示例对话只保留供主动导出，不发送给模型。" +
+          "原始卡存于应用私有目录，但未使用 SQLCipher 加密。",
       )
     }
   }

@@ -59,6 +59,17 @@ object TavernPresetStore {
     return presets(context).firstOrNull { it.id == bound } ?: selected(context)
   }
 
+  /** Read the selected/bound preset without creating the preset directory or writing state. */
+  fun peekForCard(context: Context, cardId: String?): TavernPreset {
+    val selectedId = prefs(context).getString(KEY_SELECTED, null) ?: TavernPreset.DEFAULT_ID
+    val bound = cardId?.let { prefs(context).getString(cardKey(it), null) }
+    val files = File(context.filesDir, DIR).listFiles { file -> file.isFile && file.name.endsWith(".json") }.orEmpty()
+    val custom = files.mapNotNull { file -> runCatching { json.decodeFromString<TavernPreset>(file.readText()) }.getOrNull() }
+    val available = listOf(TavernPreset.DEFAULT) + custom
+    val selected = available.firstOrNull { it.id == selectedId } ?: TavernPreset.DEFAULT
+    return if (bound == null) selected else available.firstOrNull { it.id == bound } ?: selected
+  }
+
   /** 这张卡绑了哪套；null = 跟随全局。 */
   fun boundId(context: Context, cardId: String): String? = prefs(context).getString(cardKey(cardId), null)
 

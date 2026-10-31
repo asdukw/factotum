@@ -172,6 +172,15 @@ class ZoneuAccessibilityService : AccessibilityService(), DeviceBridge {
       is DeviceAction.UpdateScheduledTask,
       is DeviceAction.DeleteScheduledTask,
       is DeviceAction.RunCommand,
+      is DeviceAction.CreateCharacterCard,
+      is DeviceAction.ImportCharacterCard,
+      is DeviceAction.CancelCharacterCard,
+      is DeviceAction.ListCharacterCards,
+      is DeviceAction.ReadCharacterCard,
+      is DeviceAction.PreviewCharacterCardUpdate,
+      is DeviceAction.UpdateCharacterCard,
+      is DeviceAction.WorldBookOperation,
+      is DeviceAction.WorldRuntimeAction,
       ->
         DeviceActionResult(ok = false, summary = "这个动作由桥直接处理，不经过无障碍", code = "NOT_HANDLED_HERE")
 

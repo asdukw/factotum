@@ -2,6 +2,8 @@ package com.zoneu.app.bridge
 
 import android.util.Log
 import com.zoneu.app.accessibility.ZoneuAccessibilityService
+import com.zoneu.app.agent.CharacterCardLibrary
+import com.zoneu.app.agent.CharacterCardOperations
 import com.zoneu.app.device.AccessibilityStatus
 import com.zoneu.app.device.BridgeHealth
 import com.zoneu.app.device.DEFAULT_LONG_PRESS_MS
@@ -17,6 +19,7 @@ import com.zoneu.app.schedule.ScheduledTaskStore
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -36,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object DeviceBridgeServer {
   private const val TAG = "ZoneuBridge"
+  internal const val MAX_REQUEST_BYTES = 52 * 1024 * 1024
 
   private val started = AtomicBoolean(false)
   private val token = UUID.randomUUID().toString()
@@ -69,6 +73,7 @@ object DeviceBridgeServer {
 
   private fun handle(client: Socket) {
     client.use { socket ->
+      socket.soTimeout = 120_000
       val input = BufferedInputStream(socket.getInputStream())
       val output = BufferedOutputStream(socket.getOutputStream())
       val response =
@@ -96,7 +101,7 @@ object DeviceBridgeServer {
     if (parts.size < 2 || parts[0] != "POST" || !parts[1].startsWith("/action")) {
       return errorJson("不支持的请求：$requestLine")
     }
-    var contentLength = 0
+    var contentLength = -1
     var authorized = false
     while (true) {
       val line = readLine(input) ?: break
@@ -106,16 +111,17 @@ object DeviceBridgeServer {
       val name = line.substring(0, colon).trim().lowercase()
       val value = line.substring(colon + 1).trim()
       when (name) {
-        "content-length" -> contentLength = value.toIntOrNull() ?: 0
+        "content-length" -> contentLength = value.toIntOrNull() ?: -1
         "x-android-bridge-token" -> authorized = value == token
       }
     }
     if (!authorized) return errorJson("未授权")
+    if (contentLength !in 1..MAX_REQUEST_BYTES) return errorJson("请求体长度无效或超过上限")
     val body = ByteArray(contentLength)
     var read = 0
     while (read < contentLength) {
       val count = input.read(body, read, contentLength - read)
-      if (count < 0) break
+      if (count < 0) return errorJson("请求体传输不完整")
       read += count
     }
     val root =
@@ -128,7 +134,8 @@ object DeviceBridgeServer {
     BridgeHealth.record(result.code, action)
     // 只记动作与结构化结果（计数），不记 payload 正文。`run_command` 的 summary 就是**命令输出**
     // 本身（可能是私有文件内容），所以它只记长度 —— 与「绝不记录屏幕 / 聊天内容」同一条规矩。
-    val logged = if (action == "run_command") "chars=${result.summary.length}" else result.summary
+    val contentAction = action == "run_command" || action.contains("character_card") || action.contains("world")
+    val logged = if (contentAction) "chars=${result.summary.length}" else result.summary
     Log.i(TAG, "$action ok=${result.ok} code=${result.code ?: "-"} $logged")
     return resultJson(result)
   }
@@ -141,7 +148,7 @@ object DeviceBridgeServer {
    * 这些动作会被误判成失败。
    */
   private fun executeAction(context: android.content.Context, action: DeviceAction): DeviceActionResult =
-    when (action) {
+    WorldBookActions.execute(context, action) ?: when (action) {
       is DeviceAction.SetAlarm -> SystemIntents.setAlarm(context, action)
 
       is DeviceAction.AddCalendarEvent -> SystemIntents.addCalendarEvent(context, action)
@@ -175,15 +182,43 @@ object DeviceBridgeServer {
       // 内嵌 Linux 的 shell：**不走无障碍**，也不经过 Termux —— 本进程域里起一次 proot。
       is DeviceAction.RunCommand -> runCommand(context, action)
 
-      else -> {
-        val service = ZoneuAccessibilityService.get()
-        if (service == null) {
-          AccessibilityStatus.unavailableToolResult()
-        } else {
-          runBlocking { service.execute(action) }
-        }
-      }
+      is DeviceAction.CreateCharacterCard,
+      is DeviceAction.ImportCharacterCard,
+      is DeviceAction.CancelCharacterCard,
+      is DeviceAction.ListCharacterCards,
+      is DeviceAction.ReadCharacterCard,
+      is DeviceAction.PreviewCharacterCardUpdate,
+      is DeviceAction.UpdateCharacterCard,
+      -> executeCardAction(context, action)
+
+      else -> executeAccessibleAction(action)
     }
+
+  private fun executeAccessibleAction(action: DeviceAction): DeviceActionResult {
+    val service = ZoneuAccessibilityService.get() ?: return AccessibilityStatus.unavailableToolResult()
+    return runBlocking { service.execute(action) }
+  }
+
+  private fun executeCardAction(context: android.content.Context, action: DeviceAction): DeviceActionResult = when (action) {
+    is DeviceAction.CreateCharacterCard -> CharacterCardOperations.create(context, action.requestId, action.fields)
+
+    is DeviceAction.ImportCharacterCard -> CharacterCardOperations.importUrl(context, action.requestId, action.url)
+
+    is DeviceAction.CancelCharacterCard -> CharacterCardOperations.cancel(action.requestId)
+
+    is DeviceAction.ListCharacterCards -> CharacterCardLibrary.forContext(context).list(action.arguments)
+
+    is DeviceAction.ReadCharacterCard -> CharacterCardLibrary.forContext(context).read(action.arguments)
+
+    is DeviceAction.PreviewCharacterCardUpdate -> CharacterCardLibrary.forContext(context).preview(action.requestId, action.arguments)
+
+    is DeviceAction.UpdateCharacterCard ->
+      CharacterCardLibrary.forContext(context).update(action.requestId, action.arguments, action.fingerprint)
+
+    else -> error("not a card action")
+  }
+
+  internal fun dispatchForTest(input: BufferedInputStream): String = dispatch(input)
 
   /** 桥认识的 action 名。必须与 [toDeviceAction] 的 `when` 分支同增同删（有测试盯着）。 */
   internal val KNOWN_ACTIONS: Set<String> =
@@ -211,6 +246,26 @@ object DeviceBridgeServer {
       "update_scheduled_task",
       "delete_scheduled_task",
       "run_command",
+      "list_world_books",
+      "read_world_book",
+      "create_world_book",
+      "update_world_book",
+      "copy_world_book",
+      "delete_world_book",
+      "read_world_book_bindings",
+      "update_world_book_bindings",
+      "explain_world_activation",
+      "preview_world_book_action",
+      "cancel_world_book_action",
+      "bind_world_request",
+      "resolve_world_request",
+      "create_character_card",
+      "import_character_card_url",
+      "cancel_character_card",
+      "list_character_cards",
+      "read_character_card",
+      "preview_character_card_update",
+      "update_character_card",
     )
 
   /** 每流最多回给模型多少字节；超出的部分留头留尾，中间截断。 */
@@ -382,8 +437,35 @@ object DeviceBridgeServer {
           DeviceAction.RunCommand(cmd, timeout)
         }
 
+      "create_character_card", "import_character_card_url", "cancel_character_card",
+      "list_character_cards", "read_character_card", "preview_character_card_update", "update_character_card",
+      -> parseCardAction(action, root)
+
+      else -> WorldBookActionParser.parse(action, root)
+    }
+
+  private fun parseCardAction(action: String, root: JsonObject): DeviceAction? {
+    // Read calls have an internal execution identity on the wire, but never require model-supplied IDs.
+    val args = JsonObject(root - setOf("action", "request_id", "preview_fingerprint"))
+    if (action == "list_character_cards") return DeviceAction.ListCharacterCards(args)
+    if (action == "read_character_card") return DeviceAction.ReadCharacterCard(args)
+    val requestId = (root["request_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+      ?.takeIf { it.isNotBlank() && it.length <= 256 } ?: return null
+    return when (action) {
+      "create_character_card" -> (root["fields"] as? JsonObject)?.let { DeviceAction.CreateCharacterCard(requestId, it) }
+
+      "import_character_card_url" -> root.string("url")?.let { DeviceAction.ImportCharacterCard(requestId, it) }
+
+      "cancel_character_card" -> DeviceAction.CancelCharacterCard(requestId)
+
+      "preview_character_card_update" -> DeviceAction.PreviewCharacterCardUpdate(requestId, args)
+
+      "update_character_card" -> (root["preview_fingerprint"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        ?.let { DeviceAction.UpdateCharacterCard(requestId, args, it) }
+
       else -> null
     }
+  }
 
   /** 修改日程：除 event_id 外全是可空字段，null = 这一项不改。 */
   private fun updateCalendarEvent(eventId: Long, root: JsonObject): DeviceAction.UpdateCalendarEvent =
@@ -422,6 +504,7 @@ object DeviceBridgeServer {
       val next = input.read()
       if (next < 0) return if (buffer.isEmpty()) null else buffer.toString()
       if (next == '\n'.code) return buffer.toString().trimEnd('\r')
+      if (buffer.length >= 8192) throw java.io.IOException("HEADER_TOO_LARGE")
       buffer.append(next.toChar())
     }
   }

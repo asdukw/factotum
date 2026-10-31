@@ -15,12 +15,21 @@
 // 标记串现在只用于人工 grep，不参与任何判断。
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { patchWorldRuntime } from './world-runtime-patch.mjs'
+import { patchWorldLifecycle } from './world-lifecycle-patch.mjs'
 
 const modulesDir = process.argv[2]
 if (!modulesDir) {
   console.error('usage: node patch-runtime.mjs <node_modules>')
   process.exit(2)
 }
+
+// Optional application projection, after Harness conversion and before provider dispatch.
+const worldAdapterPath = join(modulesDir, '@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
+const worldAdapterSource = readFileSync(worldAdapterPath, 'utf8')
+const worldAdapterPatched = patchWorldRuntime(worldAdapterSource)
+if (worldAdapterPatched !== worldAdapterSource) writeFileSync(worldAdapterPath, worldAdapterPatched)
+console.log(worldAdapterPatched === worldAdapterSource ? 'world runtime patch already applied' : `patched: ${worldAdapterPath}`)
 
 const flockMarker = 'zoneu patch: Android 单进程无需跨进程 flock'
 const flockPath = join(modulesDir, '@deepseek-ai/node-addon-system/lib/flock.js')
@@ -85,7 +94,9 @@ if (jsonl.includes(renameCall)) {
 // 诊断只打**结构**（帧数与字符数），不打正文 —— 与「屏幕与聊天正文不落日志」那条红线一致。
 const streamMarker = 'zoneu patch: forward assistant stream'
 const streamPath = join(modulesDir, '@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js')
-const streamSrc = readFileSync(streamPath, 'utf8')
+const streamOriginal = readFileSync(streamPath, 'utf8')
+const streamSrc = patchWorldLifecycle(streamOriginal)
+if (streamSrc !== streamOriginal) writeFileSync(streamPath, streamSrc)
 const streamBase = streamSrc.replace(
   /(?:[ \t]*\/\/[^\n]*forward assistant stream\n)?[ \t]*const \w+StreamStats = new Map\(\);[\s\S]*?console\.error\(`\[[^\]]+\] assistant stream end:[^\n]*\n[ \t]*\}\)\);\n/g,
   '',

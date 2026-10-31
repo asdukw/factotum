@@ -2,6 +2,8 @@ package com.zoneu.app.agent
 
 import android.util.Log
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 
 /**
  * 酒馆会话的一轮请求：把「这张卡 + 这段记忆 + 已落库的对话」折成 messages，交给 [TavernChannel]。
@@ -25,14 +27,13 @@ class TavernTurns(
    * 世界书的跨轮记忆（sticky / cooldown）。参数是会话 id —— 激活记录按会话隔离，
    * 同一个角色在两个会话里各自算各自的轮次。
    */
-  private val tracking: (String) -> WorldTracking = { WorldTracking.NONE },
-  /** 会话轮次自增并返回；测试与不关心 sticky 的路径用默认的 0。 */
-  private val nextTurn: (String) -> Int = { 0 },
+  private val legacyTiming: LegacyWorldTiming = LegacyWorldTiming(),
   /**
    * 会话变量的存续。读进来交给 [TavernPrompt] 渲染，这一轮里被 `{{setvar}}` 写过才回存 ——
    * 每轮都写一次会让「变量没变」也产生一次磁盘写入，而变量表里通常是十几条常量。
    */
   private val vars: VarsStore = VarsStore.NONE,
+  private val world: WorldDirect? = null,
 ) {
   val enabled: Boolean get() = channel() != null
 
@@ -98,8 +99,19 @@ class TavernTurns(
      * 分成两段只会让预设作者多写一个槽位。
      */
     recap: String? = null,
+    requestId: String = java.util.UUID.randomUUID().toString(),
   ): Flow<AgentStreamEvent>? {
     val channel = channel() ?: return null
+    world?.let { runtime ->
+      val history = turns.filter { it.error == null && it.content.isNotBlank() }.map {
+        TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content)
+      }
+      return flow {
+        val request = WorldDirect.Request(requestId, sessionId, history, tail, recap, auxiliary = tail == TavernDirectives.IMPERSONATE)
+        val plan = runtime.prepare(request)
+        emitAll(channel.stream(TavernRequest(sessionId, plan.messages.map { TavernMessage(it.role, it.content) })))
+      }
+    }
     val ids = (listOfNotNull(characterId) + cast).distinct()
     val castCards = ids.mapNotNull { id -> cards().firstOrNull { it.id == id } }.take(GroupCast.MAX)
     if (castCards.isEmpty()) return null
@@ -112,7 +124,7 @@ class TavernTurns(
         .map { TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content) }
         .toList()
     if (history.isEmpty()) return null
-    val turn = nextTurn(sessionId)
+    val turn = legacyTiming.nextTurn(sessionId)
     if (grouped) Log.d(TAG, "tavern group session=$sessionId cast=${castCards.size}")
     val table = TavernVars(vars.load(sessionId))
     val messages =
@@ -124,7 +136,7 @@ class TavernTurns(
         state =
           TavernPrompt.TurnState(
             turn = turn,
-            tracking = tracking(sessionId),
+            tracking = legacyTiming.tracking(sessionId),
             onHits = { hits -> logWorld(sessionId, turn, hits) },
             vars = table,
             // 群聊规则永远在最后：续写/替我写是「这一轮怎么接」，规则是「谁来说」，后者更硬
@@ -145,6 +157,10 @@ class TavernTurns(
     return channel.stream(TavernRequest(sessionId, messages))
   }
 
+  suspend fun settle(requestId: String, success: Boolean, evidence: String) {
+    world?.settle(requestId, success, evidence)
+  }
+
   /**
    * 记一行「这一轮带了哪几条设定」。
    *
@@ -159,3 +175,9 @@ class TavernTurns(
     const val TAG = "zoneuAgent"
   }
 }
+
+/** Compatibility for callers without the durable world runtime; production uses WorldDirect. */
+data class LegacyWorldTiming(
+  val tracking: (String) -> WorldTracking = { WorldTracking.NONE },
+  val nextTurn: (String) -> Int = { 0 },
+)

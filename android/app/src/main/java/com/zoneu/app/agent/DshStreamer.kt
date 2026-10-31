@@ -10,9 +10,12 @@ import com.zoneu.app.progress.AgentProgressCenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -23,8 +26,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [AgentStreamEvent.Status] 给用户进度，并发出 [AgentStreamEvent.ToolCallStarted] /
  * [AgentStreamEvent.ToolCallFinished] 供 UI 画工具卡。任务期间起前台服务保活，idle 后停止。
  *
- * 注意：SDK 协议没有取消方法；用户点“停止”只是停止 UI 收集，dsh 那一轮还会在
- * 后台继续跑完。
+ * Roleplay cancellation targets its exact SDK request and waits for a bounded durable receipt.
+ * Daily tasks keep their existing SDK lifecycle; stopping UI collection does not shut down Node.
  */
 class DshStreamer(private val context: Context) : ChatStreamer {
   override fun stream(sessionId: String, prompt: String): Flow<AgentStreamEvent> = channelFlow {
@@ -43,8 +46,15 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     // 机制与 debug 广播仍留着（ZoneuAccessibilityService.setTouchExplorationForTask），
     // 但任务路径不再自动开 —— 手势始终可用，用户手动点击也不受影响。
     var taskLease: NodeRuntime.TaskLease? = null
+    var preparation: NodeRuntime.TaskPreparation? = null
+    var worldRequestId: String? = null
+    var settledWorld = false
     try {
-      taskLease = checkNotNull(NodeRuntime.beginTask()) { "运行时正忙，设置正在应用，请稍后重试" }
+      // Reserve admission before changing the shared persona; reload still precedes the task lease.
+      val preparing = checkNotNull(NodeRuntime.beginTaskPreparation()) { "运行时正忙，设置正在应用，请稍后重试" }
+      preparation = preparing
+      if (WorldRuntime.activateCast(app, sessionId)) NodeRuntime.reloadForPreparation(app, preparing)
+      taskLease = checkNotNull(NodeRuntime.beginTask(preparing)) { "运行时正忙，设置正在应用，请稍后重试" }
       NodeRuntime.initialize(app)
       var sawRunning = false
       var turnFailure: DshEvent.TurnEnded? = null
@@ -155,7 +165,8 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       // 状态文案安静；进度在系统悬浮层（AgentProgressCenter）里看。
       AgentProgressCenter.step(sessionId, "正在思考", "等待模型返回下一步")
       NodeRuntime.awaitEventSubscribers()
-      NodeRuntime.prompt(sessionId, prompt)
+      NodeRuntime.worldPrompt(app, sessionId, prompt) { worldRequestId = it }
+      taskLease?.let(NodeRuntime::markTaskSubmitted)
       // 会话若卡在上一轮（进程被杀留下未闭合的 turn），prompt 会一直排队不启动。
       withTimeoutOrNull(RUNNING_TIMEOUT_MS) { started.await() }
         ?: throw AgentException("任务未能启动（会话可能卡在上一轮，请新建会话或清除会话数据）")
@@ -165,6 +176,13 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       // 界面会停在那句「正在启动 dsh 运行时…」，用户只看到「没有反应」。
       turnFailure?.let { failure ->
         throw AgentException(DshProtocol.turnErrorText(failure.code, failure.error))
+      }
+      worldRequestId?.let { id ->
+        settledWorld = withTimeoutOrNull(WORLD_CANCEL_TIMEOUT_MS) {
+          while (!NodeRuntime.worldControl(app, id, cancel = false)) delay(100)
+          true
+        } ?: false
+        if (!settledWorld) throw AgentException("WORLD_SETTLEMENT_PENDING")
       }
       AgentProgressCenter.complete(sessionId)
       send(AgentStreamEvent.Completed)
@@ -179,13 +197,25 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       AgentProgressCenter.fail(sessionId, error.message ?: error.javaClass.simpleName)
       throw error
     } finally {
+      if (!settledWorld) {
+        worldRequestId?.let { id ->
+          withContext(NonCancellable) {
+            withTimeoutOrNull(WORLD_CANCEL_TIMEOUT_MS) {
+              // Target the exact bound request, then converge through the official durable receipt.
+              runCatching { while (!NodeRuntime.worldControl(app, id, cancel = true)) delay(100) }
+            }
+          }
+        }
+      }
       taskLease?.let(NodeRuntime::endTask)
+      preparation?.let(NodeRuntime::endTaskPreparation)
       NodeTaskService.stop(app)
     }
   }
 
   private companion object {
     private const val TAG = "ZoneuNode"
+    private const val WORLD_CANCEL_TIMEOUT_MS = 15_000L
     private const val RUNNING_TIMEOUT_MS = 30_000L
   }
 }

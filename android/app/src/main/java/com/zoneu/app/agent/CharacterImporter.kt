@@ -1,163 +1,97 @@
 package com.zoneu.app.agent
 
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import java.util.zip.Inflater
 
-/**
- * 从 SillyTavern 角色卡（PNG 或 JSON）读出一张 [CharacterCard]。
- *
- * 只取「身份与语气」这一层，**不**接受卡里的行为指令：
- * - `system_prompt` / `post_history_instructions` 丢弃 —— 社区卡里这两段常写着「忽略一切既有规则」
- *   「你必须永远以……回答」，与手机 agent 的操作契约直接冲突，等于把执行权交给一张外部下载的卡；
- * - `mes_example` 丢弃 —— 占 token，而且模型会过度模仿示例里的口癖；
- * - `{{char}}` / `{{user}}` 保留原样，渲染时统一替换（见 [CharacterStore.renderPrompt]）。
- *
- * 解析尽量宽松：卡格式的版本、字段名、嵌套层级都不统一（v1 是平铺，v2/v3 在 `data` 下，
- * 世界书有时叫 `character_book`、有时叫 `world`、有时压根没有）。宁可丢字段，也不要因为
- * 一个不认识的键就整张卡导入失败。
- */
+/** 外部卡只投影白名单；原始指令及扩展隔离存储，供主动导出恢复。 */
 object CharacterImporter {
-  /** 导入结果：卡 + 给用户看的提示（哪些字段被丢掉、为什么）。 */
   data class Result(val card: CharacterCard, val notes: List<String>)
 
   class ImportException(message: String) : Exception(message)
 
-  private val json = Json {
-    ignoreUnknownKeys = true
-    isLenient = true
-  }
-
-  private val PNG_MAGIC = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
-  private val CARD_KEYWORDS = setOf("chara", "ccv3", "character")
-
-  /** 入口：字节流可能是 PNG（卡藏在 tEXt/iTXt 块里），也可能是直接的 JSON。 */
   fun fromBytes(bytes: ByteArray, fallbackName: String): Result {
-    val payload = if (startsWithPng(bytes)) extractFromPng(bytes) else String(bytes, Charsets.UTF_8)
-    val root =
-      runCatching { json.parseToJsonElement(payload).jsonObject }
-        .getOrElse { throw ImportException("卡数据不是合法的 JSON（${it.message ?: "解析失败"}）") }
-    return map(root, fallbackName)
-  }
-
-  private fun startsWithPng(bytes: ByteArray): Boolean =
-    bytes.size > PNG_MAGIC.size && PNG_MAGIC.indices.all { bytes[it] == PNG_MAGIC[it] }
-
-  /**
-   * 逐块扫 PNG：`tEXt`（key\0base64）与 `iTXt`（key\0flag\0method\0lang\0translated\0正文，
-   * 正文可能是 UTF-8 明文，也可能按 zlib 压过）。
-   *
-   * 不依赖图片解码库：这里只需要读懂块头，用 BitmapFactory 解一遍图纯属浪费内存（卡的图经常 2MB+）。
-   */
-  private fun extractFromPng(bytes: ByteArray): String {
-    var offset = PNG_MAGIC.size
-    while (offset + 8 <= bytes.size) {
-      val length = readInt(bytes, offset)
-      val type = String(bytes, offset + 4, 4, Charsets.US_ASCII)
-      val dataStart = offset + 8
-      // 三个终止条件并成一条：块长度越界（文件被截断）、遇到 IEND、扫完
-      if (length < 0 || dataStart + length + 4 > bytes.size || type == "IEND") break
-      val text =
-        when (type) {
-          "tEXt" -> decodeTextChunk(bytes, dataStart, length)
-          "iTXt" -> decodeInternationalTextChunk(bytes, dataStart, length)
-          else -> null
-        }
-      if (text != null) return text
-      offset = dataStart + length + 4
+    val parsed = CardInput.parse(bytes)
+    val result = map(parsed.root, fallbackName)
+    val extra = mutableListOf<CardCompatibilityNote>()
+    if (parsed.keyword != null) {
+      extra += CardCompatibilityNote(
+        "png_source",
+        "PNG",
+        CardHandling.CONVERTED,
+        "采用 ${parsed.keyword} 载荷；只保存 JSON，不保存图片与附件实体。",
+      )
     }
-    throw ImportException("这张 PNG 里没有角色卡数据（找不到 chara / ccv3 文本块）")
+    if (parsed.fallback) {
+      extra += CardCompatibilityNote(
+        "png_fallback",
+        "PNG.ccv3",
+        CardHandling.UNAVAILABLE,
+        "V3 载荷无效，已明确回落到有效的旧版载荷。",
+      )
+    }
+    val metadata = result.card.importMetadata!!
+    val card = result.card.copy(importMetadata = metadata.copy(report = metadata.report + extra))
+    return Result(card, card.compatibilityNotes().map { it.summary() })
   }
 
-  private fun decodeTextChunk(bytes: ByteArray, start: Int, length: Int): String? {
-    val chunk = bytes.copyOfRange(start, start + length)
-    val nul = chunk.indexOf(0)
-    if (nul <= 0) return null
-    val keyword = String(chunk, 0, nul, Charsets.ISO_8859_1).lowercase()
-    if (keyword !in CARD_KEYWORDS) return null
-    // tEXt 正文是 Latin-1 文本，但卡一律把 base64 放这里
-    val body = String(chunk, nul + 1, chunk.size - nul - 1, Charsets.ISO_8859_1).trim()
-    return decodeBase64OrPlain(body)
-  }
-
-  private fun decodeInternationalTextChunk(bytes: ByteArray, start: Int, length: Int): String? {
-    val chunk = bytes.copyOfRange(start, start + length)
-    val nul = chunk.indexOf(0)
-    if (nul <= 0 || nul + 3 > chunk.size) return null
-    if (String(chunk, 0, nul, Charsets.ISO_8859_1).lowercase() !in CARD_KEYWORDS) return null
-    val body = intlBody(chunk, nul + 3) ?: return null
-    // 字节 nul+1 = compression flag，nul+2 = compression method
-    val text =
-      if (chunk[nul + 1].toInt() == 1) runCatching { inflate(body) }.getOrNull() else String(body, Charsets.UTF_8)
-    return text?.let { decodeBase64OrPlain(it.trim()) }
-  }
-
-  /** 跳过 iTXt 的 languageTag\0translatedKeyword\0，剩下的就是正文。 */
-  private fun intlBody(chunk: ByteArray, from: Int): ByteArray? {
-    val languageEnd = chunk.indexOfFrom(0, from)
-    val translatedEnd = if (languageEnd < 0) -1 else chunk.indexOfFrom(0, languageEnd + 1)
-    return if (translatedEnd < 0) null else chunk.copyOfRange(translatedEnd + 1, chunk.size)
-  }
-
-  private fun inflate(body: ByteArray): String {
-    val inflater = Inflater()
-    inflater.setInput(body)
-    val out = ByteArray(64 * 1024)
-    val size = inflater.inflate(out)
-    inflater.end()
-    return String(out, 0, size, Charsets.UTF_8)
-  }
-
-  /**
-   * 卡有两种写法：`tEXt` 里是 base64，也有工具直接塞明文 JSON。
-   * 先按 base64 解，解出来不像 JSON 就退回原文 —— 猜错一次比报错好。
-   */
-  private fun decodeBase64OrPlain(text: String): String? {
-    if (text.isEmpty()) return null
-    // 用 java.util 的 MIME 解码器：社区卡的 base64 偶尔带换行，严格解码器会直接抛。
-    // （不用 android.util.Base64：它在本地单测里是空实现，会把整条导入链路测不到。）
-    val decoded =
-      runCatching { String(java.util.Base64.getMimeDecoder().decode(text), Charsets.UTF_8) }.getOrNull()
-    return when {
-      decoded != null && decoded.trimStart().startsWith("{") -> decoded
-      text.trimStart().startsWith("{") -> text
-      else -> null
+  private fun compatibility(data: JsonObject, root: JsonObject): List<CardCompatibilityNote> = buildList {
+    add(CardCompatibilityNote("identity", "人设/场景/开场白", CardHandling.ACTIVE, "仅受支持字段进入运行投影。"))
+    listOf("system_prompt", "post_history_instructions", "mes_example").forEach { field ->
+      if (data[field] != null) {
+        add(
+          CardCompatibilityNote(
+            "archived_prompt",
+            field,
+            CardHandling.PRESERVED,
+            "原样保存供主动导出；不发送给模型，不展开宏，不提供执行入口。",
+          ),
+        )
+      }
+    }
+    add(
+      CardCompatibilityNote(
+        "raw_json",
+        "原始 JSON",
+        CardHandling.PRESERVED,
+        "未知字段、作者说明、完整标签和扩展保留；本地简介不覆盖原作者说明。",
+      ),
+    )
+    add(
+      CardCompatibilityNote(
+        "normalize",
+        "V3 导出",
+        CardHandling.CONVERTED,
+        "导出补齐必需字段及类型；损坏字段或非对象条目可能规范化，原值仅在私有原始记录中保留。",
+      ),
+    )
+    if ((root["spec_version"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.let { it > 3.0 } == true) {
+      add(CardCompatibilityNote("newer_version", "spec_version", CardHandling.PRESERVED, "来源版本较新，不保证所有能力可运行。"))
+    }
+    add(
+      CardCompatibilityNote(
+        "unsupported",
+        "高级能力",
+        CardHandling.PRESERVED,
+        "资源引用、昵称、群聊开场白、decorator、脚本和未知扩展不作为已支持运行能力；不下载或执行资源。",
+      ),
+    )
+    if (data["assets"] != null) {
+      add(
+        CardCompatibilityNote(
+          "assets",
+          "assets",
+          CardHandling.UNAVAILABLE,
+          "只保留 JSON 引用；图片、嵌入附件实体未保存，不能视为完整资源备份。",
+        ),
+      )
     }
   }
-
-  private fun ByteArray.indexOfFrom(value: Byte, from: Int): Int {
-    for (index in from until size) if (this[index] == value) return index
-    return -1
-  }
-
-  private fun readInt(bytes: ByteArray, at: Int): Int =
-    ((bytes[at].toInt() and 0xFF) shl 24) or
-      ((bytes[at + 1].toInt() and 0xFF) shl 16) or
-      ((bytes[at + 2].toInt() and 0xFF) shl 8) or
-      (bytes[at + 3].toInt() and 0xFF)
 
   /** 把卡 JSON 映射成我们的模型；`data` 存在时以它为准（v2/v3），否则按 v1 平铺读。 */
   private fun map(root: JsonObject, fallbackName: String): Result {
-    val data = root["data"]?.jsonObject ?: root
-    val notes = mutableListOf<String>()
-
-    if (data["system_prompt"]?.string()?.isNotBlank() == true) {
-      notes += "已忽略卡里的 system_prompt（外部卡常在这里写「忽略一切规则」，不能让它接管手机 agent）"
-    }
-    if (data["post_history_instructions"]?.string()?.isNotBlank() == true) {
-      notes += "已忽略 post_history_instructions（同上：属于行为指令，不属于人设）"
-    }
-    if (data["mes_example"]?.string()?.isNotBlank() == true) {
-      notes += "已丢弃 mes_example（示例对话占 token，且模型会过度模仿其中的口癖）"
-    }
+    val data = (root["data"] as? JsonObject) ?: root
 
     val name = data["name"]?.string()?.trim().orEmpty().ifEmpty { fallbackName }
     val description = data["description"]?.string().orEmpty().trim()
@@ -182,23 +116,21 @@ object CharacterImporter {
         license = "",
         imported = true,
       )
-    if (card.firstMes.isBlank()) notes += "这张卡没有开场白，进去后它会直接接着你说的话开口"
-    if (card.world.isEmpty()) notes += "这张卡没有世界设定，只有人设"
-    return Result(card, notes)
+    val report = compatibility(data, root)
+    val archived = CardRoundTrip.attach(card, root, report)
+    return Result(archived, archived.compatibilityNotes().map { it.summary() })
   }
 
   private fun readWorld(data: JsonObject): List<WorldEntry> {
-    val book = data["character_book"]?.jsonObject ?: data["world"]?.jsonObject ?: return emptyList()
-    val entries = book["entries"]?.jsonArray ?: book["items"]?.jsonArray ?: return emptyList()
-    // 条目字段的兼容（两套拼法、两处位置）在 WorldEntryReader 里，「只导世界书」也走它
-    return WorldEntryReader.entriesOf(entries)
+    val book = CardRoundTrip.findBook(data) ?: return emptyList()
+    return WorldEntryReader.entriesOf(book["entries"] as JsonArray)
   }
 
   /** 备用开场白：v3 里是 `alternate_greetings` 数组，个别卡写成顶层 `alternateGreetings`。 */
   private fun readGreetings(data: JsonObject): List<String> =
     (data["alternate_greetings"] ?: data["alternateGreetings"])
       ?.let { element -> if (element is JsonArray) element else JsonArray(listOf(element)) }
-      ?.mapNotNull { (it as? JsonPrimitive)?.content?.trim() }
+      ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content?.trim() }
       ?.filter { it.isNotEmpty() }
       ?: emptyList()
 
@@ -208,6 +140,4 @@ object CharacterImporter {
   /** 只认字符串原语：社区卡里的 `name` 偶尔会是一个对象或数字，那种情况按「没有」处理。 */
   private fun JsonElement.string(): String? =
     (this as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
-
-  private fun JsonObject.string(key: String): String? = this[key]?.string()
 }

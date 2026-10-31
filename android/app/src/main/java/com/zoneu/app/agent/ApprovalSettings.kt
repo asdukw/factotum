@@ -6,7 +6,7 @@ import android.content.Context
  * 写操作的审批策略：默认「每次询问」，用户可以在 设置 → 执行层 改成「全部允许」。
  *
  * **这不是 dsh 的 `policy`。** dsh 只有 `ask` / `never` 两个值，而 `never` 是确定性拒绝
- * （所有 ask 直接被拒），不是放行 —— 详见 `docs/approvals.md` §1.1。所以「全部允许」是
+ * （所有 ask 直接被拒），不是放行 —— 详见 `docs/approvals.md` §1。所以「全部允许」是
  * answerer 侧的决定：桥收到审批请求后直接回 `allowed-once`，面板不出现。
  *
  * 请求仍然经过 dsh 的审批 seam 与审计，变的只是「谁来回答」。代价是用户看不到那一次

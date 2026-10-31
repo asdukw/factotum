@@ -60,7 +60,7 @@
 | `tap_target` 报 `OUT_OF_SCREENSHOT` | bbox 越出图像范围，**故意不 clamp** → 让模型重给坐标，别改成夹取 |
 | `tap_target` 回「界面似乎没有变化」 | 8×8 指纹的启发式：小面积变化（勾选框、行高亮）它看不出来 → 只能读成「可能没点中」，不是「点击失败」 |
 | 长视觉任务请求报 `IMAGE_OFFLOAD_REQUIRED` | 请求图像预算 20MiB 吃穿 → profile 里 `image-offload` 已启用（丢最老的图重试）；它**永久丢帧**，模型之后拿不到那张图 |
-| 树不可读时 `type_text` 失败 | 控件树不可读，文本注入通道也没拿到连接 → **先看码**：`text_no_channel` = 输入框没聚焦（先 `tap_target` 点它一下），`text_flag_missing` = 升级后没重新启用过无障碍，`text_unsupported_os` = 设备在 Android 13 以下。见 `docs/android-accessibility.md` §10 |
+| 树不可读时 `type_text` 失败 | 控件树不可读，文本注入通道也没拿到连接 → **先看码**：`text_no_channel` = 输入框没聚焦（先 `tap_target` 点它一下），`text_flag_missing` = 升级后没重新启用过无障碍，`text_unsupported_os` = 设备在 Android 13 以下。见 `docs/android-accessibility.md` §4 |
 | 截图报 `Could not load the "sharp" module` | 生效的是 dsh 自带的 `attachment-local`（依赖 sharp，无 Android 产物）→ profile 里禁用它、挂 `dsh-android-attachments` |
 | 模型侧 `tools: []`、只能对着 persona 猜工具名 | 工具 schema 编译失败 → `defineTool` 抛错会**整个插件的工具全丢**；用插件仓库 `npm test` 里的 `real-schema.mjs` 在 PC 侧拦住 |
 | `set_alarm` 报 SecurityException | AOSP / Pixel 的 DeskClock 把 `HandleSetApiCalls` 声明成 `android:permission=com.android.alarm.permission.SET_ALARM`（protectionLevel `normal`）→ 清单里必须声明这条权限；厂商时钟不校验它，所以真机上不声明也「碰巧」能用。`SystemIntentsManifestTest` 钉住 |
@@ -74,7 +74,7 @@
 | 同意页写着「读取、撰写和发送你的邮件」 | 正常：申请的是 `gmail.modify`（一次要齐，避免以后重授权），但工具面目前只有只读三个 |
 | 没开代理时邮件工具报「未授权」 | 已经修了：令牌请求的网络失败现在报 `NETWORK`（连不上 Google 的授权服务），不再被 `.orEmpty()` 吞成空响应、当成授权失效。见 `GmailAuth.postForm` 的注释 |
 | 邮件工具回「还没有连接 Gmail」 | 连接器未授权，或 refresh token 已失效被清 → 设置 → 连接器 → Gmail 里重新连接 |
-| 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §4.2 |
+| 邮件工具回「还没有配置 Gmail」 | 没填客户端 ID → 填 Google Cloud 的 OAuth 客户端 ID（类型必须是**桌面应用**）；步骤见 `docs/email-connector.md` §5 |
 | 授权报 `redirect_uri_mismatch` | OAuth 客户端类型不是「桌面应用」（回环地址只对它开放）→ 重建凭据 |
 | Google 同意后卡在 `127.0.0.1` / `ERR_CONNECTION_TIMED_OUT` | 这是手机本机 OAuth 回调，不等于 Google 网络不通。ColorOS 实测前台服务运行时仍被 HANS 冻结；先尝试允许 zoneu 后台活动，再取消旧连接并重新授权，不反复刷新旧回调、不清数据。后台设置的效果待验证；完整 Q&A 与诊断边界见 [本机回调排查 Q&A](Q&A.md#local-callback-timeout) |
 | 连上后过一阵又变成未连接 | refresh token 失效（改密码 / 用户在 Google 账号页撤销 / 测试模式下超过 7 天）→ 重连；`invalid_grant` 时插件会主动清凭据 |
@@ -86,20 +86,17 @@
 | 搜索回了答案但一个来源都没有 | **真搜门**：模型收下了 `web_search` 但一次都没搜（网关不校验）→ 换实测会搜的模型（zen 上是 claude 系 / gpt-6-luna / grok-4.x） |
 | `web_search` 报 404 且路径里有两个 `/messages` | 搜索基址写成带 `/messages` 的了 —— provider 自己会追加，基址只给到 `/v1` |
 | 模型说「没有 web_search 这个工具」 | profile 里的 `tool-web` 行被 `dsh-web-app` 禁用了 → 必须在**宿主层** `- id: tool-web` + `disabled: false`；放进 preset 的 `plugins:` 里不管用 |
-| 模型调了 `ask_user_question` 之后整轮卡住、会话一直 running | 没有 answerer 接手（或 answerer 排在 `dsh-api-remotes` 后面被它吃掉 —— 它把请求推进没人消费的 remote 队列）。我们的 answerer 用 `{ prepend: true }` 注册；见 `docs/user-questions.md` §2.2 |
+| 模型调了 `ask_user_question` 之后整轮卡住、会话一直 running | 没有 answerer 接手（或 answerer 排在 `dsh-api-remotes` 后面被它吃掉 —— 它把请求推进没人消费的 remote 队列）。我们的 answerer 用 `{ prepend: true }` 注册；见 `docs/user-questions.md` §2 |
 
 ## 语音
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 点「朗读」没反应、提示几秒就消失 | 清单缺 `TTS_SERVICE` 查询意图 → Android 11+ 包可见性把 TTS 引擎判成 BLOCKED（`adb logcat \| grep AppsFilter`）；修法见 `docs/voice.md` §3 |
 | 朗读报「没有可用的文字转语音引擎」 | 设备上真没有可用引擎（或引擎装了但没被选为默认）→ 系统设置 → 无障碍 → 文字转语音里选一个 |
 | 朗读念出「星号星号」「横杠」 | `SpeakableText` 没摊平那种 Markdown 结构 → 在 `SpeakableTextTest` 里补一条再改 |
 | 点「停止」要等好几秒才停 | 切段太长（一段读完才检查取消）→ 调小 `TtsEngine.maxChunk` |
-| 本地引擎一朗读就闪退，堆栈里只有 sherpa 与协程的帧 | 采样回调写成了 lambda 字面量 → JNI 找不到 `invoke([F)Ljava/lang/Integer;`（见 `docs/voice.md` §4.1）→ 改回匿名对象 |
-| 本地引擎读完第一段就停，日志报「朗读中断」 | `destroyIfIdle()` 少了 `if (!released) return` → 每次合成结束都把引擎释放了 |
-| 点麦克风提示「语音识别模型正在下载」 | 识别模型（paraformer + 标点，约 144MB）随安装自动下载；没下完就是这样。识别**没有**系统引擎那一档，理由见 `docs/voice.md` §6 |
-| 识别结果是一整句没有标点的中文 | 正常：paraformer 本身不产标点（`AsrModel.companions` 里跟着装标点模型）；设置页里没有单独入口，`op MODELS` 看标点装没装。见 `docs/voice.md` §8.1 |
+| 点麦克风提示「语音识别模型正在下载」 | 识别模型（paraformer + 标点，约 144MB）随安装自动下载；没下完就是这样。识别**没有**系统引擎那一档，理由见 `docs/voice.md` §3 |
+| 识别结果是一整句没有标点的中文 | 正常：paraformer 本身不产标点（`AsrModel.companions` 里跟着装标点模型）；设置页里没有单独入口，`op MODELS` 看标点装没装。见 `docs/voice.md` §3 |
 | 标点模型装了但输出没变 | `op PUNCT --es text '...'` 单独验引擎；补出来为空时原样返回 —— 标点是改善，不是前置条件 |
 | 点麦克风什么都没说，输入框却多出一句话 | 手写的能量法端点判定把环境噪声送进了模型（静音 5 秒 → 7~11 个字）→ 已换成 silero VAD，噪声根本不成段；**别再回到阈值判定** |
 | 说完立刻按停，话没了 | `Vad.flush()` 漏了：段要等 0.8 秒静音才闭合 → 收尾顺序必须是 `stop()` → `finish()` → `release()` |
@@ -115,5 +112,5 @@
 | 现象 | 原因 / 处理 |
 |---|---|
 | llama.cpp 在骁龙上报 `HTP0 failed to open session ... 0x80000406` | 没设 `ADSP_LIBRARY_PATH=<lib 目录>`。HTP 的 skel URI 是硬编码的 `file:///libggml-htp-v81.so`，由 DSP 侧 fastrpc 按这个变量搜索；官方 README 与 `run.py` 都没写。见 `docs/on-device-inference.md` |
-| `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个坑叠在一起：① `@vscode/ripgrep` **没有 android 产物**（12 个 optional dep 只有 darwin/win32/linux）→ 我们交叉编译一份并用 `ripgrep-stub` 顶掉它（`.github/workflows/rg.yml` + `tools/fetch-rg.ps1`）；② 该插件 inject `subprocess`，而 `dsh-subprocess-local` 被禁了（它的 koffi/node-pty 是懒加载的，Android 上**可以**开）；③ 可执行文件必须进 jniLibs —— AGP 默认把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。**注意「W^X 禁止执行可写目录」这个说法是错的**（2026-10-25 在 PLZ110 / Android 16 / targetSdk 36 实测：内嵌 proot 直接从 `files/proot/rootfs` 执行 `dash`、`dpkg`、`curl` 全部成功，见 `docs/linux-on-phone.md` §2）；要查 rg 那次真正的原因，别拿这句话当结论 |
+| `tool-fs-search`（`glob` / `grep`）报 `ripgrep provider failure` | 三个条件缺一不可：① `@vscode/ripgrep` 没有 android 产物 → 用交叉编译的 rg 加 `ripgrep-stub`（`rg.yml` + `fetch-rg.ps1`）；② 该插件 inject `subprocess`，`dsh-subprocess-local` 必须启用（koffi / node-pty 懒加载，Android 上可以开）；③ rg 必须进 jniLibs 且 `useLegacyPackaging = true`，否则 AGP 把原生库留在 APK 里 mmap，`nativeLibraryDir` 是空的。不要把「W^X 禁止执行可写目录」套到 guest 二进制上：proot 从 `files/proot/rootfs` 执行 `dash` / `dpkg` / `curl` 都正常 |
 | Push 被 `GH013` 拒 | 先分清 PR 分支保护与 push protection；后者说明 GitHub 在提交里看到了密钥 → 按 privacy.md §6 处理，别硬推 |

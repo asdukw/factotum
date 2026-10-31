@@ -23,7 +23,7 @@
 - **端点、调用风格、模型必须成套**：OpenAI 是 `openai-responses`，Anthropic 是
   `anthropic-messages`，DeepSeek / OpenCode Go / OpenRouter / 自定义是 `openai-completions`。
   风格拿错不会在启动时报错，只会在第一次请求时以 404/400 的样子炸出来。
-- **不维护模型清单**（2026-10-17）：`LlmPreset` 只留一个 `defaultModel`，用途是「已验证」
+- **不维护模型清单**：`LlmPreset` 只留一个 `defaultModel`，用途是「已验证」
   组合判定与运行时兜底，**不是界面候选列表**。模型来自端点的 `GET /models`（详情 → 模型 →
   获取；结果落盘 `provider.<id>.remote_models`），拉不到的端点由用户手填 id。
 - **模态由构建期索引决定**：`assets/model-modalities.json` 是 `bundle-dsh.ps1` 从 pi-ai 目录

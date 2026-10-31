@@ -4,10 +4,10 @@ import android.content.Context
 import androidx.core.content.edit
 
 /**
- * 页面记忆的落盘层（roadmap §1.3）。
+ * 页面记忆的落盘层。
  *
  * 只存三样东西：结构指纹、访问次数、**上一次成功动作的类型与坐标**。
- * 页面正文（文字 / 描述 / 截图）一律不进来 —— 这是 §5.3 的隐私边界，
+ * 页面正文（文字 / 描述 / 截图）一律不进来 —— 这是 `docs/android-accessibility.md` §2 的隐私边界，
  * 也是这层敢落盘的原因：即便文件被读走，也还原不出屏幕内容。
  *
  * 跨会话保留是刻意的：页面缓存的价值就在「上次怎么进的这页」，
@@ -62,7 +62,7 @@ class PageMemoryStore(context: Context) {
   }
 
   companion object {
-    /** §6.3 之外的新偏好文件：只影响页面记忆，改名/丢失都不破坏安装身份。 */
+    /** 存储身份之外的新偏好文件：只影响页面记忆，改名/丢失都不破坏安装身份。 */
     const val PREFS_NAME = "zoneu_page_memory"
 
     const val MAX_PAGES = 64

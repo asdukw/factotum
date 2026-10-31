@@ -1,7 +1,7 @@
 # 构建、装配与门禁
 
 AGENTS.md 只留命令；本文是正常路径的完整版。按**现象**排障看 [pitfalls.md](pitfalls.md)，
-发版与签名看 [releasing.md](releasing.md)，运行时产物为什么不入库看 [dsh-android.md](dsh-android.md) §3。
+发版与签名看 [releasing.md](releasing.md)，运行时产物为什么不入库看 [dsh-android.md](dsh-android.md) §5。
 
 ## 0. 仓库结构
 

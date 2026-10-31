@@ -10,7 +10,7 @@
 - 密钥**永不落盘**：`dsh-home/runtime-config.json` 只写非密字段。
 - 密钥不进仓库、日志或构建产物。唯一的例外是 OAuth 客户端密码（`GOCSPX-…`）：
   它是公开客户端标识，必须随包分发，真正的保护是 PKCE——见
-  [email-connector.md](email-connector.md) §4.1b；`check-sensitive.ps1` 有意不拦它。
+  [email-connector.md](email-connector.md) §5；`check-sensitive.ps1` 有意不拦它。
 - 邮箱连接器的 token 存储与生命周期见 [email-connector.md](email-connector.md)。
 
 ## 2. 日志
@@ -37,7 +37,7 @@
 ## 5. 采集边界
 
 不采集别人的数据。任何新的采集能力（新的连接器、通知读取、后台抓取）都要先在 `docs/`
-里写清边界与隐私闸门，再写代码。邮件连接器的边界见 [email-connector.md](email-connector.md) §1–§2。
+里写清边界与隐私闸门，再写代码。邮件连接器的边界见 [email-connector.md](email-connector.md) §1–§3。
 
 ## 6. 提交前扫描
 

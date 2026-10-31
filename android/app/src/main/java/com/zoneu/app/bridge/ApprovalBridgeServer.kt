@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * **这个桥是阻塞的**：`approve` 这个 HTTP 请求会一直挂着，直到用户点允许 / 拒绝、
  * 关掉面板、或插件那边取消（`fetch` 断开）。与提问桥一样，它不是一个快请求。
  *
- * **不记 reason**：它可能带收件人、主题等用户内容（`docs/email-connector.md` §2）。
+ * **不记 reason**：它可能带收件人、主题等用户内容（`docs/email-connector.md` §3）。
  * 日志只记工具名与结果。
  */
 object ApprovalBridgeServer {

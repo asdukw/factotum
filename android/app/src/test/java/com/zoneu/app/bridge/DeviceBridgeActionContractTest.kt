@@ -87,7 +87,7 @@ class DeviceBridgeActionContractTest {
 
   @Test
   fun `model-visible tool names are all known to the bridge`() {
-    // AGENTS.md §7.3 的 10 个工具；插件发的 action 名与工具名一一对应。
+    // 设备工具清单见 docs/tools.md §2；插件发的 action 名与工具名一一对应。
     val tools =
       listOf(
         "read_ui_tree",

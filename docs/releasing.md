@@ -43,7 +43,7 @@
   要求 PR、禁止 force push/删除，required checks 是 `ci.yml` 的四个 job（`changes` + 三个重活 job）。
 - 被拒时先看清是哪一道：**PR 规则**还是 **push protection** —— 两者都报
   “repository rule violations”，很容易看错。后者是 GitHub 认为提交里有密钥，
-  处置见 `docs/email-connector.md` §4.4 与下面的 `GH013` 一行。
+  处置见 `docs/email-connector.md` §5 与下面的 `GH013` 一行。
 
 ## 2. 发版顺序（不能反）
 

@@ -25,7 +25,7 @@ internal data class ConnectorEntry(
  * 连接器列表（设置 → 连接器）。
  *
  * 连接器是**另一类数据源**：不经过无障碍、直接从用户的云端账号读数据，所以它与「执行层」
- * 并列而不是塞进模型那一组（见 `docs/email-connector.md` §0）。
+ * 并列而不是塞进模型那一组（见 `docs/email-connector.md` §1）。
  *
  * 这里只读「有没有授权」，**读不到任何凭据** —— 凭据在 Keystore 封装的 SecretVault 里，
  * 没有出口。这一页会进截图，所以它上面永远不该出现令牌。

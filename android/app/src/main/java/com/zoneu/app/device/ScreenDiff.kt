@@ -3,7 +3,7 @@ package com.zoneu.app.device
 import java.security.MessageDigest
 
 /*
- * 增量读屏（roadmap §1.2）：把当前快照与上一次快照比对，只把变化交给模型。
+ * 增量读屏：把当前快照与上一次快照比对，只把变化交给模型。
  *
  * **编号（ref）跨读保持稳定**：两次读屏之间没变（或只有文字变化）的节点沿用上一次的 ref，
  * 新节点拿 [lastSnapshot] 之后的下一个编号。于是模型的「先读屏再 tap_node」不必因为
@@ -195,7 +195,7 @@ fun renderUnchanged(snapshot: ScreenSnapshot): String =
   "pkg=${snapshot.packageName ?: "?"} nodes=${snapshot.nodes.size} unchanged since last read, refs still valid"
 
 // ---------------------------------------------------------------------------
-// 界面指纹（roadmap §1.3）
+// 界面指纹
 // ---------------------------------------------------------------------------
 
 /**

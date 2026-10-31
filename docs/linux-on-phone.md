@@ -30,7 +30,7 @@ agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs�
 
 - **proot 本体必须在 `nativeLibraryDir`**：jniLibs 由 `useLegacyPackaging` 解出来，
   入口从这里 exec（`app/build.gradle.kts` 的注释）。
-- **guest 二进制从 `filesDir` 执行没有问题**。2026-10-25 在 OnePlus 15T（PLZ110 / Android 16 /
+- **guest 二进制从 `filesDir` 执行没有问题**。在 OnePlus 15T（PLZ110 / Android 16 /
   targetSdk 36）实测：dash / dpkg / curl 都从 rootfs 起得来。旧文档里「Android 10+ 的 W^X
   不许执行可写目录」的说法只对启动器那一层有意义，别套到 guest 上（见 `docs/pitfalls.md`）。
 - **依赖文件名必须精确**：`libtalloc.so.2` / `libandroid-shmem.so` 而 jniLibs 只收 `*.so` →
@@ -69,7 +69,7 @@ adb shell am broadcast -n com.zoneu.app/.node.NodeDebugReceiver `
 # 结果看 logcat：ZoneuProot / ZoneuNode
 ```
 
-2026-10-25 的实测基线：解压 3262 个文件 0.7 s；单条命令 ≈100 ms；`apt-get update` 9.3 MB / 12 s；
+实测基线：解压 3262 个文件 0.7 s；单条命令 ≈100 ms；`apt-get update` 9.3 MB / 12 s；
 `apt-get install curl` 成功；`curl https://deb.debian.org/` → 200；执行后无 proot/guest 孤儿进程。
 
 **ColorOS 会推迟后台广播**：App 不在前台时 `am broadcast` 返回成功但 receiver 不跑 ——

@@ -210,7 +210,7 @@ class ZoneuAccessibilityService : AccessibilityService(), DeviceBridge {
     }
 
   /**
-   * 增量读屏（roadmap §1.2）：默认只回与上一次读屏的差异；[full] 强制全量。
+   * 增量读屏：默认只回与上一次读屏的差异；[full] 强制全量。
    *
    * 三件事必须一起做，缺一个就会让模型点到旧位置：
    * 1. 稳定 ref —— 未变节点沿用上一次编号，新节点往后接；
@@ -485,7 +485,7 @@ class ZoneuAccessibilityService : AccessibilityService(), DeviceBridge {
    * 才有连接。先试能自己搞定焦点的那条，成功率更高；两条都试过才算失败。
    *
    * 树不可读的 App（微信一类）以前到这里就结束了（「没有可见输入框」），
-   * 视觉路径于是**能点不能打字**。现在这条路补上了（AGENTS.md §2.5）。
+   * 视觉路径于是**能点不能打字**。现在这条路补上了（见 `docs/android-accessibility.md` §4）。
    */
   private suspend fun executeTypeText(text: String): DeviceActionResult = withContext(Dispatchers.Default) {
     val target = applicationRoot()?.let { findEditable(it) }

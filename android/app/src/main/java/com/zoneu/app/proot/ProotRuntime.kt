@@ -156,7 +156,7 @@ object ProotRuntime {
    * Android 没有 `/etc/resolv.conf`，guest 的 apt 却只认这个文件。
    *
    * 这一版写**公共 DNS**，不读系统的：读 [android.net.LinkProperties] 要
-   * `ACCESS_NETWORK_STATE`，而 AGENTS.md §6 要求加权限先问。要跟随系统 / 私有 DNS
+   * `ACCESS_NETWORK_STATE`，而 AGENTS.md §2 要求加权限先问。要跟随系统 / 私有 DNS
    * （企业网络、运营商 DNS 才解得开的域名）再加那条权限，换成 LinkProperties。
    */
   private fun writeResolvConf(target: File) {

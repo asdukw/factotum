@@ -46,7 +46,7 @@ These lose data, leak it, or break the only runtime. Full text: [docs/privacy.md
 - Read [docs/dsh-android.md](docs/dsh-android.md) before changing the runtime: `boot()` / the CLI
   loader, `process.exit()` / `shutdown`, and stdout logging each break the in-process Node.
 - Touch exploration stays off during tasks: it swallows injected gestures and cannot rescue a
-  running app ([docs/android-accessibility.md](docs/android-accessibility.md) §9).
+  running app ([docs/android-accessibility.md](docs/android-accessibility.md) §5).
 - A new collection capability gets a documented boundary and privacy gate in `docs/` first.
 
 ## 4. Build, test, gates
@@ -107,7 +107,6 @@ Follow-up steps (bundle, reinstall, device check) live in the doc; the row only 
 | Approvals, confirmation UI, write gates | [docs/approvals.md](docs/approvals.md) |
 | On-device inference | [docs/on-device-inference.md](docs/on-device-inference.md) |
 | Releasing, signing | [docs/releasing.md](docs/releasing.md) |
-| Planning direction (unverified hypotheses) | [docs/roadmap.md](docs/roadmap.md) |
 | Something is broken | [docs/pitfalls.md](docs/pitfalls.md), [docs/Q&A.md](docs/Q&A.md) |
 
 ## 8. Editing this file

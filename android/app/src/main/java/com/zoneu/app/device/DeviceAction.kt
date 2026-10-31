@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonObject
  */
 sealed interface DeviceAction {
   /**
-   * 读当前屏幕。默认**增量**：与上一次读屏相同的部分不再重发（roadmap §1.2）。
+   * 读当前屏幕。默认**增量**：与上一次读屏相同的部分不再重发（见 docs/android-accessibility.md §2）。
    * [full] 强制全量，用于模型已经看不到上一次输出的情况（上下文被截断）。
    */
   data class ReadScreen(val full: Boolean = false) : DeviceAction

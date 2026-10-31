@@ -169,7 +169,7 @@ internal object ConnectorStore {
    * 而且它不是秘密。返回是否全部落盘成功。
    *
    * 这只清本机这一份；微软账号侧的授权仍然有效，撤销步骤写在
-   * `docs/email-connector.md` §1.4。
+   * `docs/email-connector.md` §2。
    */
   fun clearCredentials(context: Context, connectorId: String): Boolean {
     val cleared = vault(connectorId).clear(context)

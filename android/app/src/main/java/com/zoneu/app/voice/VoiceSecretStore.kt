@@ -12,7 +12,7 @@ import com.zoneu.app.data.crypto.SecretVault
  * 所以改 key 不需要重启运行时，只需要让缓存的引擎实例失效 —— 这就是 [revision] 的用途：
  * 引擎缓存的 key 里带上它，保存新 key 之后下次朗读自然重建。
  *
- * 存储身份（AGENTS.md §6.3）：prefs 名与 Keystore 别名定下就别改，改了等于换一把密钥，
+ * 存储身份（`docs/identity.md`）：prefs 名与 Keystore 别名定下就别改，改了等于换一把密钥，
  * 已存的 key 读不回来，表现出来只是「设置页说配过，但朗读说没配」。
  */
 object VoiceSecretStore {

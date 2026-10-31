@@ -64,8 +64,8 @@
 
 | 契约 | 看 |
 |---|---|
-| 坐标只用最近一次 `capture_screenshot` 的**图像像素**；`ScreenFrame.toScreen` 是唯一换算点 | [android-accessibility.md](android-accessibility.md) §9 |
-| 文字输入：控件树优先，失败走文本注入通道（`text_no_channel` / `text_flag_missing`） | [android-accessibility.md](android-accessibility.md) §10 |
-| 增量读屏、ref 稳定、页面记忆只存结构 | [android-accessibility.md](android-accessibility.md) §11 |
+| 坐标只用最近一次 `capture_screenshot` 的**图像像素**；`ScreenFrame.toScreen` 是唯一换算点 | [android-accessibility.md](android-accessibility.md) §3 |
+| 文字输入：控件树优先，失败走文本注入通道（`text_no_channel` / `text_flag_missing`） | [android-accessibility.md](android-accessibility.md) §4 |
+| 增量读屏、ref 稳定、页面记忆只存结构 | [android-accessibility.md](android-accessibility.md) §2 |
 | 定时任务的规则、日期边界与领取语义 | [scheduled-tasks.md](scheduled-tasks.md) |
 | 写操作审批、`reason` / `displayReason` | [approvals.md](approvals.md) |

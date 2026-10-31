@@ -605,7 +605,7 @@ object NodeRuntime : NodeLineListener {
   private fun apkLastUpdate(app: Context): Long =
     runCatching { app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime }.getOrDefault(0L)
 
-  /** Android 上 Node 必需的环境（见 docs/dsh-android.md §1 EMBEDDING 约定）。 */
+  /** Android 上 Node 必需的环境（见 docs/dsh-android.md 的启动约束）。 */
   private fun applyEnvironment(app: Context) {
     val files = app.filesDir.absolutePath
     val cache = app.cacheDir.absolutePath

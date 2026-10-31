@@ -20,7 +20,7 @@ import java.util.Base64
  * Google 的**设备授权**（limited input device）**只支持一小撮 scope**：
  * `email` / `openid` / `profile`、Drive 的 `drive.appdata` / `drive.file`、
  * YouTube 的两个 —— **Gmail 的 scope 一个都不在里面**。所以 Outlook 那套
- * 「显示码 + 轮询」在 Gmail 上直接不可用（见 `docs/email-connector.md` §4）。
+ * 「显示码 + 轮询」在 Gmail 上直接不可用（见 `docs/email-connector.md` §5）。
  *
  * 替代方案是**回环重定向**：`http://127.0.0.1:<随机端口>`，Google 对**桌面应用**类型
  * 的客户端支持这条；桌面客户端是公共客户端，client secret 不能当机密使用。
@@ -38,7 +38,7 @@ internal const val GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 
 /**
  * **申请的是 `gmail.modify`，不是 `gmail.readonly`** —— 而工具面目前仍然只有只读三个。
- * 这个「授权比能力宽」是有意的，理由与代价都写在 `docs/email-connector.md` §1.1：
+ * 这个「授权比能力宽」是有意的，理由与代价都写在 `docs/email-connector.md` §1：
  *
  * - **为什么宽**：Google 对 installed apps **不支持增量授权**，扩权 = 已连接的用户要重走
  *   一遍同意页。而 `gmail.modify` 的描述本身就是「Read, compose, and **send** emails」——

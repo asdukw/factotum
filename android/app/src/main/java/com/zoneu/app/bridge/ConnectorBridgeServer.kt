@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 桥只做两件事：把 Kotlin 侧换好的 access token 交给插件；把插件取到的附件字节写进
  * 公共「下载/zoneu」（分区存储下 Node 进程写不了公共目录，MediaStore 只有宿主侧能用）。
  * **Gmail 的 REST 语义（路径、`q`、分页）全在插件里**，不在这里 ——
- * 否则一处 API 会被劈成「宿主知道路径、插件知道描述」两半（见 `docs/email-connector.md` §5.1）。
+ * 否则一处 API 会被劈成「宿主知道路径、插件知道描述」两半（见 `docs/email-connector.md` §6）。
  */
 object ConnectorBridgeServer {
   private const val TAG = "ZoneuConnector"

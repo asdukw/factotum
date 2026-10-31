@@ -56,7 +56,7 @@ class GoogleOAuthTest {
   fun `the requested scope is gmail modify, not full access`() {
     // **申请的是 gmail.modify，而工具面仍然是只读的** —— 这个「授权比能力宽」是有意的：
     // Google 对 installed apps 不支持增量授权，扩权要所有已连接用户重走同意页，
-    // 所以一次要齐（理由与代价见 docs/email-connector.md §1.1）。
+    // 所以一次要齐（理由与代价见 docs/email-connector.md §1）。
     assertTrue(GMAIL_SCOPE.contains("https://www.googleapis.com/auth/gmail.modify"))
     // gmail.modify 本身已含发送（Google 的描述是「Read, compose, and send emails」），
     // 所以不需要再单独申请 gmail.send。
@@ -134,7 +134,7 @@ class GoogleOAuthTest {
   @Test
   fun `hard errors carry the oauth code and the endpoint description`() {
     // 描述必须带上：真机上第一轮卡在一个没有映射的 invalid_request 上，而当时既没日志
-    // 也没描述，只能靠猜（docs/email-connector.md §6）。
+    // 也没描述，只能靠猜（docs/email-connector.md §7）。
     assertEquals(
       TokenOutcome.Denied("invalid_grant", "Token has been expired or revoked."),
       parseTokenResponse("""{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"""),

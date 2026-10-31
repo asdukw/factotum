@@ -66,8 +66,8 @@ adb shell "am broadcast -n com.zoneu.app/.node.NodeDebugReceiver -a com.zoneu.ap
 参数含空格时把整条 `am broadcast` 包在 `adb shell "..."` 里。
 
 其他入口（`TEXT_CHANNEL`、`IME_TEXT`、`IME_ENTER`、语音 `ASR` / `VAD`）分别见
-[android-accessibility.md](android-accessibility.md) §10、[linux-on-phone.md](linux-on-phone.md)、
-[voice.md](voice.md) §9。
+[android-accessibility.md](android-accessibility.md) §4、[linux-on-phone.md](linux-on-phone.md)、
+[voice.md](voice.md) §4。
 
 ColorOS 在启用/重装后会弹一个 3 秒的「保持运行」对话框，并推迟后台广播——先把 App 拉到前台
 （`monkey`）再广播。`uiautomator dump` 会把无障碍服务顶掉约 1 秒，自动化期间不要用。

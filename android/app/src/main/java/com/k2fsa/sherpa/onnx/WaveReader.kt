@@ -4,7 +4,7 @@
 // （Apache-2.0）。只按本仓库的格式重排了缩进，其余一字未改。
 //
 // 用途只有一个：debug 构建里的 `VoiceDebugReceiver` 要把一段 WAV 喂给识别引擎
-// （见 `docs/voice.md` 的「真机怎么验」）。产品路径上不读 WAV —— 音频直接来自 AudioRecord。
+// （见 `docs/voice.md` 的「验证」）。产品路径上不读 WAV —— 音频直接来自 AudioRecord。
 // 它读的是 **mono** wav，16kHz 的样例音频正好符合。
 //
 // 除上面这段说明外只动了一处：给 `WaveReader` 加了一行 `@Suppress`。

@@ -15,7 +15,7 @@ import com.zoneu.app.BuildConfig
  * ## 为什么客户端 id 可以烧进包里
  *
  * 它是**公开标识**，不是秘密：Google 对桌面应用明说「桌面应用是公共客户端，保不住秘密」，
- * 使用 PKCE 验证授权码归属（见 `docs/email-connector.md` §4.1）。所以预置它**不违反**
+ * 使用 PKCE 验证授权码归属（见 `docs/email-connector.md` §5）。所以预置它**不违反**
  * `AGENTS.md` 那条「密钥永不入库、不进构建产物」的红线 —— 预置的是 id，不是密钥，
  * 配套 client secret 同样是公共客户端标识；邮箱 refresh token 不随包分发。
  *
@@ -38,7 +38,7 @@ internal const val GMAIL_CONNECTOR_ID = "gmail"
 
 /**
  * Google Cloud → Google Auth Platform → Clients → OAuth 客户端 ID，类型**桌面应用**。
- * 见 `docs/email-connector.md` §4.2。
+ * 见 `docs/email-connector.md` §5。
  *
  * **它是公开标识，不是秘密**：桌面应用类型不绑签名指纹，这个 id 会随 APK 分发给每个安装，
  * 谁拿到都能用它发起授权（配额与同意屏幕状态记在这个项目名下）。这正是「一个 id 焊死

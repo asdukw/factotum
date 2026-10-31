@@ -18,7 +18,7 @@
 - 提供商 id（`LlmPreset.id`）：出现在 `provider.<id>.*` 与 `zoneu-agent-llm-key-v1-<id>`。
 - 连接器：`zoneu_connector_settings`、`zoneu_connector_secret-<id>`、`zoneu-connector-<id>-v1`，
   以及 `<id>_client_id` / `<id>_client_secret` / `<id>_account` 三个键
-  （**前导下划线是契约的一部分**）。连接器一侧的细节见 [email-connector.md](email-connector.md) §5.2。
+  （**前导下划线是契约的一部分**）。连接器一侧的细节见 [email-connector.md](email-connector.md) §6。
 - 组件名用 `com.zoneu.app/...`；`OemProfiles.ZONEU_ACCESSIBILITY_COMPONENT` 读
   `BuildConfig.APPLICATION_ID`，不要写死。
 

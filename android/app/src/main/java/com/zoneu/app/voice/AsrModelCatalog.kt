@@ -10,7 +10,7 @@ package com.zoneu.app.voice
  *
  * 「怎么下、怎么解、装到哪」在 [VoiceModel] 那一层（与朗读共用），这里多出的是**怎么用它**：
  * paraformer 是单文件 + 词表。换模型时连同 [companions]、`LocalRecognizer` 的配置与
- * `docs/voice.md` §8 一起改 —— 见那条目录项的注释。
+ * `docs/voice.md` §3 一起改 —— 见那条目录项的注释。
  *
  * 每条都要照着**真实的归档**写（归档里的文件名、顶层目录名）。写错的表现是
  * 「模型下好了但一说话就报错」，而报错来自 native 层，堆栈指不到目录表这里。

@@ -39,7 +39,7 @@ class DshStreamer(private val context: Context) : ChatStreamer {
     AgentProgressCenter.step(sessionId, "启动 dsh 运行时")
     // 保活要在 initialize 之前：ColorOS 会在后台冻结进程，mount 到一半被冻就白等了。
     NodeTaskService.start(app)
-    // 任务期**不**开触摸探索。理由见 docs/android-accessibility.md §9：
+    // 任务期**不**开触摸探索。理由见 docs/android-accessibility.md §5：
     // ① 它一开，dispatchGesture 注入的手势就被系统当探索事件吞掉 —— 树不可读时
     //    没有节点可走 performAction，等于「只能看不能点」，而树不可读正是要走视觉的时候；
     // ② 它也救不了已经在跑的 App：那个状态是目标 App 进程启动时采样一次并缓存的。

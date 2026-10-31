@@ -551,7 +551,9 @@ class ChatViewModel(
       // 否则用户会看着「好感 3」聊了半天却发现一直没涨。
       sessionVars.refresh(sessionId)
       // 每轮结束后看一眼要不要写前情提要：放在 finally 里，失败了也不会伤到这一轮的回复
-      roleplay.recap?.maybeSummarize(sessionId)
+      roleplay.recap?.maybeSummarize(sessionId) { text ->
+        _state.update { it.copy(sessionRecap = text) }
+      }
     }
   }
 

@@ -25,8 +25,12 @@ class SessionRecap(
   private val start: (suspend () -> Unit) -> Unit,
 ) {
   /** 一轮结束后调用；不满足条件就什么都不做（见 [RecapPlan.of]）。 */
-  fun maybeSummarize(sessionId: String) {
-    start { runCatching { run(sessionId) }.onFailure { Log.w(TAG, "recap failed: ${it.javaClass.simpleName}") } }
+  fun maybeSummarize(sessionId: String, onDone: (String) -> Unit = {}) {
+    start {
+      runCatching { run(sessionId) }
+        .onSuccess { text -> if (text != null) onDone(text) }
+        .onFailure { Log.w(TAG, "recap failed: ${it.javaClass.simpleName}") }
+    }
   }
 
   /**

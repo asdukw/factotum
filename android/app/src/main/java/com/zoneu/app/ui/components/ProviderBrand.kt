@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -11,9 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.zoneu.app.R
 import com.zoneu.app.agent.LlmPreset
 
 /**
@@ -30,15 +31,14 @@ internal fun providerBrandColor(preset: LlmPreset): Color =
     LlmPreset.Custom -> Color(0xFF64748B)
   }
 
-internal fun providerMonogram(preset: LlmPreset, name: String): String =
-  when (preset) {
-    LlmPreset.OpenCodeGo -> "OC"
-    LlmPreset.OpenAi -> "O"
-    LlmPreset.Anthropic -> "A"
-    LlmPreset.DeepSeek -> "D"
-    LlmPreset.OpenRouter -> "R"
-    LlmPreset.Custom -> name.trim().take(1).ifBlank { "+" }.uppercase()
-  }
+private fun providerLogo(preset: LlmPreset): Int? = when (preset) {
+  LlmPreset.OpenCodeGo -> R.drawable.provider_opencode
+  LlmPreset.OpenAi -> R.drawable.provider_openai
+  LlmPreset.Anthropic -> R.drawable.provider_anthropic
+  LlmPreset.DeepSeek -> R.drawable.provider_deepseek
+  LlmPreset.OpenRouter -> R.drawable.provider_openrouter
+  LlmPreset.Custom -> null
+}
 
 /** 品牌色底 + 字母。size 是整体边长，字号跟它缩放，24–44dp 都好看。 */
 @Composable
@@ -49,16 +49,20 @@ internal fun ProviderModelIcon(
   size: Int = 40,
   shape: Shape = RoundedCornerShape(12.dp),
 ) {
-  val monogram = providerMonogram(preset, name)
   Box(
     modifier = modifier.size(size.dp).clip(shape).background(providerBrandColor(preset)),
     contentAlignment = Alignment.Center,
   ) {
-    Text(
-      text = monogram,
+    providerLogo(preset)?.let {
+      Icon(
+        painter = painterResource(it),
+        contentDescription = name,
+        tint = Color.Unspecified,
+        modifier = Modifier.size((size * 0.58f).dp),
+      )
+    } ?: Text(
+      text = name.trim().take(1).ifBlank { "+" }.uppercase(),
       color = Color.White,
-      fontSize = (size * if (monogram.length > 1) 0.30f else 0.40f).sp,
-      fontWeight = FontWeight.SemiBold,
     )
   }
 }

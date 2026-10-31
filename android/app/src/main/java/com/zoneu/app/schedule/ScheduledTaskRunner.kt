@@ -3,13 +3,16 @@ package com.zoneu.app.schedule
 import android.content.Context
 import android.util.Log
 import com.zoneu.app.ZoneuApplication
+import com.zoneu.app.data.db.SCHEDULE_RUN_HISTORY_LIMIT
 import com.zoneu.app.data.db.ScheduledTaskEntity
+import com.zoneu.app.data.db.ScheduledTaskRunEntity
 import com.zoneu.app.node.NodeRuntime
 import com.zoneu.app.node.NodeTaskService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 /** alarm 的发生时刻和编辑版本必须同时匹配；领取清除 next_run_at，重复广播不再执行。 */
 internal fun canClaim(task: ScheduledTaskEntity, revision: String, planned: Long, now: Long): Boolean =
@@ -38,6 +41,15 @@ object ScheduledTaskRunner {
       if (dao.claim(id, revision, planned, started) == 1) current else null
     } ?: return
     active.add(id)
+    val runId = UUID.randomUUID().toString()
+    val runDao = app.database.scheduledTaskRuns()
+    // 历史记录是旁路：写失败也不能让任务本身不跑。领取之后才写，失败/取消都会留下这一行。
+    runCatching {
+      runDao.insert(
+        ScheduledTaskRunEntity(id = runId, taskId = id, scheduledAt = planned, startedAt = started),
+      )
+      runDao.prune(id, SCHEDULE_RUN_HISTORY_LIMIT)
+    }
     var foreground = false
     var error: String? = null
     try {
@@ -65,6 +77,7 @@ object ScheduledTaskRunner {
             dao.byId(id)?.takeIf { it.revision == revision }?.let { ScheduledTaskScheduler.schedule(app, it) }
           }
         } finally {
+          runCatching { runDao.finish(runId, System.currentTimeMillis(), error) }
           active.remove(id)
           if (foreground) NodeTaskService.stop(app)
         }

@@ -18,6 +18,9 @@ import kotlinx.serialization.Serializable
 /** 定时任务（设置 → 定时任务）：只读列表，创建与修改仍走对话。 */
 @Serializable data object ScheduledTasks : NavKey
 
+/** 一条任务的执行记录；taskId 来自列表行，不按标题猜。 */
+@Serializable data class ScheduledTaskRuns(val taskId: String) : NavKey
+
 /** 关于（设置 → 关于）：版本与应用内更新。 */
 @Serializable data object About : NavKey
 

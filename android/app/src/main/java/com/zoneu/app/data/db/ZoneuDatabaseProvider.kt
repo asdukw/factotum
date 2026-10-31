@@ -119,6 +119,29 @@ object ZoneuDatabaseProvider {
     }
   }
 
+  /**
+   * v8 → v9：加定时任务执行记录表。
+   *
+   * 只加表与索引；老任务不会凭空多出记录。`ON DELETE CASCADE` 让删任务时一起带走记录 ——
+   * 用户删掉任务后，历史里不该还留着一条只有 id 的孤儿。
+   */
+  internal val MIGRATION_8_9 =
+    object : Migration(8, 9) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          "CREATE TABLE IF NOT EXISTS `scheduled_task_run` (" +
+            "`id` TEXT NOT NULL, `task_id` TEXT NOT NULL, `scheduled_at` INTEGER NOT NULL, " +
+            "`started_at` INTEGER NOT NULL, `finished_at` INTEGER, `result` TEXT, " +
+            "PRIMARY KEY(`id`), FOREIGN KEY(`task_id`) REFERENCES `scheduled_task`(`id`) " +
+            "ON UPDATE NO ACTION ON DELETE CASCADE)",
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_scheduled_task_run_task_id_started_at` " +
+            "ON `scheduled_task_run` (`task_id`, `started_at`)",
+        )
+      }
+    }
+
   internal val migrations = arrayOf(
     MIGRATION_1_2,
     MIGRATION_2_3,
@@ -127,6 +150,7 @@ object ZoneuDatabaseProvider {
     MIGRATION_5_6,
     MIGRATION_6_7,
     WorldBookMigration,
+    MIGRATION_8_9,
   )
 
   fun open(context: Context): ZoneuDatabase {
@@ -135,7 +159,16 @@ object ZoneuDatabaseProvider {
     val passphrase = PassphraseVault.App.passphrase(appContext)
     return Room.databaseBuilder(appContext, ZoneuDatabase::class.java, DATABASE_NAME)
       .openHelperFactory(SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8)))
-      .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, WorldBookMigration)
+      .addMigrations(
+        MIGRATION_1_2,
+        MIGRATION_2_3,
+        MIGRATION_3_4,
+        MIGRATION_4_5,
+        MIGRATION_5_6,
+        MIGRATION_6_7,
+        WorldBookMigration,
+        MIGRATION_8_9,
+      )
       .addCallback(
         object : RoomDatabase.Callback() {
           override fun onOpen(db: SupportSQLiteDatabase) {

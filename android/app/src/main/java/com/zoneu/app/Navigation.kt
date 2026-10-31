@@ -20,6 +20,7 @@ import com.zoneu.app.ui.settings.ModelServicesScreen
 import com.zoneu.app.ui.settings.PersonaScreen
 import com.zoneu.app.ui.settings.ProviderDetailScreen
 import com.zoneu.app.ui.settings.ProvidersScreen
+import com.zoneu.app.ui.settings.ScheduledTaskRunScreen
 import com.zoneu.app.ui.settings.ScheduledTaskScreen
 import com.zoneu.app.ui.settings.SettingsScreen
 import com.zoneu.app.ui.settings.TavernPresetScreen
@@ -70,7 +71,6 @@ fun MainNavigation() {
               onOpenProviders = { backStack.add(Providers) },
             )
           }
-          entry<ScheduledTasks> { ScheduledTaskScreen(onBack = { backStack.removeLastOrNull() }) }
           entry<ExecutionSettings> {
             ExecutionSettingsScreen(onBack = { backStack.removeLastOrNull() })
           }
@@ -103,6 +103,7 @@ fun MainNavigation() {
             VoiceScreen(onBack = { backStack.removeLastOrNull() })
           }
           worldEntries(backStack)
+          scheduleEntries(backStack)
           tavernEntries(backStack)
         },
     )
@@ -135,5 +136,17 @@ private fun EntryProviderScope<NavKey>.worldEntries(backStack: MutableList<NavKe
   }
   entry<WorldBindings> { key ->
     WorldBindingScreen(key.scope, key.targetId, onBack = { backStack.removeLastOrNull() })
+  }
+}
+
+private fun EntryProviderScope<NavKey>.scheduleEntries(backStack: MutableList<NavKey>) {
+  entry<ScheduledTasks> {
+    ScheduledTaskScreen(
+      onBack = { backStack.removeLastOrNull() },
+      onOpenRuns = { id -> backStack.add(ScheduledTaskRuns(id)) },
+    )
+  }
+  entry<ScheduledTaskRuns> { key ->
+    ScheduledTaskRunScreen(taskId = key.taskId, onBack = { backStack.removeLastOrNull() })
   }
 }

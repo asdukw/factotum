@@ -1,5 +1,6 @@
 package com.zoneu.app.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import com.zoneu.app.schedule.ScheduledTaskScheduler
 @Composable
 fun ScheduledTaskScreen(
   onBack: () -> Unit,
+  onOpenRuns: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val appContext = LocalContext.current.applicationContext
@@ -49,13 +51,14 @@ fun ScheduledTaskScreen(
   val viewModel: ScheduledTasksViewModel = viewModel { ScheduledTasksViewModel(appContext) }
   val rows by viewModel.rows.collectAsStateWithLifecycle()
 
-  ScheduledTaskScreen(rows = rows, onBack = onBack, modifier = modifier)
+  ScheduledTaskScreen(rows = rows, onBack = onBack, onOpenRuns = onOpenRuns, modifier = modifier)
 }
 
 @Composable
 internal fun ScheduledTaskScreen(
   rows: List<ScheduledTaskRow>?,
   onBack: () -> Unit,
+  onOpenRuns: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   // null = 还没读到库：首帧不渲染空态，否则有任务时也会闪一下「还没有定时任务」。
@@ -89,7 +92,7 @@ internal fun ScheduledTaskScreen(
             SettingsGroup {
               items.forEachIndexed { index, row ->
                 if (index > 0) SettingsDivider()
-                ScheduledTaskItem(row)
+                ScheduledTaskItem(row, onClick = { onOpenRuns(row.id) })
               }
             }
         }
@@ -125,9 +128,9 @@ private fun EmptyTasks() {
 }
 
 @Composable
-private fun ScheduledTaskItem(row: ScheduledTaskRow) {
+private fun ScheduledTaskItem(row: ScheduledTaskRow, onClick: () -> Unit) {
   Row(
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+    modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 13.dp),
     verticalAlignment = Alignment.Top,
   ) {
     Glyph(
@@ -175,5 +178,7 @@ private fun ScheduledTaskItem(row: ScheduledTaskRow) {
         else -> "已停用" to BadgeTone.Disabled
       }
     StatusBadge(text = badgeText, tone = badgeTone)
+    Spacer(Modifier.width(4.dp))
+    ChevronRight()
   }
 }

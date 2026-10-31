@@ -101,18 +101,18 @@ private fun resultLabel(task: ScheduledTaskEntity, zone: ZoneId, running: Boolea
     error == "RUNNING" -> "上次运行未完成（进程可能被中断）"
 
     // expire() 只写结果码、不动 last_run_at：不能把「已错过」挂在上一次成功的时刻后面。
-    error == "SCHEDULE_MISSED" || error == "SCHEDULE_INVALID_RULE" -> failureLabel(error)
+    error == "SCHEDULE_MISSED" || error == "SCHEDULE_INVALID_RULE" -> scheduledFailureLabel(error)
 
-    at == null -> error?.let(::failureLabel) ?: "还没运行过"
+    at == null -> error?.let(::scheduledFailureLabel) ?: "还没运行过"
 
     error == null -> "上次 ${formatTime(at, zone)} · 成功"
 
-    else -> "上次 ${formatTime(at, zone)} · ${failureLabel(error)}"
+    else -> "上次 ${formatTime(at, zone)} · ${scheduledFailureLabel(error)}"
   }
 }
 
 /** 结果码翻译成给用户看的一句短语；未知码原样显示，避免把新状态悄悄藏掉。 */
-private fun failureLabel(code: String): String = when (code) {
+internal fun scheduledFailureLabel(code: String): String = when (code) {
   "TURN_FAILED" -> "失败：模型调用失败"
   "TASK_FAILED" -> "失败：执行失败"
   "TASK_CANCELLED" -> "失败：已取消"

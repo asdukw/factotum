@@ -1,5 +1,7 @@
 package com.zoneu.app.agent
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,6 +42,38 @@ class WorldPlannedPromptTest {
     assertEquals("assistant", messages[messages.lastIndex - 1].role)
   }
 
+  @Test
+  fun cardPostHistoryAndSystemPromptReachThePlannedPath() {
+    val raw =
+      Json.parseToJsonElement(
+        """{"data":{"system_prompt":"CARD-SYS {{original}}","post_history_instructions":"CARD-POST"}}""",
+      ).jsonObject
+    val messages =
+      TavernPrompt.build(
+        card.copy(useCardPrompt = true, importMetadata = CardImportMetadata(raw = raw)),
+        "",
+        history,
+        state = TavernPrompt.TurnState(injections = emptyList()),
+      )
+    assertTrue(messages.first().content.contains("CARD-SYS"))
+    assertTrue(messages.last().content.contains("CARD-POST"))
+  }
+
+  @Test
+  fun exampleDialogueDoesNotShiftDepthInsertion() {
+    val raw = Json.parseToJsonElement("""{"data":{"mes_example":"<START>\n{{user}}: u1\n{{char}}: a1"}}""").jsonObject
+    val messages =
+      TavernPrompt.build(
+        card.copy(useExampleDialogue = true, importMetadata = CardImportMetadata(raw = raw)),
+        "",
+        history,
+        state = TavernPrompt.TurnState(injections = listOf(injection("end", 0, "user"))),
+      )
+    val lore = messages.indexOfFirst { it.content == "content-end" }
+    val lastTurn = messages.indexOfFirst { it.content == "last" }
+    assertTrue("depth 0 必须落在最后一条历史之后", lore > lastTurn)
+  }
+
   @Test fun frozenPlanSuppressesOldCardWorldAndDoesNotRunWorldMacrosAgain() {
     val messages = TavernPrompt.build(
       card.copy(world = listOf(WorldEntry(content = "old-world", constant = true))),
@@ -57,19 +91,28 @@ class WorldPlannedPromptTest {
     val system = result.first().content
     assertTrue(system.indexOf("content-before") < system.indexOf("role-definition"))
     assertTrue(system.indexOf("content-after") > system.indexOf("role-definition"))
-    listOf("{{description}}", "{{world_before}} {{description}} {{world_before}}").forEach { template ->
-      try {
-        TavernPrompt.build(
-          card,
-          "",
-          history,
-          TavernPreset.DEFAULT.copy(system = template),
-          state = TavernPrompt.TurnState(injections = injections),
-        )
-        error("missing/duplicate exact slot must fail")
-      } catch (error: WorldBookException) {
-        assertEquals("WORLD_CHARACTER_ANCHOR_INCOMPATIBLE", error.code)
-      }
+    // 缺槽位不再中断整轮：内容退化成附在系统提示末尾；重复槽位仍然拒绝（位置有歧义）。
+    val missing =
+      TavernPrompt.build(
+        card,
+        "",
+        history,
+        TavernPreset.DEFAULT.copy(system = "{{description}}"),
+        state = TavernPrompt.TurnState(injections = injections),
+      ).first().content
+    assertTrue(missing.contains("content-before"))
+    assertTrue(missing.contains("content-after"))
+    try {
+      TavernPrompt.build(
+        card,
+        "",
+        history,
+        TavernPreset.DEFAULT.copy(system = "{{world_before}} {{description}} {{world_before}}"),
+        state = TavernPrompt.TurnState(injections = injections),
+      )
+      error("duplicate exact slot must fail")
+    } catch (error: WorldBookException) {
+      assertEquals("WORLD_CHARACTER_ANCHOR_INCOMPATIBLE", error.code)
     }
   }
 }

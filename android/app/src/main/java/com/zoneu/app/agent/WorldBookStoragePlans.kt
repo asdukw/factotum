@@ -52,6 +52,12 @@ internal class WorldBookStoragePlans(private val database: ZoneuDatabase) {
       dao.settlePlan(requestId, saved.status, worldStorageJson.encodeToString(saved), worldHash(evidence)) == 1,
       "WORLD_REQUEST_CONFLICT",
     )
+    dao.prunePlans(current.sessionId, PRUNE_KEEP)
     return saved
+  }
+
+  private companion object {
+    /** 计划里带着整份渲染后的 prompt；只留最近这些轮用于回执与排查。 */
+    const val PRUNE_KEEP = 50
   }
 }

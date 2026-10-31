@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -64,7 +68,7 @@ fun CharacterScreen(
     onStop = viewModel::stop,
     onImport = {
       // 有的网盘/文件管理器把 png 报成 octet-stream，所以给一组，别只写 image/png
-      picker.launch(arrayOf("image/png", "image/*", "application/json", "text/plain", "application/octet-stream"))
+      picker.launch(arrayOf("image/png", "image/*", "application/json", "application/zip", "text/plain", "application/octet-stream"))
     },
     onDelete = viewModel::delete,
     onCreateBlank = { viewModel.createBlank(onOpenDetail) },
@@ -88,6 +92,7 @@ internal fun CharacterScreen(
   modifier: Modifier = Modifier,
 ) {
   val appContext = LocalContext.current.applicationContext
+  var query by remember { mutableStateOf("") }
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
       SettingsHeader(title = "角色", onBack = onBack)
@@ -111,8 +116,10 @@ internal fun CharacterScreen(
           )
         }
         CardSourceRows(importing = state.importing, onImport = onImport, onCreateBlank = onCreateBlank)
+        CardSearchField(query = query, onChange = { query = it })
         CardList(
           cards = state.cards,
+          query = query,
           activeId = state.activeId,
           pins = CharacterPins.pinned(appContext),
           onOpen = onOpenDetail,
@@ -166,6 +173,18 @@ internal fun CharacterScreen(
   }
 }
 
+/** 角色库搜索：匹配名字、一句话介绍与标签。 */
+@Composable
+private fun CardSearchField(query: String, onChange: (String) -> Unit) {
+  OutlinedTextField(
+    value = query,
+    onValueChange = onChange,
+    label = { Text("搜索名字、介绍或标签") },
+    singleLine = true,
+    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+  )
+}
+
 /** 导入结果：成功一行 + 兼容报告摘要（这正是「不信任外部卡」对用户可见的部分）。 */
 @Composable
 private fun ImportMessage(message: String, notes: List<String>, onDismiss: () -> Unit) {
@@ -177,23 +196,6 @@ private fun ImportMessage(message: String, notes: List<String>, onDismiss: () ->
         Spacer(Modifier.height(6.dp))
         TextButton(onClick = onDismiss) { Text("知道了") }
       }
-    }
-  }
-}
-
-/** 空列表就明说空着，别放一张假卡让人以为坏了。 */
-@Composable
-private fun EmptyCards() {
-  SettingsGroup {
-    Column(Modifier.padding(16.dp)) {
-      Text("还没有角色卡", style = MaterialTheme.typography.bodyLarge)
-      Spacer(Modifier.height(6.dp))
-      Text(
-        text = "点上面的「导入角色卡」，选一张 SillyTavern 的 PNG 卡或 .json 文件。" +
-          "运行只用受支持的人设与语气；原始提示字段仅保存供导出，兼容报告可在详情查看。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
     }
   }
 }
@@ -227,35 +229,60 @@ private fun CardSourceRows(importing: Boolean, onImport: () -> Unit, onCreateBla
 @Composable
 private fun CardList(
   cards: List<CharacterCard>,
+  query: String = "",
   activeId: String?,
   pins: List<String>,
   onOpen: (String) -> Unit,
   onDelete: (String) -> Unit,
 ) {
-  if (cards.isEmpty()) {
-    EmptyCards()
+  val needle = query.trim()
+  val matching =
+    cards.filter { card ->
+      needle.isEmpty() ||
+        listOf(card.name, card.tagline).plus(card.tags).any { it.contains(needle, ignoreCase = true) }
+    }
+  // 收藏置顶：标签写的是「置顶」，列表就必须真的把它们排到前面。
+  val ordered = matching.sortedBy { if (it.id in pins) 0 else 1 }
+  if (ordered.isEmpty()) {
+    SettingsGroup {
+      Column(Modifier.padding(16.dp)) {
+        Text(if (cards.isEmpty()) "还没有角色卡" else "没有匹配「$needle」的卡", style = MaterialTheme.typography.bodyLarge)
+      }
+    }
     return
   }
+  // 删除是不可逆的：列表里的按钮离拇指太近，先问一句再交给 ViewModel。
+  var pendingDelete by remember { mutableStateOf<CharacterCard?>(null) }
   SettingsGroup {
-    cards.forEachIndexed { index, card ->
+    ordered.forEachIndexed { index, card ->
       if (index > 0) SettingsDivider()
       SettingsRow(
         glyph = GlyphKind.Person,
         // 收藏的卡在列表里也带个记号，不然点进详情才知道自己收藏过。
         title = if (card.id in pins) "★ ${card.name}" else card.name,
-        subtitle = card.tagline.ifEmpty { card.tags.joinToString(" · ") },
+        subtitle = card.tagline.ifEmpty { card.tags.take(6).joinToString(" · ") },
         onClick = { onOpen(card.id) },
         trailing = {
           if (card.id == activeId) StatusBadge("扮演中", BadgeTone.Enabled)
           // 内置卡在 assets 里删不掉，所以只给导入的卡显示删除
           if (card.imported) {
-            TextButton(onClick = { onDelete(card.id) }) { Text("删除") }
+            TextButton(onClick = { pendingDelete = card }) { Text("删除") }
           } else {
             ChevronRight()
           }
         },
       )
     }
+  }
+  pendingDelete?.let { card ->
+    ConfirmDeleteCardDialog(
+      name = card.name,
+      onDismiss = { pendingDelete = null },
+      onConfirm = {
+        pendingDelete = null
+        onDelete(card.id)
+      },
+    )
   }
 }
 

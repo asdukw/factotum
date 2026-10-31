@@ -14,8 +14,8 @@ import kotlin.random.Random
  *   **默认仍是 1 层**：层数一高就会出现「一条设定牵出半本书」的滚雪球。作者可以用
  *   [WorldEntry.preventRecursion] / [WorldEntry.excludeRecursion] 在条目上各自掐断，
  *   这比靠调总层数更准 —— 想放手的人调到 3，不想被牵的人也牵不出来。
- * - sticky / cooldown / 定时激活 ✘：这两个都需要跨轮记忆（「上一轮激活过就留 N 轮」），
- *   而现在每轮都是纯函数现算，没有会话级状态。要做就得先有一份按会话的激活表。
+ * - sticky / cooldown：这里的实现是遗留选择器；生产请求走 [WorldSelection]，
+ *   由会话级的 `WorldRuntimeState.activated` 记账。新增语义优先改 WorldSelection。
  *
  * 纯函数、不碰 Context：什么条件下带哪几条，是这套东西里最容易被改坏的部分。
  */
@@ -38,6 +38,8 @@ object WorldScan {
   data class Limits(
     val maxEntries: Int = MAX_ENTRIES,
     val maxChars: Int = MAX_CHARS,
+    /** 常驻条目有独立预算，不抢关键词条目的名额。 */
+    val maxConstantChars: Int = MAX_CONSTANT_CHARS,
     /** 递归层数：0 = 不追，1 = 追一层（默认，与历史行为一致）。 */
     val depth: Int = 1,
   )

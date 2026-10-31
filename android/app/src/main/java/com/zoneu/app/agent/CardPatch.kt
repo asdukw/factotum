@@ -21,6 +21,7 @@ internal data class CardPatchResult(
 internal object CardPatch {
   private val cardFields = listOf(
     "name",
+    "nickname",
     "tagline",
     "tags",
     "description",
@@ -28,6 +29,9 @@ internal object CardPatch {
     "scenario",
     "first_mes",
     "alternate_greetings",
+    "group_only_greetings",
+    "use_card_prompt",
+    "use_example_dialogue",
   )
   private val worldFields = setOf(
     "keys",
@@ -48,6 +52,21 @@ internal object CardPatch {
     "case_sensitive",
     "prevent_recursion",
     "exclude_recursion",
+    "selective",
+    "group",
+    "group_override",
+    "group_weight",
+    "use_group_scoring",
+    "delay",
+    "delay_until_recursion",
+    "ignore_budget",
+    "triggers",
+    "character_filter_names",
+    "character_filter_tags",
+    "character_filter_exclude",
+    "scan_depth",
+    "enabled",
+    "vectorized",
   )
 
   fun apply(card: CharacterCard, revision: String, fields: JsonObject?, worldOps: JsonArray?): CardPatchResult {
@@ -106,6 +125,7 @@ internal object CardPatch {
     if ("name" in fields) patchCheck(name.isNotBlank())
     return card.copy(
       name = name,
+      nickname = edit.text("nickname", card.nickname, 200),
       tagline = edit.text("tagline", card.tagline),
       tags = edit.strings("tags", card.tags, 100),
       description = edit.text("description", card.description),
@@ -113,17 +133,24 @@ internal object CardPatch {
       scenario = edit.text("scenario", card.scenario),
       firstMes = edit.text("first_mes", card.firstMes),
       alternateGreetings = edit.strings("alternate_greetings", card.alternateGreetings, 100),
+      groupOnlyGreetings = edit.strings("group_only_greetings", card.groupOnlyGreetings, 100),
+      useCardPrompt = edit.boolean("use_card_prompt", card.useCardPrompt),
+      useExampleDialogue = edit.boolean("use_example_dialogue", card.useExampleDialogue),
     )
   }
 
   private fun fieldValue(card: CharacterCard, field: String): Any = when (field) {
     "name" -> card.name
+    "nickname" -> card.nickname
     "tagline" -> card.tagline
     "tags" -> card.tags
     "description" -> card.description
     "personality" -> card.personality
     "scenario" -> card.scenario
     "first_mes" -> card.firstMes
+    "group_only_greetings" -> card.groupOnlyGreetings
+    "use_card_prompt" -> card.useCardPrompt
+    "use_example_dialogue" -> card.useExampleDialogue
     else -> card.alternateGreetings
   }
 
@@ -188,6 +215,21 @@ internal object CardPatch {
       caseSensitive = edit.boolean("case_sensitive", entry.caseSensitive),
       preventRecursion = edit.boolean("prevent_recursion", entry.preventRecursion),
       excludeRecursion = edit.boolean("exclude_recursion", entry.excludeRecursion),
+      selective = edit.optionalBoolean("selective", entry.selective),
+      group = edit.text("group", entry.group, 512),
+      groupOverride = edit.boolean("group_override", entry.groupOverride),
+      groupWeight = edit.integer("group_weight", entry.groupWeight, 0..10_000),
+      useGroupScoring = edit.boolean("use_group_scoring", entry.useGroupScoring),
+      delay = edit.integer("delay", entry.delay, 0..1_000),
+      delayUntilRecursion = edit.integer("delay_until_recursion", entry.delayUntilRecursion, 0..TavernPrompt.MAX_DEPTH),
+      ignoreBudget = edit.boolean("ignore_budget", entry.ignoreBudget),
+      triggers = edit.strings("triggers", entry.triggers, WorldEntryDraft.MAX_KEYS),
+      characterFilterNames = edit.strings("character_filter_names", entry.characterFilterNames, WorldEntryDraft.MAX_KEYS),
+      characterFilterTags = edit.strings("character_filter_tags", entry.characterFilterTags, WorldEntryDraft.MAX_KEYS),
+      characterFilterExclude = edit.boolean("character_filter_exclude", entry.characterFilterExclude),
+      scanDepth = edit.optionalInt("scan_depth", entry.scanDepth, 0..100),
+      enabled = edit.boolean("enabled", entry.enabled),
+      vectorized = edit.boolean("vectorized", entry.vectorized),
     )
   }
 }
@@ -221,6 +263,21 @@ private class PatchFields(private val fields: JsonObject, private val location: 
   fun boolean(key: String, before: Boolean): Boolean {
     val value = fields[key] ?: return before
     return (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: patchInvalid()
+  }
+
+  /** 三态布尔：字段显式给 null 时清回「来源没写」。 */
+  fun optionalBoolean(key: String, before: Boolean?): Boolean? {
+    val value = fields[key] ?: return before
+    if (value is kotlinx.serialization.json.JsonNull) return null
+    return (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: patchInvalid()
+  }
+
+  fun optionalInt(key: String, before: Int?, range: IntRange): Int? {
+    val value = fields[key] ?: return before
+    if (value is kotlinx.serialization.json.JsonNull) return null
+    val number = (value as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull ?: patchInvalid()
+    patchCheck(number in range)
+    return number
   }
 
   fun logic(before: SecondaryLogic): SecondaryLogic {

@@ -52,7 +52,9 @@ class CharacterImporterTest {
     assertTrue(card.imported)
     assertTrue(card.description.contains("{{char}}"))
     assertEquals(listOf("日常", "治愈"), card.tags)
-    assertEquals(2, card.world.size)
+    // 禁用条目也保留（带 enabled=false），才能在编辑页重新打开而不是导入即丢失。
+    assertEquals(3, card.world.size)
+    assertFalse(card.world.last().enabled)
     assertTrue("constant 条目必须保留为常驻", card.world.first().constant)
     assertEquals(10, card.world.first().order)
     assertEquals("站台是木头的。", card.world.first().content)
@@ -73,6 +75,55 @@ class CharacterImporterTest {
     val card = CharacterImporter.fromBytes(v1.toByteArray(), "x").card
     assertEquals("老版卡", card.name)
     assertEquals("你好。", card.firstMes)
+  }
+
+  @Test
+  fun nicknameAndGroupGreetingsAreImported() {
+    val json =
+      """
+      {"spec":"chara_card_v3","data":{"name":"真名","nickname":"小名","description":"设定",
+        "group_only_greetings":["群开场一","群开场二"]}}
+      """.trimIndent()
+    val card = CharacterImporter.fromBytes(json.toByteArray(), "x").card
+    assertEquals("小名", card.nickname)
+    assertEquals("小名", card.displayName)
+    assertEquals(listOf("群开场一", "群开场二"), card.groupOnlyGreetings)
+  }
+
+  @Test
+  fun charxCardJsonIsReadAndAssetsAreReportedAsUnpacked() {
+    val out = ByteArrayOutputStream()
+    java.util.zip.ZipOutputStream(out).use { zip ->
+      zip.putNextEntry(java.util.zip.ZipEntry("card.json"))
+      zip.write(v2Card.toByteArray())
+      zip.closeEntry()
+    }
+    val result = CharacterImporter.fromBytes(out.toByteArray(), "x")
+    assertEquals("测试角色", result.card.name)
+    assertTrue(result.notes.any { it.contains("CHARX") })
+    assertFalse("CHARX 导入不应再报 PNG 来源", result.notes.any { it.contains("PNG") })
+  }
+
+  @Test
+  fun allTagsArePreservedSoExportCannotSilentlyDropThem() {
+    val tags = (1..10).map { "t$it" }
+    val json =
+      """
+      {"spec":"chara_card_v2","data":{"name":"多标签","description":"设定","tags":["${tags.joinToString("\",\"")}"]}}
+      """.trimIndent()
+    assertEquals(tags, CharacterImporter.fromBytes(json.toByteArray(), "x").card.tags)
+  }
+
+  @Test
+  fun scenarioOnlyCardIsAccepted() {
+    // 旁白/设定/CYOA 卡可以没有人设字段；只要还有扮演内容就不该拒绝导入。
+    val json =
+      """
+      {"spec":"chara_card_v2","data":{"name":"旁白","description":"","personality":"","scenario":"雨夜的车站。","first_mes":"车来了。"}}
+      """.trimIndent()
+    val card = CharacterImporter.fromBytes(json.toByteArray(), "x").card
+    assertEquals("雨夜的车站。", card.scenario)
+    assertEquals("车来了。", card.firstMes)
   }
 
   @Test
@@ -99,8 +150,10 @@ class CharacterImporterTest {
   }
 
   @Test
-  fun `card without description or personality is rejected`() {
-    val thin = """{"name":"空卡","first_mes":"在。"}"""
+  fun `card without any roleplay content is rejected`() {
+    // 只有名字、没有任何可扮演内容才是空卡；description/personality 为空但写了
+    // scenario 或 first_mes 的旁白卡仍然有效。
+    val thin = """{"name":"空卡"}"""
     assertThrows(CharacterImporter.ImportException::class.java) {
       CharacterImporter.fromBytes(thin.toByteArray(), "x")
     }

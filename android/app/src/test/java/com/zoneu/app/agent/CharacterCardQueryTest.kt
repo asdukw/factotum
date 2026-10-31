@@ -28,6 +28,7 @@ class CharacterCardQueryTest {
     CharacterCard(
       id = id,
       name = name,
+      nickname = "小名",
       tagline = "城南车站的午夜守站员",
       tags = listOf("中文", "RAIN"),
       description = "原本是普通的铁路员工。",
@@ -183,6 +184,7 @@ class CharacterCardQueryTest {
     val source = item()
     val expected = mapOf(
       "name" to source.card.name,
+      "nickname" to source.card.nickname,
       "tagline" to source.card.tagline,
       "description" to source.card.description,
       "personality" to source.card.personality,
@@ -198,8 +200,9 @@ class CharacterCardQueryTest {
       assertFalse(result.keys.any { it in setOf("description", "world", "personality", "tags") })
     }
     val basic = read(source, "basic")["content"]!!.jsonObject
-    assertEquals(setOf("name", "tagline"), basic.keys)
+    assertEquals(setOf("name", "nickname", "tagline"), basic.keys)
     assertEquals(JsonPrimitive(source.card.name), basic["name"])
+    assertEquals(JsonPrimitive(source.card.nickname), basic["nickname"])
     assertEquals(JsonPrimitive(source.card.tagline), basic["tagline"])
   }
 
@@ -263,7 +266,7 @@ class CharacterCardQueryTest {
     assertEquals(source.card, unchanged.card)
     assertEquals(0, unchanged.updated)
     assertFalse(projected.toString().contains("PRIVATE_SOURCE"))
-    assertEquals(19, projected.size)
+    assertEquals(34, projected.size)
     failure("CARD_ENTRY_NOT_FOUND") { read(source, "world", args("""{"entry_id":"forged"}""")) }
     failure {
       read(

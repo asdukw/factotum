@@ -31,6 +31,16 @@ class WorldResolverTest {
     assertEquals(3, resolved.map { it.key }.distinct().size)
   }
 
+  @Test
+  fun bookLevelRuntimeSettingsShapeResolvedEntries() {
+    val configured = book.copy(scanDepth = 7, tokenBudget = 120, recursiveScanning = false)
+    val manifest = WorldManifest("session", "manifest", listOf(WorldBookBinding("book", "rev", epoch = "same")))
+    val resolved = WorldResolver.resolve("session", emptyList(), manifest, listOf(configured)).single()
+    assertEquals(7, resolved.rule.scanDepth)
+    assertTrue(resolved.rule.preventRecursion)
+    assertEquals(120, resolved.bookBudget)
+  }
+
   @Test fun explicitDisableAndBookDisableBeatAllRoleSources() {
     val manifest = WorldManifest(
       "session",

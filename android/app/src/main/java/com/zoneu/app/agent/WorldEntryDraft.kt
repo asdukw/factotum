@@ -20,7 +20,8 @@ object WorldEntryDraft {
   /** 粘住 / 冷却的轮数上限：超过 20 轮基本等于「永远在」或「永远不再」，不如直接改常驻。 */
   const val MAX_STICKY = 20
 
-  const val MIN_DEPTH = 1
+  /** 0 = 插在历史末尾（ST 的 depth 0），运行时按同一约定处理。 */
+  const val MIN_DEPTH = 0
   const val MAX_DEPTH = 12
 
   /** 正文上限：单条超过这个长度基本等于把整本书塞进聊天。 */
@@ -63,6 +64,15 @@ object WorldEntryDraft {
     val useProbability: Boolean = true,
     val matchWholeWords: Boolean = false,
     val caseSensitive: Boolean = false,
+    // null = 调用方没提供，沿用 original；避免把导入卡里的值重置成默认。
+    val order: Int? = null,
+    val enabled: Boolean? = null,
+    val preventRecursion: Boolean? = null,
+    val excludeRecursion: Boolean? = null,
+    val group: String? = null,
+    val delay: Int? = null,
+    val delayUntilRecursion: Int? = null,
+    val ignoreBudget: Boolean? = null,
   )
 
   /**
@@ -90,8 +100,23 @@ object WorldEntryDraft {
       useProbability = draft.useProbability,
       matchWholeWords = draft.matchWholeWords,
       caseSensitive = draft.caseSensitive,
-    )
+    ).withTiming(draft, old).withRuntime(draft, old)
   }
+
+  /** 三态旋钮：调用方没给就沿用原条目，避免把导入值重置成默认。 */
+  private fun WorldEntry.withTiming(draft: Draft, old: WorldEntry?): WorldEntry = copy(
+    order = draft.order ?: old?.order ?: 0,
+    enabled = draft.enabled ?: old?.enabled ?: true,
+    preventRecursion = draft.preventRecursion ?: old?.preventRecursion ?: false,
+    excludeRecursion = draft.excludeRecursion ?: old?.excludeRecursion ?: false,
+  )
+
+  private fun WorldEntry.withRuntime(draft: Draft, old: WorldEntry?): WorldEntry = copy(
+    group = draft.group ?: old?.group.orEmpty(),
+    delay = draft.delay ?: old?.delay ?: 0,
+    delayUntilRecursion = draft.delayUntilRecursion ?: old?.delayUntilRecursion ?: 0,
+    ignoreBudget = draft.ignoreBudget ?: old?.ignoreBudget ?: false,
+  )
 
   /** 只认三种落点；卡里写别的数字（老版本 ST 有 2/3）一律回到「按深度」。 */
   fun clampPosition(position: Int): Int =

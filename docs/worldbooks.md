@@ -1,6 +1,6 @@
 # 独立世界书：实现合同与验收状态
 
-> 当前为已批准的实施合同，不代表书库、UI、迁移或真机验收已经完成。入口接入前必须通过最终请求投影测试，不能以 hook 注册代替验证。
+> 书库、编辑器、绑定与请求投影已实现；真机验收仍按本文末尾的完成标准逐项记录。世界书条目支持 ST 的 `selective`、互斥组（`group` / `group_override` / `group_weight` / `use_group_scoring`）、`delay`、`delay_until_recursion`、`ignoreBudget`、`triggers`、角色过滤、条目级 `scanDepth`，以及书级 `scan_depth` / `token_budget` / `recursive_scanning`。正则匹配与向量化仍未执行：字段保留并报告，不静默降级为普通关键词。
 
 ## 数据与隐私
 
@@ -32,7 +32,7 @@
 |---|---|
 | OpenAI Chat Completions | 支持 wire 层 system／user／assistant 深度插入；保留工具配对 |
 | OpenAI Responses | 支持 input message 角色与深度；保留 reasoning／function_call／function_call_output |
-| Anthropic Messages | 角色前后可合入唯一系统角色块；中间 system 必须报不兼容，不静默变 user |
+| Anthropic Messages | 角色前后可合入唯一系统角色块；深度 system 条目合入开头系统块（位置变平，不静默改写成 user） |
 | 其他协议 | 有激活项时未验证即拒绝，不能宣称兼容全部模型 |
 
 这些是投影合同，不是任意网关／模型均接受的承诺。具体不兼容应显示调整条目角色／位置或切换通道的入口，不应把所有 dsh 一概降为关键词前缀。提供商结束、首 token、UI 停止收集均不代表回答已经持久化；计时结算必须使用回答落盘证据及宿主幂等回执。

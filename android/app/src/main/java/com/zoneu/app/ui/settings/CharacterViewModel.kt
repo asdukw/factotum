@@ -119,20 +119,31 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
     if (_state.value.importing) return
     _state.update { it.copy(importing = true, notes = emptyList()) }
     viewModelScope.launch {
+      var existing: CharacterCard? = null
       val outcome =
         runCatching {
           val bytes =
             appContext.contentResolver.openInputStream(uri)?.use { CardInput.read(it) }
               ?: throw CharacterImporter.ImportException("读不到这个文件")
           val parsed = CharacterImporter.fromBytes(bytes, displayName(uri))
-          CharacterStore.createImported(appContext, parsed.card)
+          // 与 URL 导入共用内容指纹：同一份卡再选一次不应该变成两张，之后的编辑才不会分裂。
+          existing =
+            parsed.card.importMetadata?.contentHash?.let { hash ->
+              CharacterStore.cards(appContext).firstOrNull { it.importMetadata?.contentHash == hash }
+            }
+          if (existing == null) CharacterStore.createImported(appContext, parsed.card)
           parsed
         }
       outcome
         .onSuccess { result ->
           refresh()
           _state.update {
-            it.copy(importing = false, message = "已导入「${result.card.name}」", notes = result.notes)
+            val duplicate = existing
+            it.copy(
+              importing = false,
+              message = if (duplicate != null) "库里已有「${duplicate.name}」，未重复导入" else "已导入「${result.card.name}」",
+              notes = result.notes,
+            )
           }
         }
         .onFailure { error ->
@@ -183,12 +194,17 @@ class CharacterViewModel(private val appContext: Context) : ViewModel() {
       CharacterStore.updateImported(appContext, card.id, card.storageRevision.orEmpty()) { current ->
         current.copy(
           name = card.name,
+          nickname = card.nickname,
           tagline = card.tagline,
           tags = card.tags,
           description = card.description,
           personality = card.personality,
           scenario = card.scenario,
           firstMes = card.firstMes,
+          alternateGreetings = card.alternateGreetings,
+          groupOnlyGreetings = card.groupOnlyGreetings,
+          useCardPrompt = card.useCardPrompt,
+          useExampleDialogue = card.useExampleDialogue,
           world = card.world,
         )
       }

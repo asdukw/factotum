@@ -15,7 +15,6 @@ calls. The only runtime is the Android app (Kotlin).
 | Agent runtime | Embedded Node 24 (nodejs-mobile fork) + dsh phone profile |
 | Device execution | `AccessibilityService` (UI tree first, screenshots fallback) + `DeviceBridgeServer` (127.0.0.1 + token) |
 | Tools | dsh plugin `dsh-plugin-android-tools` (10 primitives + `run_command`), separate public repo, HTTP bridge → `DeviceAction`; plus a mail connector (read tools + approval-gated writes) |
-.\tools\fetch-proot.ps1                   # 内嵌 proot + Debian rootfs（见 docs/linux-on-phone.md）
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
 ## 2. Setup and assembly
@@ -28,7 +27,7 @@ git submodule update --init --recursive   # device-tools plugin lives in its own
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so from the NDK
 .\tools\fetch-sherpa.ps1                  # sherpa native lib + silero VAD model (ASR only)
 .\tools\bundle-dsh.ps1                    # vendored dsh → assets/dsh-runtime.zip
-.	oolsetch-proot.ps1                   # 内嵌 proot + Debian rootfs（见 docs/linux-on-phone.md）
+.\tools\fetch-proot.ps1                   # 内嵌 proot + Debian rootfs（见 docs/linux-on-phone.md）
 ```
 
 - Run `.ps1` scripts with **`pwsh` 7**, not `powershell` 5.1: 5.1 writes backslashed zip entries,
@@ -49,7 +48,8 @@ $env:GRADLE_OPTS = '-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 .\gradlew.bat :app:testDebugUnitTest --tests "com.zoneu.app.device.ScreenSnapshotRenderTest"
 ```
 
-- Proxy flags must go in `GRADLE_OPTS`; inline `-D` is split by `gradlew.bat`.
+- Proxy flags: PowerShell splits an unquoted `-Dhttps.proxyHost=...` into `-Dhttps` and
+  `.proxyHost=...`. Quote the flag or put it in `GRADLE_OPTS`.
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk` (~160 MB).
 - Emulator: `fetch-libnode.ps1 -Abi x86_64` + `assembleDebug "-Pzoneu.abis=x86_64"` (quote the
   flag). **Switch jniLibs back to arm64 afterwards**, or the next device APK lacks
@@ -253,6 +253,17 @@ nine mail tools (five read-only: `mail_list`, `mail_search`, `mail_read`, `mail_
   switch falls back to full. `read_ui_tree(full=true)` forces full when the model can no longer
   see the previous output. Page memory (`PageMemoryStore`) stores structure and last-action
   coordinates only — **never text**.
+- **Card runtime switches:** `nickname` drives `{{char}}`; `group_only_greetings` applies only in
+  multi-character sessions. Card `system_prompt` / `post_history_instructions` / `mes_example`
+  stay archived until the user turns on `useCardPrompt` / `useExampleDialogue` in the card editor.
+  CHARX import/export reads and writes root `card.json` only; image/asset entities are not stored.
+- **World Info advanced semantics:** `selective` (false disables secondary keys), inclusion groups
+  (`group` / `group_override` / `group_weight` / `use_group_scoring`), `delay`,
+  `delay_until_recursion`, `ignoreBudget`, `triggers`, character filters, per-entry `scanDepth`,
+  and book-level `scan_depth` / `token_budget` / `recursive_scanning` execute in
+  `WorldSelection`; constants have their own budget and the `{{world}}` slot. Keyword scan covers
+  the last `scanDepth` user+assistant messages. Regenerate/continue never advance the sticky /
+  cooldown clock. Regex and vectorized activation remain unexecuted and reported.
 
 Details: `docs/android-accessibility.md` §9–§11.
 

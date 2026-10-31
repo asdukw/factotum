@@ -79,18 +79,45 @@ class CardRoundTripTest {
   @Test
   fun deletionReorderAndDuplicateIdsNeverAttachTheWrongRaw() {
     val card = persisted(imported())
-    assertEquals(2, card.world.size)
-    assertEquals(2, card.world.map { it.sourceToken }.distinct().size)
+    // 禁用的条目也进运行模型（enabled=false），不再导入即丢。
+    assertEquals(3, card.world.size)
+    assertEquals(3, card.world.map { it.sourceToken }.distinct().size)
     val reversed = card.copy(world = card.world.reversed())
     val active = entries(reversed).filter { it.jsonObject["enabled"]?.jsonPrimitive?.content != "false" }
     assertEquals("B", active[0].jsonObject["extensions"]!!.jsonObject["unknown"]!!.jsonPrimitive.content)
     assertEquals("A", active[1].jsonObject["extensions"]!!.jsonObject["unknown"]!!.jsonPrimitive.content)
-    val deleted = card.copy(world = listOf(card.world[1].copy(content = "编辑乙")))
+    val deleted = card.copy(world = listOf(card.world.first { it.content == "乙正文" }.copy(content = "编辑乙")))
     val out = entries(deleted)
     assertFalse(out.any { it.jsonObject["content"]!!.jsonPrimitive.content.trim() == "甲正文" })
     assertTrue(out.any { it.jsonObject["content"]!!.jsonPrimitive.content == "编辑乙" })
-    assertTrue(out.any { it.jsonObject["content"]!!.jsonPrimitive.content == "禁用正文" })
-    assertEquals(3, entries(card.copy(world = emptyList())).size)
+    // 禁用条目现在是可编辑的一等条目：不删会带 enabled=false 导出，删了就真的不导出。
+    assertFalse(out.any { it.jsonObject["content"]!!.jsonPrimitive.content == "禁用正文" })
+    assertTrue(
+      entries(card).any {
+        it.jsonObject["content"]!!.jsonPrimitive.content == "禁用正文" &&
+          it.jsonObject["enabled"]!!.jsonPrimitive.content == "false"
+      },
+    )
+    // 全删后只剩正则与空正文这两条无法投影的原始槽位。
+    assertEquals(2, entries(card.copy(world = emptyList())).size)
+  }
+
+  @Test
+  fun legacyBaselineWithoutNicknamePreservesRawAuthorValue() {
+    val raw = Json.parseToJsonElement("""{"data":{"name":"原名","description":"经历","nickname":"小名"}}""").jsonObject
+    val card =
+      CharacterCard(
+        id = "legacy",
+        name = "原名",
+        description = "经历",
+        importMetadata =
+          CardImportMetadata(
+            raw = raw,
+            baseline = JsonObject(mapOf("name" to JsonPrimitive("原名"))),
+          ),
+      )
+    val out = Json.parseToJsonElement(CardExporter.toV3(card)).jsonObject["data"]!!.jsonObject
+    assertEquals("小名", out["nickname"]!!.jsonPrimitive.content)
   }
 
   @Test
@@ -128,7 +155,7 @@ class CardRoundTripTest {
       {"keys":["乙"],"content":"乙正文","extensions":{"foreign":"different"}},
       {"keys":["新"],"content":"新正文"}]}"""
     val appended = persisted(WorldBookIo.appendText(card, second))
-    assertEquals(3, appended.world.size)
+    assertEquals(4, appended.world.size)
     val out = data(appended)["character_book"]!!.jsonObject
     assertEquals("8", out["scan_depth"]!!.jsonPrimitive.content)
     assertTrue(out["extensions"].toString().contains("different"))

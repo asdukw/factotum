@@ -33,27 +33,21 @@ class WorldPreparedPromptTest {
     assertFalse(result.any { "legacy-" in it.content })
   }
 
-  @Test fun characterRelativePlacementRequiresExactTemplateSlot() {
+  @Test fun characterRelativePlacementFallsBackWhenTheTemplateLacksTheSlot() {
     val bad = TavernPreset.DEFAULT.copy(system = "unanchored role")
-    try {
+    val result =
       TavernPrompt.build(
         card,
         "",
         history,
         bad,
         state = TavernPrompt.TurnState(
-          injections = listOf(
-            injection(
-              "before",
-              position = "before",
-            ),
-          ),
+          injections = listOf(injection("before", position = "before")),
         ),
       )
-      error("expected incompatible placement")
-    } catch (error: WorldBookException) {
-      assertEquals("WORLD_CHARACTER_ANCHOR_INCOMPATIBLE", error.code)
-    }
+    val system = result.first().content
+    assertTrue(system.startsWith("unanchored role"))
+    assertTrue(system.contains("lore-before"))
   }
 
   @Test fun beforeAfterOccupyTheirExplicitRoleSlotsAndDoNotChangeInput() {

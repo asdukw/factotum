@@ -2,6 +2,7 @@ package com.zoneu.app.agent
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -12,7 +13,16 @@ import java.util.UUID
 
 /** Pure sparse management edits. Revisions, approvals and persistence belong to the repository. */
 object WorldBookEdits {
-  private val headerFields = setOf("name", "description", "tags", "category", "enabled")
+  private val headerFields = setOf(
+    "name",
+    "description",
+    "tags",
+    "category",
+    "enabled",
+    "scan_depth",
+    "token_budget",
+    "recursive_scanning",
+  )
 
   fun apply(
     book: WorldBook,
@@ -94,7 +104,21 @@ object WorldBookEdits {
     put("depth", rule.depth)
     put("secondary", JsonArray(rule.secondary.map(::JsonPrimitive)))
     put("secondary_logic", rule.secondaryLogic.name)
+    put("selective", rule.selective?.let(::JsonPrimitive) ?: JsonNull)
     put("exclude", JsonArray(rule.exclude.map(::JsonPrimitive)))
+    put("group", rule.group)
+    put("group_override", rule.groupOverride)
+    put("group_weight", rule.groupWeight)
+    put("use_group_scoring", rule.useGroupScoring)
+    put("delay", rule.delay)
+    put("delay_until_recursion", rule.delayUntilRecursion)
+    put("ignore_budget", rule.ignoreBudget)
+    put("triggers", JsonArray(rule.triggers.map(::JsonPrimitive)))
+    put("character_filter_names", JsonArray(rule.characterFilterNames.map(::JsonPrimitive)))
+    put("character_filter_tags", JsonArray(rule.characterFilterTags.map(::JsonPrimitive)))
+    put("character_filter_exclude", rule.characterFilterExclude)
+    put("scan_depth", rule.scanDepth?.let(::JsonPrimitive) ?: JsonNull)
+    put("vectorized", rule.vectorized)
     put("probability", rule.probability)
     put("sticky", rule.sticky)
     put("cooldown", rule.cooldown)
@@ -120,6 +144,9 @@ object WorldBookEdits {
     put("tags", JsonArray(book.tags.map(::JsonPrimitive)))
     put("category", book.category)
     put("enabled", book.enabled)
+    book.scanDepth?.let { put("scan_depth", it) }
+    book.tokenBudget?.let { put("token_budget", it) }
+    book.recursiveScanning?.let { put("recursive_scanning", it) }
   }
 
   private fun editHeader(book: WorldBook, fields: JsonObject): WorldBook {
@@ -137,6 +164,10 @@ object WorldBookEdits {
       tags = tags,
       category = fields["category"]?.let(::string) ?: book.category,
       enabled = fields["enabled"]?.let(::boolean) ?: book.enabled,
+      scanDepth = if ("scan_depth" in fields) nullableInt(fields.getValue("scan_depth")) else book.scanDepth,
+      tokenBudget = if ("token_budget" in fields) nullableInt(fields.getValue("token_budget")) else book.tokenBudget,
+      recursiveScanning =
+        if ("recursive_scanning" in fields) nullableBoolean(fields.getValue("recursive_scanning")) else book.recursiveScanning,
     )
   }
 
@@ -190,6 +221,13 @@ object WorldBookEdits {
 
   private fun boolean(value: JsonElement): Boolean =
     (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: invalid()
+
+  /** JSON null 表示「清除来源值」，与「没提供这个字段」不同。 */
+  private fun nullableInt(value: JsonElement): Int? =
+    if (value is JsonNull) null else (value as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull ?: invalid()
+
+  private fun nullableBoolean(value: JsonElement): Boolean? =
+    if (value is JsonNull) null else (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: invalid()
 
   private fun invalid(): Nothing = throw WorldBookException("WORLD_INVALID_FIELDS")
 }

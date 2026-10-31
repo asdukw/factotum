@@ -233,6 +233,7 @@ private fun counts(changes: CardChangeCounts): JsonObject = buildJsonObject {
 
 private fun fieldLength(card: CharacterCard, field: String): Int = when (field) {
   "name" -> card.name.length
+  "nickname" -> card.nickname.length
   "tagline" -> card.tagline.length
   "description" -> card.description.length
   "personality" -> card.personality.length
@@ -240,5 +241,6 @@ private fun fieldLength(card: CharacterCard, field: String): Int = when (field) 
   "first_mes" -> card.firstMes.length
   "tags" -> card.tags.size
   "alternate_greetings" -> card.alternateGreetings.size
+  "group_only_greetings" -> card.groupOnlyGreetings.size
   else -> error("not a card field")
 }

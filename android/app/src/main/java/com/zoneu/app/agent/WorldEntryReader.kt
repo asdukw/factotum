@@ -23,18 +23,20 @@ object WorldEntryReader {
   private fun toEntry(entry: JsonObject): WorldEntry? {
     val content = entry["content"]?.string()?.trim().orEmpty()
     if (content.isEmpty()) return null
-    if ((entry["enabled"] as? JsonPrimitive)?.booleanOrNull == false) return null
     if ((entry["use_regex"] as? JsonPrimitive)?.booleanOrNull == true) return null
     val extensions = entry["extensions"] as? JsonObject
+    val filter = characterFilter(extensions, entry)
     return WorldEntry(
       keys = readKeys(entry, "keys", "key"),
       content = content,
-      order = (entry["insertion_order"] as? JsonPrimitive)?.intOrNull ?: 0,
+      order = extInt(extensions, entry, 0, "insertion_order", "order"),
       // `constant` 在 v2 规范里是「每轮都注入」
       constant = (entry["constant"] as? JsonPrimitive)?.booleanOrNull == true,
       // 编排参数在 v3 卡里放在 extensions，v2 卡偶尔放顶层 —— 两处都认
       depth = extInt(extensions, entry, 4, "depth"),
       secondary = readKeys(entry, "secondary_keys", "secondaryKeys", "keysecondary"),
+      // selective 缺失时保持旧行为（有 secondary 就启用）；显式 false 才关掉整组副词。
+      selective = extBoolOrNull(extensions, entry, "selective"),
       // 副词与排除词也是两处都认：ST 写顶层，我们自己导出的写在 extensions
       secondaryLogic = SecondaryLogic.fromRaw(extInt(extensions, entry, 0, "selectiveLogic", "selective_logic")),
       // ST 把这两个开关写在条目顶层，但也有导出工具塞进 extensions —— 两处都读，
@@ -49,13 +51,66 @@ object WorldEntryReader {
       probability = extInt(extensions, entry, 100, "probability"),
       sticky = extInt(extensions, entry, 0, "sticky"),
       cooldown = extInt(extensions, entry, 0, "cooldown"),
-      position = extInt(extensions, entry, standardPosition(entry), "position"),
+      position = position(extensions, entry),
       role = extInt(extensions, entry, WorldEntry.ROLE_SYSTEM, "role"),
       useProbability = extBool(extensions, entry, true, "useProbability", "use_probability"),
       matchWholeWords = extBool(extensions, entry, false, "matchWholeWords", "match_whole_words"),
       caseSensitive = extBool(extensions, entry, false, "caseSensitive", "case_sensitive"),
+      group = extString(extensions, entry, "group", "group_name").orEmpty(),
+      groupOverride = extBool(extensions, entry, false, "groupOverride", "group_override"),
+      groupWeight = extInt(extensions, entry, 100, "groupWeight", "group_weight"),
+      useGroupScoring = extBool(extensions, entry, false, "useGroupScoring", "use_group_scoring"),
+      delay = extInt(extensions, entry, 0, "delay"),
+      delayUntilRecursion = extInt(extensions, entry, 0, "delayUntilRecursion", "delay_until_recursion"),
+      ignoreBudget = extBool(extensions, entry, false, "ignoreBudget", "ignore_budget"),
+      triggers = readStrings(extensions, entry, "triggers"),
+      characterFilterNames = readStrings(filter, "names"),
+      characterFilterTags = readStrings(filter, "tags"),
+      characterFilterExclude = (filter?.get("isExclude") as? JsonPrimitive)?.booleanOrNull == true,
+      scanDepth = extIntOrNull(extensions, entry, "scanDepth", "scan_depth"),
+      // 禁用条目仍然读进来：卡内条目也要能单独开关，而不是导入时就被丢掉。
+      enabled = enabled(extensions, entry),
+      vectorized = extBool(extensions, entry, false, "vectorized"),
     )
   }
+
+  /** ST 顶层 `enabled` 与 `disable` 互为反义；extensions 里也有导出工具写一份。 */
+  private fun enabled(extensions: JsonObject?, entry: JsonObject): Boolean {
+    val scopes = listOfNotNull(extensions, entry)
+    val enabled = scopes.firstNotNullOfOrNull { (it["enabled"] as? JsonPrimitive)?.booleanOrNull }
+    val disabled = scopes.firstNotNullOfOrNull { (it["disable"] as? JsonPrimitive)?.booleanOrNull }
+    return enabled ?: disabled?.not() ?: true
+  }
+
+  /** 位置：先认数值（含 extensions），再认 ST 的字符串；缺失时按 ST 的 after_char。 */
+  private fun position(extensions: JsonObject?, entry: JsonObject): Int {
+    extIntOrNull(extensions, entry, "position")?.let { return it }
+    return when (extString(extensions, entry, "position")) {
+      "before_char" -> WorldEntry.POSITION_BEFORE
+      else -> WorldEntry.POSITION_AFTER
+    }
+  }
+
+  private fun characterFilter(extensions: JsonObject?, entry: JsonObject): JsonObject? =
+    (extensions?.get("characterFilter") as? JsonObject)
+      ?: (extensions?.get("character_filter") as? JsonObject)
+      ?: (entry["characterFilter"] as? JsonObject)
+      ?: (entry["character_filter"] as? JsonObject)
+
+  private fun readStrings(source: JsonObject?, vararg names: String): List<String> {
+    if (source == null) return emptyList()
+    return names.firstNotNullOfOrNull { name ->
+      when (val value = source[name]) {
+        is JsonArray -> value.mapNotNull { it.string() }
+        null -> null
+        else -> listOfNotNull(value.string())
+      }
+    }.orEmpty().filter { it.isNotBlank() }
+  }
+
+  /** 同一字段两处都认：ST 写顶层，导出工具也可能塞进 extensions。 */
+  private fun readStrings(extensions: JsonObject?, entry: JsonObject, vararg names: String): List<String> =
+    (readStrings(extensions, *names) + readStrings(entry, *names)).distinct()
 
   /**
    * 读一个布尔编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。
@@ -70,15 +125,23 @@ object WorldEntryReader {
 
   /** 读一个整型编排参数：先看 extensions，再看条目顶层，都没有就用 [fallback]。 */
   private fun extInt(extensions: JsonObject?, entry: JsonObject, fallback: Int, vararg names: String): Int =
+    extIntOrNull(extensions, entry, *names) ?: fallback
+
+  private fun extIntOrNull(extensions: JsonObject?, entry: JsonObject, vararg names: String): Int? =
     names.firstNotNullOfOrNull { name ->
       (extensions?.get(name) as? JsonPrimitive)?.intOrNull ?: (entry[name] as? JsonPrimitive)?.intOrNull
-    } ?: fallback
+    }
 
-  private fun standardPosition(entry: JsonObject): Int =
-    when ((entry["position"] as? JsonPrimitive)?.content) {
-      "before_char" -> WorldEntry.POSITION_BEFORE
-      "after_char" -> WorldEntry.POSITION_AFTER
-      else -> WorldEntry.POSITION_DEPTH
+  /** 显式三态布尔：null 表示来源根本没写这个字段。 */
+  private fun extBoolOrNull(extensions: JsonObject?, entry: JsonObject, vararg names: String): Boolean? =
+    names.firstNotNullOfOrNull { name ->
+      (extensions?.get(name) as? JsonPrimitive)?.booleanOrNull ?: (entry[name] as? JsonPrimitive)?.booleanOrNull
+    }
+
+  private fun extString(extensions: JsonObject?, entry: JsonObject, vararg names: String): String? =
+    names.firstNotNullOfOrNull { name ->
+      (extensions?.get(name) as? JsonPrimitive)?.takeIf { it.isString }?.content
+        ?: (entry[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
     }
 
   /** 读一组关键词：数组取每项，单字符串当一条；空串丢掉（真卡里偶有空元素）。 */

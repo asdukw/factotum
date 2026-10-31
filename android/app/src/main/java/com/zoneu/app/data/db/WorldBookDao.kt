@@ -109,4 +109,11 @@ interface WorldPlanDao {
       "WHERE requestId = :id AND status = 'prepared'",
   )
   suspend fun settlePlan(id: String, status: String, payload: String, evidence: String): Int
+
+  /** 已结算的计划只用于回执与诊断；保留最近 [keep] 条，避免长会话把整份 prompt 越堆越多。 */
+  @Query(
+    "DELETE FROM world_request_plan WHERE sessionId = :sessionId AND requestId NOT IN " +
+      "(SELECT requestId FROM world_request_plan WHERE sessionId = :sessionId ORDER BY rowid DESC LIMIT :keep)",
+  )
+  suspend fun prunePlans(sessionId: String, keep: Int)
 }

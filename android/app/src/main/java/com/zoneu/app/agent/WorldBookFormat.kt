@@ -5,6 +5,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 
 /** JSON-value archive plus an independent management model; importing never deduplicates. */
 object WorldBookFormat {
@@ -27,6 +29,9 @@ object WorldBookFormat {
       tags = (header["tags"] as? JsonArray)?.mapNotNull(::readText).orEmpty(),
       category = readText(header["category"]).orEmpty(),
       enabled = WorldBookFormatFields.enabled(header, notes, "book"),
+      scanDepth = readInt(header["scan_depth"]),
+      tokenBudget = readInt(header["token_budget"]),
+      recursiveScanning = readBool(header["recursive_scanning"]),
       entries = when (val entries = location.entries) {
         is JsonArray -> entries.mapIndexed { index, value -> WorldBookFormatFields.read(value, null, index, notes) }
 
@@ -83,6 +88,8 @@ object WorldBookFormat {
         if (key == "enabled") WorldBookFormatFields.syncEnabled(result, book.enabled)
       }
     }
+    // 用户清空的已知书级字段要从导出里真正删掉，不能一边显示「清除」一边保留旧键。
+    (before.keys - now.keys).forEach { result.remove(it) }
     val key = archive.entriesKey.ifEmpty { "entries" }
     result[key] = entries
     val alias = if (key == "entries") "items" else "entries"
@@ -141,4 +148,9 @@ object WorldBookFormat {
   }
 
   private fun readText(value: JsonElement?): String? = (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+  private fun readInt(value: JsonElement?): Int? = (value as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
+
+  private fun readBool(value: JsonElement?): Boolean? =
+    (value as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
 }

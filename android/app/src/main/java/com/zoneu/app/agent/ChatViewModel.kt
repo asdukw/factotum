@@ -494,6 +494,7 @@ class ChatViewModel(
     tavern: Boolean = false,
     base: String = "",
     tail: String? = null,
+    generation: String = WorldSelection.GENERATION_NORMAL,
   ) {
     val requestId = Uuids.v7()
     val turn = StreamTurn(sessionId, draftId, base, turnHost)
@@ -508,6 +509,7 @@ class ChatViewModel(
           _state.value.characterIds,
           recap = _state.value.sessionRecap,
           requestId = requestId,
+          generation = generation,
         )
       } else {
         null
@@ -626,6 +628,7 @@ class ChatViewModel(
           draftId = draft.id,
           wire = withLore(snapshot, REGENERATE_PROMPT),
           tavern = roleplay.tavern?.enabled == true && snapshot.activeCharacterId != null,
+          generation = WorldSelection.GENERATION_REGENERATE,
         )
       }
   }

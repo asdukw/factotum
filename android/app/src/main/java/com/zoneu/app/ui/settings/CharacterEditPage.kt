@@ -60,6 +60,14 @@ private data class WorldDraft(
   val useProbability: Boolean = true,
   val matchWholeWords: Boolean = false,
   val caseSensitive: Boolean = false,
+  val enabled: Boolean = true,
+  val order: Int = 0,
+  val preventRecursion: Boolean = false,
+  val excludeRecursion: Boolean = false,
+  val group: String = "",
+  val delay: Int = 0,
+  val delayUntilRecursion: Int = 0,
+  val ignoreBudget: Boolean = false,
 )
 
 /**
@@ -69,8 +77,13 @@ private data class WorldDraft(
  * 「改文案去源文件改、重导一次」在 PC 上还行，在手机上等于做不到。所以这里给一张表单，
  * 让导入的卡能就地改；也给「新建空白卡」用同一条路，从零写一张。
  *
- * 只改**人设与语气这几层**（与导入时的白名单一致）：卡里的 `system_prompt` / 示例对话只存归档、不参与运行，这里也没有对应的输入框 —— 编辑页不该成为绕过那道闸门的后门。
+ * 卡内 `system_prompt` / 示例对话默认只归档；用户可以在「卡内提示」里显式打开，
+ * 而不是由导入内容自行决定是否运行 —— 编辑页不应该成为绕过那道闸门的后门。
+ *
+ * 表单同时持有十几个字段的草稿状态；字段控件已拆成子 composable，剩余的状态提升
+ * 再拆只会把同一个 state 在父子之间来回搬，因此这一处放宽 LongMethod。
  */
+@Suppress("LongMethod")
 @Composable
 internal fun CharacterEditPage(
   card: CharacterCard,
@@ -87,6 +100,11 @@ internal fun CharacterEditPage(
   var personality by remember(card.id) { mutableStateOf(card.personality) }
   var scenario by remember(card.id) { mutableStateOf(card.scenario) }
   var firstMes by remember(card.id) { mutableStateOf(card.firstMes) }
+  var nickname by remember(card.id) { mutableStateOf(card.nickname) }
+  var greetingsText by remember(card.id) { mutableStateOf(card.alternateGreetings.joinToString("\n\n---\n\n")) }
+  var groupGreetingsText by remember(card.id) { mutableStateOf(card.groupOnlyGreetings.joinToString("\n\n---\n\n")) }
+  var useCardPrompt by remember(card.id) { mutableStateOf(card.useCardPrompt) }
+  var useExampleDialogue by remember(card.id) { mutableStateOf(card.useExampleDialogue) }
   var tags by remember(card.id) { mutableStateOf(card.tags.joinToString("、")) }
   var memoryText by remember(card.id) { mutableStateOf(memory) }
   val world = remember(card.id) { worldDrafts(CardStorageIdentity.draft(card)) }
@@ -102,18 +120,27 @@ internal fun CharacterEditPage(
             .padding(bottom = 28.dp),
       ) {
         Field("名字", name, singleLine = true) { name = it }
+        Field("昵称（可选，{{char}} 会用它）", nickname, singleLine = true) { nickname = it }
         if (conflict) ConflictReload(onReload)
         Field("一句话介绍", tagline, singleLine = true) { tagline = it }
         Field("标签", tags, singleLine = true, hint = "用、或逗号分隔") { tags = it }
         Field("人设（身份与外貌）", description, minLines = 4) { description = it }
         Field("性格与说话方式", personality, minLines = 3) { personality = it }
         Field("开场场景", scenario, minLines = 2) { scenario = it }
-        Field("开场白（第一句话由它开始）", firstMes, minLines = 4) { firstMes = it }
-        Text(
-          text = "「{{char}}」会被换成角色名，「{{user}}」换成「你」—— 与 SillyTavern 的写法一致。",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+        GreetingFields(
+          firstMes = firstMes,
+          alternate = greetingsText,
+          group = groupGreetingsText,
+          onFirst = { firstMes = it },
+          onAlternate = { greetingsText = it },
+          onGroup = { groupGreetingsText = it },
+        )
+
+        CardPromptSection(
+          useCardPrompt = useCardPrompt,
+          useExampleDialogue = useExampleDialogue,
+          onPrompt = { useCardPrompt = it },
+          onExamples = { useExampleDialogue = it },
         )
 
         WorldEditSection(world)
@@ -134,11 +161,16 @@ internal fun CharacterEditPage(
             val result = onSave(
               baseline.copy(
                 name = name.trim().ifBlank { "未命名角色" },
+                nickname = nickname.trim(),
                 tagline = tagline.trim(),
                 description = description.trim(),
                 personality = personality.trim(),
                 scenario = scenario.trim(),
                 firstMes = firstMes.trim(),
+                alternateGreetings = splitGreetings(greetingsText),
+                groupOnlyGreetings = splitGreetings(groupGreetingsText),
+                useCardPrompt = useCardPrompt,
+                useExampleDialogue = useExampleDialogue,
                 tags = if (tags == baseline.tags.joinToString("、")) baseline.tags else splitTokens(tags),
                 world = toWorldEntries(world),
                 imported = true,
@@ -211,6 +243,8 @@ private fun WorldEditSection(world: MutableList<WorldDraft>) {
         entry = entry,
         onUpdate = { next -> world[index] = next },
         onDelete = { world.removeAt(index) },
+        onMoveUp = { if (index > 0) world.add(index - 1, world.removeAt(index)) },
+        onMoveDown = { if (index < world.lastIndex) world.add(index + 1, world.removeAt(index)) },
       )
     }
   }
@@ -226,12 +260,17 @@ private fun WorldEntryCard(
   entry: WorldDraft,
   onUpdate: (WorldDraft) -> Unit,
   onDelete: () -> Unit,
+  onMoveUp: () -> Unit = {},
+  onMoveDown: () -> Unit = {},
 ) {
   Column(Modifier.fillMaxWidth().padding(14.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       Text("第 ${index + 1} 条", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+      TextButton(onClick = onMoveUp) { Text("上移") }
+      TextButton(onClick = onMoveDown) { Text("下移") }
       TextButton(onClick = onDelete) { Text("删除", color = MaterialTheme.colorScheme.error) }
     }
+    SwitchRow("启用这条", entry.enabled) { onUpdate(entry.copy(enabled = it)) }
     Field(
       label = "关键词",
       value = entry.keys,
@@ -303,6 +342,33 @@ private fun AdvancedFields(entry: WorldDraft, onUpdate: (WorldDraft) -> Unit) {
   SwitchRow(label = "按概率抽签", checked = entry.useProbability) { onUpdate(entry.copy(useProbability = it)) }
   SwitchRow(label = "关键词整词匹配（只对英文生效）", checked = entry.matchWholeWords) { onUpdate(entry.copy(matchWholeWords = it)) }
   SwitchRow(label = "关键词区分大小写", checked = entry.caseSensitive) { onUpdate(entry.copy(caseSensitive = it)) }
+  RecursionFields(entry, onUpdate)
+}
+
+/** 互斥组、顺序、延迟与递归护栏：ST 卡作者最常用的几个旋钮。 */
+@Composable
+private fun RecursionFields(entry: WorldDraft, onUpdate: (WorldDraft) -> Unit) {
+  Field(
+    label = "互斥组（逗号分隔）",
+    value = entry.group,
+    singleLine = true,
+    hint = "同组条目一轮只激活一个；留空表示不分组",
+  ) { value -> onUpdate(entry.copy(group = value)) }
+  Field(
+    label = "插入顺序",
+    value = entry.order.toString(),
+    singleLine = true,
+    hint = "同一插入位置内，数字越小越靠前",
+  ) { value -> value.toIntOrNull()?.let { onUpdate(entry.copy(order = it)) } }
+  StepperRow(label = "开场后延迟", value = entry.delay, range = 0..20, suffix = " 轮") { next ->
+    onUpdate(entry.copy(delay = next))
+  }
+  StepperRow(label = "递归门控层", value = entry.delayUntilRecursion, range = 0..3, suffix = " 层") { next ->
+    onUpdate(entry.copy(delayUntilRecursion = next))
+  }
+  SwitchRow(label = "正文不触发递归", checked = entry.preventRecursion) { onUpdate(entry.copy(preventRecursion = it)) }
+  SwitchRow(label = "不被递归触发", checked = entry.excludeRecursion) { onUpdate(entry.copy(excludeRecursion = it)) }
+  SwitchRow(label = "超出预算也插入", checked = entry.ignoreBudget) { onUpdate(entry.copy(ignoreBudget = it)) }
 }
 
 /** 三选一：位置 / 角色这种选项少又必须看得见的，用一排按钮而不是下拉菜单。 */
@@ -324,6 +390,67 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
   Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
     Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
     Switch(checked = checked, onCheckedChange = onChange)
+  }
+}
+
+/** 开场白三件套：首句、备用、群聊专用。多条之间用单独一行 `---` 分隔。 */
+@Composable
+private fun GreetingFields(
+  firstMes: String,
+  alternate: String,
+  group: String,
+  onFirst: (String) -> Unit,
+  onAlternate: (String) -> Unit,
+  onGroup: (String) -> Unit,
+) {
+  Field("开场白（第一句话由它开始）", firstMes, minLines = 4, onChange = onFirst)
+  Field(
+    "备用开场白",
+    alternate,
+    minLines = 2,
+    hint = "多条之间用单独一行 --- 分隔；新会话里可以换一条开场。",
+    onChange = onAlternate,
+  )
+  Field(
+    "群聊专用开场白",
+    group,
+    minLines = 2,
+    hint = "只在多人会话里使用；同样用 --- 分隔。",
+    onChange = onGroup,
+  )
+  Text(
+    text = "「{{char}}」会被换成角色名，「{{user}}」换成「你」—— 与 SillyTavern 的写法一致。",
+    style = MaterialTheme.typography.bodySmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+  )
+}
+
+/** 卡内提示开关：默认关闭，打开是用户对这张外部卡的信任决定。 */
+@Composable
+private fun CardPromptSection(
+  useCardPrompt: Boolean,
+  useExampleDialogue: Boolean,
+  onPrompt: (Boolean) -> Unit,
+  onExamples: (Boolean) -> Unit,
+) {
+  SectionLabel("卡内提示（默认关闭）")
+  SettingsGroup {
+    Column(Modifier.padding(16.dp)) {
+      SwitchRow("使用卡内 system_prompt / 后置指令", useCardPrompt, onPrompt)
+      Text(
+        text = "打开后会用卡作者写的系统提示替换应用模板；卡里的 {{original}} 代表应用原来的模板。" +
+          "外部卡是不可信内容，只在你信任这张卡时打开。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      SwitchRow("使用卡内示例对话 mes_example", useExampleDialogue, onExamples)
+      Text(
+        text = "示例对话能稳定角色口癖和回合格式，但会占上下文，也可能让模型过度模仿。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
   }
 }
 
@@ -367,6 +494,14 @@ private fun worldDrafts(card: CharacterCard): SnapshotStateList<WorldDraft> =
           useProbability = entry.useProbability,
           matchWholeWords = entry.matchWholeWords,
           caseSensitive = entry.caseSensitive,
+          enabled = entry.enabled,
+          order = entry.order,
+          preventRecursion = entry.preventRecursion,
+          excludeRecursion = entry.excludeRecursion,
+          group = entry.group,
+          delay = entry.delay,
+          delayUntilRecursion = entry.delayUntilRecursion,
+          ignoreBudget = entry.ignoreBudget,
         ),
       )
     }
@@ -385,6 +520,10 @@ private fun EditorFooter(enabled: Boolean, onCancel: () -> Unit, onSave: () -> U
 /** 「a、b, c, d」→ [a, b, c, d]：标签这类自由文本用，世界书关键词走 [WorldEntryDraft.parseKeys]。 */
 private fun splitTokens(raw: String): List<String> =
   raw.split('、', ',', '，', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+/** 多条开场白用单独一行 `---` 分隔；正文里的破折号不受影响。 */
+private fun splitGreetings(raw: String): List<String> =
+  raw.split(Regex("\\n\\s*-{3,}\\s*\\n")).map { it.trim() }.filter { it.isNotEmpty() }
 
 /** 草稿 → 世界条目：正文空白的直接丢掉（填了关键词没写内容，注入了也只是噪声）。 */
 private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
@@ -408,6 +547,14 @@ private fun toWorldEntries(world: List<WorldDraft>): List<WorldEntry> =
           useProbability = draft.useProbability,
           matchWholeWords = draft.matchWholeWords,
           caseSensitive = draft.caseSensitive,
+          enabled = draft.enabled,
+          order = draft.order,
+          preventRecursion = draft.preventRecursion,
+          excludeRecursion = draft.excludeRecursion,
+          group = draft.group,
+          delay = draft.delay,
+          delayUntilRecursion = draft.delayUntilRecursion,
+          ignoreBudget = draft.ignoreBudget,
         ),
       )
     entry.takeIf { draft.original != null || WorldEntryDraft.isSavable(it) }

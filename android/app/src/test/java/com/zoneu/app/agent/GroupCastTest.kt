@@ -36,6 +36,15 @@ class GroupCastTest {
   }
 
   @Test
+  fun `merge uses group only greetings when the cards define them`() {
+    val first = aki.copy(groupOnlyGreetings = listOf("两人在雨棚下对视。", "另一条群开场。"))
+    val second = sei.copy(groupOnlyGreetings = listOf("第三个人推门进来。"))
+    val merged = GroupCast.merge(listOf(first, second))
+    assertEquals("两人在雨棚下对视。", merged.firstMes)
+    assertEquals(listOf("另一条群开场。", "第三个人推门进来。"), merged.alternateGreetings)
+  }
+
+  @Test
   fun `merge puts both world books together`() {
     val merged = GroupCast.merge(listOf(aki, sei))
     assertEquals(2, merged.world.size)

@@ -41,7 +41,8 @@ class WorldEntryDraftTest {
 
   @Test
   fun depthAndProbabilityAreClamped() {
-    assertEquals(1, WorldEntryDraft.clampDepth(0))
+    // 0 是 ST 的「插在历史末尾」，编辑器标签和运行时都用这个约定。
+    assertEquals(0, WorldEntryDraft.clampDepth(0))
     assertEquals(12, WorldEntryDraft.clampDepth(99))
     assertEquals(0, WorldEntryDraft.clampProbability(-10))
     assertEquals(100, WorldEntryDraft.clampProbability(250))
@@ -92,6 +93,34 @@ class WorldEntryDraftTest {
       )
 
     assertEquals(WorldEntryDraft.MAX_CONTENT, entry.content.length)
+  }
+
+  @Test
+  fun advancedFieldsCarryThroughAndOmittedOnesKeepOriginal() {
+    val old =
+      WorldEntry(
+        order = 7,
+        enabled = false,
+        preventRecursion = true,
+        excludeRecursion = true,
+        group = "scene",
+        delay = 2,
+        delayUntilRecursion = 1,
+        ignoreBudget = true,
+      )
+    val built =
+      WorldEntryDraft.build(
+        WorldEntryDraft.Draft(original = old, primary = "雨", content = "正文", order = 9, group = "weather"),
+      )
+    assertEquals(9, built.order)
+    assertEquals("weather", built.group)
+    // 没在草稿里出现的字段必须沿用原条目，不能被默认值重置。
+    assertFalse(built.enabled)
+    assertTrue(built.preventRecursion)
+    assertTrue(built.excludeRecursion)
+    assertEquals(2, built.delay)
+    assertEquals(1, built.delayUntilRecursion)
+    assertTrue(built.ignoreBudget)
   }
 
   @Test

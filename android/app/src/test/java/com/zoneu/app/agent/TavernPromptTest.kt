@@ -152,6 +152,8 @@ class TavernPromptTest {
             "assistant" to "……我扶一下。",
             "user" to "她呢",
           ),
+        // 默认只扫最近 2 条消息；这个用例要验证更早的轮次，显式放宽窗口。
+        preset = TavernPreset.DEFAULT.copy(scanDepth = 6),
       )
 
     assertTrue(messages.any { it.content.contains("校徽是银色的") })

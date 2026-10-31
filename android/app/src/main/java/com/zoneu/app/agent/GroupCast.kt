@@ -20,13 +20,15 @@ object GroupCast {
     val head = cast.first()
     return head.copy(
       name = cast.joinToString(" / ") { it.name },
+      // 群聊的 {{char}} 就是合并名，不能沿用主卡昵称。
+      nickname = "",
       tagline = "群聊",
       description = cast.joinToString("\n\n") { card -> "【${card.name}】\n${card.description.trim()}" },
       personality = cast.joinToString("\n\n") { card -> "【${card.name}】${card.personality.trim()}" },
       scenario = cast.joinToString("\n\n") { card -> "【${card.name}】${card.scenario.trim()}" },
-      // 开场白在群聊里没有意义（谁先说？），交给用户第一句话定调
-      firstMes = "",
-      alternateGreetings = emptyList(),
+      // 群聊专用开场白优先；没有就交给用户第一句话定调。
+      firstMes = cast.flatMap { it.groupOnlyGreetings }.firstOrNull { it.isNotBlank() }.orEmpty(),
+      alternateGreetings = cast.flatMap { it.groupOnlyGreetings }.distinct().drop(1),
       world = cast.flatMap { it.world },
     )
   }

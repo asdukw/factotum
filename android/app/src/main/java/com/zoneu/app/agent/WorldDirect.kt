@@ -13,6 +13,10 @@ interface WorldDirect {
     val tail: String? = null,
     val recap: String? = null,
     val auxiliary: Boolean = false,
+    /** normal / continue / regenerate / swipe / impersonate / quiet。 */
+    val generation: String = WorldSelection.GENERATION_NORMAL,
+    /** 这一轮用户消息的稳定 id：重写同一个交换时用它复用 seed。 */
+    val anchorId: String = "",
   )
 }
 

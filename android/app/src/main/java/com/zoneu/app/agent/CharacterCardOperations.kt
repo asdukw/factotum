@@ -155,8 +155,8 @@ object CharacterCardOperations {
   }
 
   internal fun validateFields(fields: JsonObject) {
-    val strings = setOf("name", "description", "personality", "scenario", "first_mes", "creator_notes", "creator")
-    val arrays = setOf("tags", "alternate_greetings")
+    val strings = setOf("name", "nickname", "description", "personality", "scenario", "first_mes", "creator_notes", "creator")
+    val arrays = setOf("tags", "alternate_greetings", "group_only_greetings")
     require(fields.keys.all { it in strings || it in arrays || it == "character_book" })
     require((fields["name"] as? JsonPrimitive)?.isString == true && (fields["name"] as JsonPrimitive).content.isNotBlank())
     fields.forEach { (key, value) ->

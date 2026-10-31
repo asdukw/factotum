@@ -16,9 +16,17 @@ object CardRoundTrip {
     val obj = root as? JsonObject ?: return null
     val data = obj["data"] as? JsonObject ?: obj
     val book = data["character_book"] as? JsonObject ?: data["world"] as? JsonObject ?: data
-    val entries = book["entries"] as? JsonArray ?: book["items"] as? JsonArray ?: return null
+    // ST 原生世界书导出把 entries 写成「uid → 条目」的对象；卡内一般是数组，两种都收。
+    val entries = entriesArray(book["entries"]) ?: entriesArray(book["items"]) ?: return null
     return JsonObject(book + ("entries" to entries))
   }
+
+  private fun entriesArray(value: JsonElement?): JsonArray? =
+    when (value) {
+      is JsonArray -> value
+      is JsonObject -> JsonArray(value.values.toList())
+      else -> null
+    }
 
   fun attach(card: CharacterCard, raw: JsonObject, notes: List<CardCompatibilityNote>): CharacterCard {
     val metadata = CardImportMetadata(
@@ -97,8 +105,17 @@ object CardRoundTrip {
     val originalData = raw?.get("data") as? JsonObject ?: raw ?: JsonObject(emptyMap())
     val projected = CardExporter.project(card)
     val data = originalData.toMutableMap()
+    val before = metadata?.baseline
     projected.forEach { (key, value) ->
-      if (key != "creator_notes" && (metadata?.baseline?.get(key) != value || key !in data)) data[key] = value
+      if (key == "creator_notes") return@forEach
+      // 旧版本存的 baseline 没有新字段：原文档里有值就保留，别用默认值覆盖作者数据。
+      val write =
+        if (before == null) {
+          key !in data
+        } else {
+          key !in data || (key in before && before[key] != value)
+        }
+      if (write) data[key] = value
     }
     if ("creator_notes" !in data) data["creator_notes"] = JsonPrimitive(card.tagline)
     normalizeCard(data, projected)

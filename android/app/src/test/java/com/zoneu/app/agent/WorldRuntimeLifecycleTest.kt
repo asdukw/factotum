@@ -115,15 +115,15 @@ class WorldRuntimeLifecycleTest {
   @Test fun flowRecollectionKeepsLogicalRequestAndPreparedMacroOutput() = runTest {
     val requests = mutableListOf<String>()
     val frozen = WorldRequestPlan(
-      "request",
-      "session",
-      "empty",
-      "direct",
-      1,
-      42,
-      emptyList(),
-      emptyList(),
-      emptyList(),
+      requestId = "request",
+      sessionId = "session",
+      bindingRevision = "empty",
+      generation = "direct",
+      turn = 1,
+      seed = 42,
+      injections = emptyList(),
+      decisions = emptyList(),
+      activated = emptyList(),
       messages = listOf(WorldPromptMessage("system", "frozen-random-output")),
     )
     val direct = object : WorldDirect {

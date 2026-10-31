@@ -314,6 +314,9 @@ internal fun WorldHeaderDialog(book: WorldBook, onDismiss: () -> Unit, error: St
       WorldField("分类", draft.category) { draft = draft.copy(category = it) }
       WorldField("标签（每行一个）", draft.tags) { draft = draft.copy(tags = it) }
       WorldSwitch("启用", draft.enabled) { draft = draft.copy(enabled = it) }
+      WorldField("扫描深度（空 = 应用默认）", draft.scanDepth) { draft = draft.copy(scanDepth = it) }
+      WorldField("本书字符预算（空 = 不限制）", draft.tokenBudget) { draft = draft.copy(tokenBudget = it) }
+      WorldSwitch("允许递归扫描", draft.recursiveScanning) { draft = draft.copy(recursiveScanning = it) }
       (invalid ?: error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
   }, confirmButton = {

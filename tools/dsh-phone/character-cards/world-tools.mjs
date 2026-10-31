@@ -168,6 +168,10 @@ export function applyWorldTools(ctx) {
   const book = { name: text, description: text, tags: strings, category: text, enabled: bool }
   const rule = { enabled: bool, keys: strings, content: text, order: integer, constant: bool, depth: integer,
     secondary: strings, secondary_logic: { ...text, enum: ['ANY', 'ALL', 'NOT_ANY', 'NOT_ALL'] }, exclude: strings,
+    selective: bool, group: text, group_override: bool, group_weight: integer, use_group_scoring: bool,
+    delay: integer, delay_until_recursion: integer, ignore_budget: bool, triggers: strings,
+    character_filter_names: strings, character_filter_tags: strings, character_filter_exclude: bool,
+    scan_depth: integer, vectorized: bool,
     probability: integer, sticky: integer, cooldown: integer, position: integer, role: integer,
     use_probability: bool, match_whole_words: bool, case_sensitive: bool, prevent_recursion: bool, exclude_recursion: bool }
   const entryOps = { type: 'array', items: { type: 'object', additionalProperties: false, properties: {

@@ -85,7 +85,20 @@ class CardExporterTest {
 
     assertEquals(1, back.world.size)
     // 编排参数一个都不能丢：position / role / 概率 / 粘性 / 冷却 / 整词 / 大小写 / 副词 / 排除
-    assertEquals(sample().world.first(), back.world.first().copy(sourceToken = ""))
+    // selective 缺失 + 有副词时，导出会写 true（其他前端据此才认副词），往返后是等价的显式值。
+    val expected =
+      sample().world.first().let {
+        if (it.selective == null && it.secondary.isNotEmpty()) it.copy(selective = true) else it
+      }
+    assertEquals(expected, back.world.first().copy(sourceToken = ""))
+  }
+
+  @Test
+  fun charxExportCanBeImportedBack() {
+    val original = sample()
+    val back = CharacterImporter.fromBytes(CardExporter.toCharx(original), "x").card
+    assertEquals(original.name, back.name)
+    assertEquals(original.firstMes, back.firstMes)
   }
 
   @Test

@@ -16,6 +16,12 @@ data class WorldBook(
   val tags: List<String> = emptyList(),
   val category: String = "",
   val enabled: Boolean = true,
+  /** 书级扫描深度（ST `scan_depth`）；条目自己的 scanDepth 优先。 */
+  val scanDepth: Int? = null,
+  /** 书级字符预算（ST `token_budget`，按本项目统一的字符口径执行）。 */
+  val tokenBudget: Int? = null,
+  /** 书级递归开关（ST `recursive_scanning`）：false 时书内条目不再被正文牵出。 */
+  val recursiveScanning: Boolean? = null,
   val entries: List<WorldBookEntry> = emptyList(),
   val archive: WorldBookArchive? = null,
 )
@@ -85,6 +91,8 @@ data class WorldResolvedEntry(
   val enabled: Boolean,
   val unsupported: List<String>,
   val rule: WorldEntry,
+  /** 所在书的字符预算；null = 不限制。 */
+  val bookBudget: Int? = null,
 )
 
 @Serializable
@@ -101,12 +109,14 @@ data class WorldInjection(
 data class WorldDecision(
   val entryId: String,
   val bookId: String,
+  val revision: String = "",
   val sources: List<String>,
   val reason: String,
   val selected: Boolean = false,
   val chars: Int = 0,
   val position: Int = WorldEntry.POSITION_DEPTH,
   val role: Int = WorldEntry.ROLE_SYSTEM,
+  val depth: Int = 0,
 )
 
 /** Prepared once per logical generation, including macro output and probability decisions. */
@@ -117,6 +127,10 @@ data class WorldRequestPlan(
   val bindingRevision: String,
   val generation: String,
   val turn: Int,
+  /** normal/continue/regenerate/swipe/impersonate/quiet；决定 triggers 过滤与是否推进轮次。 */
+  val requestKind: String = WorldSelection.GENERATION_NORMAL,
+  /** 只有新的用户—助手交换才推进 sticky/cooldown 时钟。 */
+  val advanceTurn: Boolean = true,
   val seed: Int,
   val injections: List<WorldInjection>,
   val decisions: List<WorldDecision>,

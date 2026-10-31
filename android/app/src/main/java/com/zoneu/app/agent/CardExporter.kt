@@ -7,6 +7,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /** 原始字段仅在主动导出时恢复，运行编排不读取归档。 */
 object CardExporter {
@@ -22,6 +25,19 @@ object CardExporter {
   /** 一张卡 → v3 JSON 文本。 */
   fun toV3(card: CharacterCard): String = pretty.encodeToString(JsonObject.serializer(), CardRoundTrip.card(card))
 
+  /** CHARX：ZIP 根目录的 card.json。资产实体当前没有保存，因此只写 card.json。 */
+  fun toCharx(card: CharacterCard): ByteArray {
+    val out = ByteArrayOutputStream()
+    ZipOutputStream(out).use { zip ->
+      zip.putNextEntry(ZipEntry("card.json"))
+      zip.write(toV3(card).toByteArray(Charsets.UTF_8))
+      zip.closeEntry()
+    }
+    return out.toByteArray()
+  }
+
+  fun charxFileName(card: CharacterCard): String = fileName(card).removeSuffix(".json") + ".charx"
+
   /** 建议文件名：把名字里不能进文件系统的字符换掉（导出的文件常被拖到别的地方去）。 */
   fun fileName(card: CharacterCard): String {
     val safe =
@@ -35,11 +51,13 @@ object CardExporter {
 
   internal fun project(card: CharacterCard): JsonObject = buildJsonObject {
     put("name", card.name)
+    put("nickname", card.nickname)
     put("description", card.description)
     put("personality", card.personality)
     put("scenario", card.scenario)
     put("first_mes", card.firstMes)
     putJsonArray("alternate_greetings") { card.alternateGreetings.forEach { add(it) } }
+    putJsonArray("group_only_greetings") { card.groupOnlyGreetings.forEach { add(it) } }
     // 无原始来源的卡只能补空串；有原始文档时由差异合并恢复
     put("mes_example", "")
     put("system_prompt", "")
@@ -48,7 +66,6 @@ object CardExporter {
     put("creator", card.creator)
     put("character_version", "")
     putJsonArray("tags") { card.tags.forEach { add(it) } }
-    putJsonArray("group_only_greetings") {}
     putJsonObject("extensions") {}
   }
 }

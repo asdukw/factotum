@@ -100,6 +100,15 @@ class CardCommitterTest {
   }
 
   @Test
+  fun createValidationAcceptsNicknameAndGroupGreetings() {
+    CharacterCardOperations.validateFields(
+      Json.parseToJsonElement(
+        """{"name":"名字","description":"人设","nickname":"小名","group_only_greetings":["群开场"]}""",
+      ) as JsonObject,
+    )
+  }
+
+  @Test
   fun oldPendingReceiptWithMissingTargetCannotResurrectIt() {
     receipts["legacy"] = CardRequestReceipt("legacy", "p", "missing", "hash")
     assertEquals(

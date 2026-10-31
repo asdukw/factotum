@@ -90,7 +90,18 @@ class CardUpdateCommitter internal constructor(private val storage: CardStorage)
   )
 
   private fun validateCounts(changes: CardChangeCounts) {
-    val allowed = setOf("name", "tagline", "tags", "description", "personality", "scenario", "first_mes", "alternate_greetings")
+    val allowed = setOf(
+      "name",
+      "nickname",
+      "tagline",
+      "tags",
+      "description",
+      "personality",
+      "scenario",
+      "first_mes",
+      "alternate_greetings",
+      "group_only_greetings",
+    )
     require(changes.changedFields.all { it in allowed } && changes.changedFields.distinct().size == changes.changedFields.size)
     require(changes.added >= 0 && changes.updated >= 0 && changes.removed >= 0)
   }

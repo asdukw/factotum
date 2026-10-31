@@ -2,16 +2,19 @@ package com.zoneu.app.agent
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.Base64
 import java.util.zip.Inflater
+import java.util.zip.ZipInputStream
 
 /** 有界读取外部数据；解析错误不包含 JSON 正文。 */
 object CardInput {
   const val MAX_FILE = 32 * 1024 * 1024
   const val MAX_JSON = 8 * 1024 * 1024
   private val magic = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+  private val zipMagic = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
   private val json = Json { isLenient = true }
   private val keywords = listOf("ccv3", "chara", "character")
 
@@ -33,6 +36,9 @@ object CardInput {
 
   fun parse(bytes: ByteArray): Parsed {
     checkSize(bytes.size, MAX_FILE, "文件超过 32 MiB 上限")
+    if (bytes.size >= zipMagic.size && zipMagic.indices.all { bytes[it] == zipMagic[it] }) {
+      return parseCharx(bytes)
+    }
     if (bytes.size < magic.size || !magic.indices.all { bytes[it] == magic[it] }) {
       checkSize(bytes.size, MAX_JSON, "JSON 超过 8 MiB 上限")
       return Parsed(
@@ -48,6 +54,37 @@ object CardInput {
 
   private fun checkSize(size: Int, limit: Int, message: String) {
     if (size > limit) throw CharacterImporter.ImportException(message)
+  }
+
+  /** CHARX：ZIP 根目录的 `card.json`。资产实体先不解析，兼容报告会说明。 */
+  private fun parseCharx(bytes: ByteArray): Parsed {
+    val text = readCharxJson(bytes)
+    val root = text?.let { parseJson(it) }
+      ?: throw CharacterImporter.ImportException("CHARX 里没有可用的 card.json（缺失、损坏或超过 8 MiB）")
+    return Parsed(root, "charx")
+  }
+
+  private fun readCharxJson(bytes: ByteArray): String? {
+    ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+      var entry = zip.nextEntry
+      while (entry != null) {
+        if (!entry.isDirectory && entry.name.lowercase().trimStart('/') == "card.json") return readBounded(zip)
+        entry = zip.nextEntry
+      }
+    }
+    return null
+  }
+
+  private fun readBounded(zip: ZipInputStream): String? {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    while (true) {
+      val count = zip.read(buffer)
+      if (count < 0) break
+      if (out.size() + count > MAX_JSON) return null
+      out.write(buffer, 0, count)
+    }
+    return String(out.toByteArray(), Charsets.UTF_8)
   }
 
   private fun scan(bytes: ByteArray): List<Candidate> {
@@ -90,7 +127,8 @@ object CardInput {
 
   private fun hasIdentity(root: JsonObject): Boolean {
     val data = root["data"] as? JsonObject ?: root
-    return listOf("description", "personality").any {
+    // 与 CharacterImporter 保持同一判据：旁白/设定卡可能只有 scenario 或 first_mes。
+    return listOf("description", "personality", "scenario", "first_mes", "first_message").any {
       val value = data[it] as? kotlinx.serialization.json.JsonPrimitive
       value?.isString == true && value.content.isNotBlank()
     }

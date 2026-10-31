@@ -76,6 +76,11 @@ internal object WorldBookStorageRules {
   }
 
   fun settledState(current: WorldRuntimeState, plan: WorldRequestPlan): WorldRuntimeState {
+    // 重写/续写属于同一个交换：复用当前轮，不推进 sticky/cooldown 时钟。
+    if (!plan.advanceTurn) {
+      worldCheck(plan.turn == current.turn, "WORLD_TURN_CONFLICT")
+      return current
+    }
     worldCheck(plan.turn == current.turn + 1, "WORLD_TURN_CONFLICT")
     val selected = plan.injections.map { it.key }.toSet()
     worldCheck(plan.activated.distinct().size == plan.activated.size && plan.activated.all { it in selected }, "WORLD_PLAN_INVALID")

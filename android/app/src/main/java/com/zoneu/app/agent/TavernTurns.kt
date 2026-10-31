@@ -84,7 +84,10 @@ class TavernTurns(
    *
    * [cast] 是群聊在场的所有卡 id（含主卡）。多于一张时按 [GroupCast] 合成一张临时卡，
    * 并把群聊规则接在 [tail] 后面 —— 编排层不知道为什么有几个人，它只需要一张卡。
+   *
+   * 参数多是有意的：每个都由调用方显式决定，打包成对象只会让四个调用点各拼一次。
    */
+  @Suppress("LongParameterList")
   fun stream(
     sessionId: String,
     characterId: String?,
@@ -100,14 +103,28 @@ class TavernTurns(
      */
     recap: String? = null,
     requestId: String = java.util.UUID.randomUUID().toString(),
+    /** 生成类型：重写由调用方显式传；续写/替我写从 [tail] 推导。 */
+    generation: String = WorldSelection.GENERATION_NORMAL,
   ): Flow<AgentStreamEvent>? {
     val channel = channel() ?: return null
     world?.let { runtime ->
       val history = turns.filter { it.error == null && it.content.isNotBlank() }.map {
         TavernMessage(if (it.role == ChatRole.User) TavernMessage.USER else TavernMessage.ASSISTANT, it.content)
       }
+      val kind = worldKind(tail, generation)
+      val anchorId = turns.lastOrNull { it.role == ChatRole.User }?.id.orEmpty()
       return flow {
-        val request = WorldDirect.Request(requestId, sessionId, history, tail, recap, auxiliary = tail == TavernDirectives.IMPERSONATE)
+        val request =
+          WorldDirect.Request(
+            requestId = requestId,
+            sessionId = sessionId,
+            history = history,
+            tail = tail,
+            recap = recap,
+            auxiliary = kind == WorldSelection.GENERATION_IMPERSONATE,
+            generation = kind,
+            anchorId = anchorId,
+          )
         val plan = runtime.prepare(request)
         emitAll(channel.stream(TavernRequest(sessionId, plan.messages.map { TavernMessage(it.role, it.content) })))
       }
@@ -177,6 +194,13 @@ class TavernTurns(
 }
 
 /** Compatibility for callers without the durable world runtime; production uses WorldDirect. */
+private fun worldKind(tail: String?, generation: String): String =
+  when (tail) {
+    TavernDirectives.IMPERSONATE -> WorldSelection.GENERATION_IMPERSONATE
+    TavernDirectives.CONTINUE -> WorldSelection.GENERATION_CONTINUE
+    else -> generation
+  }
+
 data class LegacyWorldTiming(
   val tracking: (String) -> WorldTracking = { WorldTracking.NONE },
   val nextTurn: (String) -> Int = { 0 },

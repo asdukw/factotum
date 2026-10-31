@@ -30,6 +30,27 @@ class WorldBookFormatTest {
   }
 
   @Test
+  fun bookLevelRuntimeSettingsImportAndExport() {
+    val book =
+      WorldBookFormat.importText(
+        """{"name":"书","scan_depth":7,"token_budget":120,"recursive_scanning":false,
+          "entries":[{"keys":["雨"],"content":"正文"}]}""",
+      )
+    assertEquals(7, book.scanDepth)
+    assertEquals(120, book.tokenBudget)
+    assertEquals(false, book.recursiveScanning)
+    val out = output(book).jsonObject
+    assertEquals("7", out["scan_depth"]!!.jsonPrimitive.content)
+    assertEquals("120", out["token_budget"]!!.jsonPrimitive.content)
+    assertEquals("false", out["recursive_scanning"]!!.jsonPrimitive.content)
+    // 清空书级设置后导出必须真的删掉旧键，不能保留一个界面已不显示的值。
+    val cleared = WorldBookFormat.exportText(book.copy(scanDepth = null, tokenBudget = null, recursiveScanning = null))
+    assertFalse(cleared.contains("scan_depth"))
+    assertFalse(cleared.contains("token_budget"))
+    assertFalse(cleared.contains("recursive_scanning"))
+  }
+
+  @Test
   fun knownContainersPreserveAllJsonValuesWithoutEditing() {
     val entry = """{"id":4,"key":["词"],"content":"  原文  ","x":{"assets":["https://example.invalid/a"]}}"""
     val inputs = listOf(
@@ -236,7 +257,10 @@ class WorldBookFormatTest {
     assertEquals(JsonPrimitive(false), entries[0].jsonObject["enabled"])
     assertEquals(JsonPrimitive(false), entries[1].jsonObject["enabled"])
     assertEquals(parse("null"), entries[2])
-    assertTrue(WorldBookIo.importText(text).isEmpty())
+    // 禁用条目现在会保留为 enabled=false（可再编辑），正则条目仍不进入运行模型。
+    val roundTrip = WorldBookIo.importText(text)
+    assertEquals(1, roundTrip.size)
+    assertFalse(roundTrip.single().enabled)
   }
 
   @Test

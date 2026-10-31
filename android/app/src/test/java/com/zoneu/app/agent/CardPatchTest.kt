@@ -263,7 +263,7 @@ class CardPatchTest {
       patch("""{"name":"new"}""", original.copy(world = listOf(original.world.first(), original.world.first())))
     }
     listOf(
-      """{"depth":0}""",
+      """{"depth":-1}""",
       """{"depth":13}""",
       """{"depth":"4"}""",
       """{"depth":1.5}""",
@@ -284,7 +284,14 @@ class CardPatchTest {
       """{"keys":[null]}""",
       """{"content":null}""",
       """{"secondary":"雨"}""",
-    ).forEach { invalid -> fails { world(op("update", id(0), fields(invalid))) } }
+    ).forEach { invalid ->
+      try {
+        world(op("update", id(0), fields(invalid)))
+        org.junit.Assert.fail("expected rejection: $invalid")
+      } catch (_: CardOperationException) {
+        // expected
+      }
+    }
   }
 
   @Test

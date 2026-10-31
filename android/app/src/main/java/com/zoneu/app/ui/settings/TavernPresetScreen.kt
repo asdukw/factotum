@@ -94,6 +94,17 @@ private fun LazyListScope.presetActions(state: TavernPresetViewModel.UiState, vi
   }
 }
 
+/** 数字步进：预算这类值用 −/＋ 比键盘输入快，也不会输入越界值。 */
+@Composable
+private fun BudgetRow(label: String, value: Int, min: Int, max: Int, step: Int = 1, onChange: (Int) -> Unit) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    TextButton(onClick = { onChange((value - step).coerceAtLeast(min)) }) { Text("−") }
+    Text("$value", style = MaterialTheme.typography.bodyMedium)
+    TextButton(onClick = { onChange((value + step).coerceAtMost(max)) }) { Text("＋") }
+  }
+}
+
 /** 两段正文的编辑区 + 变量说明 + 保存。 */
 private fun LazyListScope.presetEditor(state: TavernPresetViewModel.UiState, viewModel: TavernPresetViewModel) {
   item {
@@ -130,6 +141,14 @@ private fun LazyListScope.presetEditor(state: TavernPresetViewModel.UiState, vie
       Text("${state.recursionDepth}", style = MaterialTheme.typography.bodyMedium)
       TextButton(onClick = { viewModel.updateRecursionDepth(state.recursionDepth + 1) }) { Text("＋") }
     }
+  }
+  item {
+    // 预算与扫描窗：文档里说「预设可调」，这里就必须真的能调。
+    BudgetRow("扫描窗口（消息条数）", state.scanDepth, 0, 12) { viewModel.updateBudget("scan", it) }
+    BudgetRow("一轮最多命中条目", state.worldEntries, 1, 20) { viewModel.updateBudget("entries", it) }
+    BudgetRow("命中条目字符预算", state.worldChars, 200, 8_000, step = 200) { viewModel.updateBudget("world", it) }
+    BudgetRow("常驻条目字符预算", state.constantChars, 0, 8_000, step = 200) { viewModel.updateBudget("constant", it) }
+    BudgetRow("历史裁剪字符预算", state.historyChars, 500, 20_000, step = 500) { viewModel.updateBudget("history", it) }
   }
   item {
     Text(SLOT_HELP, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

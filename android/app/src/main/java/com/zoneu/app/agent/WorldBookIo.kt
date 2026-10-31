@@ -2,6 +2,7 @@ package com.zoneu.app.agent
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -71,20 +72,31 @@ object WorldBookIo {
     val root = runCatching { json.parseToJsonElement(trimmed) }.getOrNull() ?: return emptyList()
     // 三种外壳摊平成 entries 数组，字段投影统一交给 WorldEntryReader：
     // 那里的字段兼容（keys/key、v2 的顶层字段、extensions 两套拼法）是真机上验证过的
-    val entries =
-      when (root) {
-        is JsonArray -> root
-
-        is JsonObject -> {
-          val data = (root["data"] as? JsonObject) ?: root
-          val book = (data["character_book"] as? JsonObject) ?: (data["world"] as? JsonObject) ?: data
-          (book["entries"] ?: book["items"]) as? JsonArray ?: root["entries"] as? JsonArray
-        }
-
-        else -> null
-      }
-    return entries?.let { WorldEntryReader.entriesOf(it) }.orEmpty()
+    return entriesOf(root).let { WorldEntryReader.entriesOf(it) }
   }
+
+  private fun entriesOf(root: JsonElement): JsonArray =
+    when (root) {
+      is JsonArray -> root
+
+      is JsonObject -> {
+        val data = (root["data"] as? JsonObject) ?: root
+        val book = (data["character_book"] as? JsonObject) ?: (data["world"] as? JsonObject) ?: data
+        // 兼容 ST 原生世界书的 map 形式 entries（uid → 条目）。
+        listOf("entries", "items").firstNotNullOfOrNull { array(book[it]) }
+          ?: array(root["entries"])
+          ?: JsonArray(emptyList())
+      }
+
+      else -> JsonArray(emptyList())
+    }
+
+  private fun array(value: JsonElement?): JsonArray? =
+    when (value) {
+      is JsonArray -> value
+      is JsonObject -> JsonArray(value.values.toList())
+      else -> null
+    }
 
   /** 单条的 JSON 形态；[CardExporter] 拼整张卡时也用它，保证两处字段永远一致。 */
   internal fun entryJson(index: Int, entry: WorldEntry): JsonObject = buildJsonObject {
@@ -92,18 +104,23 @@ object WorldBookIo {
     putJsonArray("keys") { entry.keys.forEach { add(it) } }
     putJsonArray("secondary_keys") { entry.secondary.forEach { add(it) } }
     put("content", entry.content)
-    // 导出的条目一律 enabled：导出的就是「现在真的在用的这些」
-    put("enabled", true)
+    put("enabled", entry.enabled)
     put("use_regex", false)
     put("insertion_order", entry.order)
     put("case_sensitive", entry.caseSensitive)
-    put("selective", entry.secondary.isNotEmpty())
+    // 显式记录来源的 selective；来源没写时不导出 false，否则 round-trip 会把三态压成二态。
+    entry.selective?.let { put("selective", it) }
+    if (entry.selective == null && entry.secondary.isNotEmpty()) put("selective", true)
     put("constant", entry.constant)
     put("position", if (entry.position == WorldEntry.POSITION_BEFORE) "before_char" else "after_char")
     put("comment", "")
+    put("group", entry.group)
     // 递归开关：ST 的字段名是驼峰、写在条目顶层；extensions 里再放一份下划线写法，两边的阅读器都能认。
     put("preventRecursion", entry.preventRecursion)
     put("excludeRecursion", entry.excludeRecursion)
+    put("delay", entry.delay)
+    put("delayUntilRecursion", entry.delayUntilRecursion)
+    putJsonArray("triggers") { entry.triggers.forEach { add(it) } }
     putJsonObject("extensions") {
       put("position", entry.position)
       put("depth", entry.depth)
@@ -112,11 +129,28 @@ object WorldBookIo {
       put("useProbability", entry.useProbability)
       put("sticky", entry.sticky)
       put("cooldown", entry.cooldown)
+      put("group", entry.group)
+      put("groupOverride", entry.groupOverride)
+      put("groupWeight", entry.groupWeight)
+      put("useGroupScoring", entry.useGroupScoring)
+      put("delay", entry.delay)
+      put("delayUntilRecursion", entry.delayUntilRecursion)
+      put("ignoreBudget", entry.ignoreBudget)
+      put("scanDepth", entry.scanDepth)
+      put("vectorized", entry.vectorized)
       // ST 的四种副词语义里我们只实现 AND_ANY(0) 与 AND_ALL(3)
       put("selectiveLogic", entry.secondaryLogic.raw())
       putJsonArray("exclude_keys") { entry.exclude.forEach { add(it) } }
       put("match_whole_words", entry.matchWholeWords)
       put("case_sensitive", entry.caseSensitive)
+      putJsonArray("triggers") { entry.triggers.forEach { add(it) } }
+      if (entry.characterFilterNames.isNotEmpty() || entry.characterFilterTags.isNotEmpty()) {
+        putJsonObject("characterFilter") {
+          put("isExclude", entry.characterFilterExclude)
+          putJsonArray("names") { entry.characterFilterNames.forEach { add(it) } }
+          putJsonArray("tags") { entry.characterFilterTags.forEach { add(it) } }
+        }
+      }
       // 与上面顶层那对同义（下划线写法）：我们的阅读器顶层与 extensions 两处都读，
       // 别的工具认哪种都不至于丢。
       put("prevent_recursion", entry.preventRecursion)

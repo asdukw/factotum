@@ -59,6 +59,14 @@ internal fun CardTransferRow(
     rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
       export(uri, WorldBookIo.exportText(card))
     }
+  val exportCharx =
+    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+      val target = uri ?: return@rememberLauncherForActivityResult
+      scope.launch {
+        val ok = writeBytes(context, target, CardExporter.toCharx(card))
+        toast(context, if (ok) "已导出 CHARX（不含嵌入式资产）" else "导出失败：写不进这个位置")
+      }
+    }
   val importWorld =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
       val target = uri ?: return@rememberLauncherForActivityResult
@@ -90,6 +98,7 @@ internal fun CardTransferRow(
     horizontalArrangement = Arrangement.spacedBy(4.dp),
   ) {
     TextButton(onClick = { exportCard.launch(CardExporter.fileName(card)) }) { Text("导出卡片") }
+    TextButton(onClick = { exportCharx.launch(CardExporter.charxFileName(card)) }) { Text("导出 CHARX") }
     TextButton(onClick = { exportWorld.launch(CardExporter.fileName(card).replace(".json", "-世界书.json")) }) {
       Text("导出世界书")
     }
@@ -112,6 +121,16 @@ private suspend fun writeText(context: Context, uri: Uri, text: String): Boolean
   withContext(Dispatchers.IO) {
     runCatching {
       context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
+        ?: return@runCatching false
+      true
+    }
+      .getOrDefault(false)
+  }
+
+private suspend fun writeBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean =
+  withContext(Dispatchers.IO) {
+    runCatching {
+      context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
         ?: return@runCatching false
       true
     }

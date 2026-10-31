@@ -32,6 +32,12 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
     val postHistory: String = TavernPreset.DEFAULT_POST_HISTORY,
     /** 世界书递归层数（0–[TavernPreset.RECURSION_MAX]）。 */
     val recursionDepth: Int = 1,
+    /** 编排预算与扫描窗：与世界书激活质量直接相关，全部可在预设里调。 */
+    val scanDepth: Int = 2,
+    val worldEntries: Int = 6,
+    val worldChars: Int = 1_600,
+    val constantChars: Int = 2_000,
+    val historyChars: Int = 4_000,
     /** 草稿与来源不一致（界面据此提示「还没保存」）。 */
     val dirty: Boolean = false,
     val preview: String = "",
@@ -79,6 +85,11 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         system = preset.system,
         postHistory = preset.postHistory,
         recursionDepth = preset.recursionDepth,
+        scanDepth = preset.scanDepth,
+        worldEntries = preset.worldEntries,
+        worldChars = preset.worldChars,
+        constantChars = preset.constantChars,
+        historyChars = preset.historyChars,
         editingBuiltIn = preset.builtIn,
         dirty = false,
         preview = preview(preset.system, preset.postHistory),
@@ -92,6 +103,19 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
   /** 递归层数只是编排参数，不影响两段正文，所以不动预览、只标脏。 */
   fun updateRecursionDepth(depth: Int) =
     _state.update { it.copy(recursionDepth = depth.coerceIn(0, TavernPreset.RECURSION_MAX), dirty = true) }
+
+  /** 预算旋钮统一入口，避免为五个整数各写一个几乎一样的函数。 */
+  fun updateBudget(kind: String, value: Int) = _state.update {
+    val next =
+      when (kind) {
+        "scan" -> it.copy(scanDepth = value.coerceIn(0, 12))
+        "entries" -> it.copy(worldEntries = value.coerceIn(1, 20))
+        "world" -> it.copy(worldChars = value.coerceIn(200, 8_000))
+        "constant" -> it.copy(constantChars = value.coerceIn(0, 8_000))
+        else -> it.copy(historyChars = value.coerceIn(500, 20_000))
+      }
+    next.copy(dirty = true)
+  }
 
   fun updatePostHistory(text: String) =
     _state.update { it.copy(postHistory = text, dirty = true, preview = preview(it.system, text)) }
@@ -120,6 +144,11 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         system = snapshot.system,
         postHistory = snapshot.postHistory,
         recursionDepth = snapshot.recursionDepth,
+        scanDepth = snapshot.scanDepth,
+        worldEntries = snapshot.worldEntries,
+        worldChars = snapshot.worldChars,
+        constantChars = snapshot.constantChars,
+        historyChars = snapshot.historyChars,
       )
     val saved = TavernPresetStore.save(appContext, preset)
     if (!saved) {
@@ -151,6 +180,11 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         system = snapshot.system,
         postHistory = snapshot.postHistory,
         recursionDepth = snapshot.recursionDepth,
+        scanDepth = snapshot.scanDepth,
+        worldEntries = snapshot.worldEntries,
+        worldChars = snapshot.worldChars,
+        constantChars = snapshot.constantChars,
+        historyChars = snapshot.historyChars,
       )
     if (!TavernPresetStore.save(appContext, preset)) {
       _state.update { it.copy(message = "另存失败：存不进应用私有目录") }

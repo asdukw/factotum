@@ -262,8 +262,10 @@ for (const api of ['openai-completions', 'openai-responses', 'anthropic-messages
       await harness(api, { entries: [entry('WORLD_DEPTH', role, 1)] }, async ({ ctx, wires }) => {
         const chunks = await collect(ctx.llm.stream(request))
         if (api === 'anthropic-messages' && role === 'system') {
-          assert.equal(failureOf(chunks)?.code, 'WORLD_PROTOCOL_UNSUPPORTED')
-          assert.equal(wires.length, 0, 'system depth cannot be silently converted to user')
+          assertSuccess(chunks)
+          const serialized = typeof wires[0].system === 'string' ? wires[0].system : JSON.stringify(wires[0].system)
+          assert.equal((serialized.match(/WORLD_DEPTH/g) ?? []).length, 1, 'system depth merges exactly once into the leading system block')
+          assert.deepEqual(wireItems(wires[0], api), wireItems(baseline, api), 'system depth must not also appear in messages')
           return
         }
         assertSuccess(chunks)

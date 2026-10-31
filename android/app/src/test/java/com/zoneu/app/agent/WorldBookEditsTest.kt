@@ -10,6 +10,7 @@ import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -54,6 +55,26 @@ class WorldBookEditsTest {
     val cleared = WorldBookEdits.apply(original, fields("""{"description":"","category":""}"""))
     assertEquals(original.copy(description = "", category = ""), cleared)
     assertEquals(original, WorldBookEdits.apply(original, fields("""{"tags":["甲"]}""")))
+  }
+
+  @Test
+  fun clearingBookRuntimeSettingsActuallyClearsThem() {
+    val configured = original.copy(scanDepth = 7, tokenBudget = 120, recursiveScanning = false)
+    val cleared =
+      WorldBookEdits.apply(
+        configured,
+        fields("""{"scan_depth":null,"token_budget":null,"recursive_scanning":null}"""),
+      )
+    assertNull(cleared.scanDepth)
+    assertNull(cleared.tokenBudget)
+    assertNull(cleared.recursiveScanning)
+  }
+
+  @Test
+  fun depthZeroIsAValidEntryEdit() {
+    // 编辑器标签写明「0 表示末尾」；补丁层不能把 0 当成越界，否则保存会从点击回调抛异常。
+    val changed = edit(op("update", "first", fields("""{"depth":0}""")))
+    assertEquals(0, changed.entries.first().rule.depth)
   }
 
   @Test
@@ -164,7 +185,7 @@ class WorldBookEditsTest {
       """{"entries":[]}""",
     ).forEach { input -> fails { WorldBookEdits.apply(original, fields(input)) } }
     listOf(
-      """{"depth":0}""",
+      """{"depth":-1}""",
       """{"depth":13}""",
       """{"order":2147483648}""",
       """{"order":null}""",

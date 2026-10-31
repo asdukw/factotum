@@ -37,6 +37,16 @@ data class TavernPreset(
    * `preventRecursion` / `excludeRecursion` 各自掐，比总开关更准。
    */
   val recursionDepth: Int = 1,
+  /** 关键词扫描窗口（消息条数，ST `scan_depth`）；条目自己的 scanDepth 优先。 */
+  val scanDepth: Int = 2,
+  /** 一轮最多带几条命中条目（常驻不计入）。 */
+  val worldEntries: Int = 6,
+  /** 命中条目合计字符上限。 */
+  val worldChars: Int = 1_600,
+  /** 常驻条目独立字符上限。 */
+  val constantChars: Int = 2_000,
+  /** 历史裁剪字符上限。 */
+  val historyChars: Int = 4_000,
 ) {
   companion object {
     const val DEFAULT_ID = "builtin.default"

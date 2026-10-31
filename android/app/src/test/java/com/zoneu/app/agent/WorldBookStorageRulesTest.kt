@@ -85,14 +85,14 @@ class WorldBookStorageRulesTest {
     turn: Int,
     activated: List<String>,
   ) = WorldRequestPlan(
-    "request",
-    "session",
-    "empty",
-    "test",
-    turn,
-    1,
-    listOf(WorldInjection("entry", "new", "depth", 0, "system", "synthetic")),
-    emptyList(),
-    activated,
+    requestId = "request",
+    sessionId = "session",
+    bindingRevision = "empty",
+    generation = "test",
+    turn = turn,
+    seed = 1,
+    injections = listOf(WorldInjection("entry", "new", "depth", 0, "system", "synthetic")),
+    decisions = emptyList(),
+    activated = activated,
   )
 }

@@ -709,18 +709,19 @@ private fun isReadableAnswer(message: ChatMessage, pendingId: String?): Boolean 
 private fun rememberGreetings(state: ChatUiState): List<String> {
   val cardContext = LocalContext.current.applicationContext
   return remember(state.activeCharacterId, state.messages.isEmpty(), state.characterIds) {
-    if (!state.messages.isEmpty() || state.characterIds.size > 1) {
-      // 群聊里没有开场白：开场白是「一个人对你说第一句」，两个人都在场时它没有主语 ——
-      // 给主卡的开场白会变成 Aki 自说自话，另一个人还没出现就已经落后一句话。
+    if (!state.messages.isEmpty()) {
       emptyList()
     } else {
+      // 群聊优先用 group_only_greetings；单卡用 first_mes + alternate_greetings。
       // 展开 {{user}} / {{char}} 与宏：这里既当预览也当落库的正文，留着花括号会直接显示给用户。
       // 开场白里的宏用**空变量表**渲染：它没有会话上下文（会话还是空的），
       // 所以开场白里的 {{setvar}} 不会留下痕迹 —— 那种写操作要在正式的一轮里做才有效。
-      state.activeCharacterId
-        ?.let { id -> CharacterStore.byId(cardContext, id) }
-        ?.let { card -> card.greetings.map { CharacterStore.renderText(TavernMacros.render(it, TavernVars()), card) } }
-        .orEmpty()
+      val ids = state.characterIds.ifEmpty { listOfNotNull(state.activeCharacterId) }
+      val cards = ids.distinct().mapNotNull { id -> CharacterStore.byId(cardContext, id) }
+      val card = if (cards.size > 1) GroupCast.merge(cards) else cards.firstOrNull()
+      card?.greetings.orEmpty().map { greeting ->
+        CharacterStore.renderText(TavernMacros.render(greeting, TavernVars()), card!!)
+      }
     }
   }
 }

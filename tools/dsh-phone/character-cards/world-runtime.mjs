@@ -85,14 +85,18 @@ export function projectWorldPayload(payload, model, entries) {
   if (!entries.length) return undefined
   const api = model.api
   if (!['openai-completions', 'openai-responses', 'anthropic-messages'].includes(api)) fail('WORLD_PROTOCOL_UNSUPPORTED')
-  if (api === 'anthropic-messages' && entries.some(entry => entry.role === 'system')) fail('WORLD_PROTOCOL_UNSUPPORTED')
   const key = api === 'openai-responses' ? 'input' : 'messages'
   if (!object(payload) || !Array.isArray(payload[key])) fail('WORLD_INVALID_PAYLOAD')
-  const items = payload[key]
+  // Anthropic only accepts system content at the top. Merge depth system entries there
+  // instead of failing the whole generation; the text is preserved, only its position flattens.
+  const systemEntries = api === 'anthropic-messages' ? entries.filter(entry => entry.role === 'system') : []
+  const depthEntries = systemEntries.length ? entries.filter(entry => entry.role !== 'system') : entries
+  const base = systemEntries.length ? mergeSystem(payload, systemEntries) : payload
+  const items = base[key]
   let prefix = 0
   while (prefix < items.length && ['system', 'developer'].includes(items[prefix].role)) prefix++
   const history = items.slice(prefix), units = groups(history, api), inserts = new Map()
-  for (const entry of entries) {
+  for (const entry of depthEntries) {
     const unit = Math.max(0, units.length - entry.depth)
     const at = prefix + (unit === units.length ? history.length : units[unit][0])
     if (!inserts.has(at)) inserts.set(at, [])
@@ -103,7 +107,15 @@ export function projectWorldPayload(payload, model, entries) {
     projected.push(...(inserts.get(i) ?? []))
     if (i < items.length) projected.push(items[i])
   }
-  return { ...payload, [key]: projected }
+  return { ...base, [key]: projected }
+}
+
+function mergeSystem(payload, entries) {
+  const addition = entries.map(entry => entry.content).join('\n\n')
+  const system = payload.system
+  if (typeof system === 'string' && system.trim()) return { ...payload, system: `${system}\n\n${addition}` }
+  if (Array.isArray(system)) return { ...payload, system: [...system, { type: 'text', text: addition }] }
+  return { ...payload, system: addition }
 }
 
 export function projectionForPlan(input, rawPlan) {
@@ -123,8 +135,9 @@ export function projectionForPlan(input, rawPlan) {
     context = { ...context, systemPrompt: system.replace(anchor, () => replacement) }
   }
   const depth = plan.injections.filter(entry => entry.position === 'depth')
-  if (depth.length && (!['openai-completions', 'openai-responses', 'anthropic-messages'].includes(input.model.api) ||
-    (input.model.api === 'anthropic-messages' && depth.some(entry => entry.role === 'system')))) fail('WORLD_PROTOCOL_UNSUPPORTED')
+  // System-role depth entries are legal on every protocol now: Anthropic flattens them
+  // into the leading system block inside projectWorldPayload instead of aborting.
+  if (depth.length && !['openai-completions', 'openai-responses', 'anthropic-messages'].includes(input.model.api)) fail('WORLD_PROTOCOL_UNSUPPORTED')
   return { context, ...(depth.length ? { onPayload: (payload, model) => projectWorldPayload(payload, model, depth) } : {}) }
 }
 

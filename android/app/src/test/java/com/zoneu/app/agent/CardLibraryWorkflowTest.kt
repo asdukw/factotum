@@ -52,7 +52,8 @@ class CardLibraryWorkflowTest {
     assertEquals(2, listed["items"]!!.jsonArray.size)
     assertEquals(2, listed["items"]!!.jsonArray.map { it.jsonObject["character_id"] }.distinct().size)
     val read = CharacterCardQuery.read(item(base), fields("""{"character_id":"selected","section":"world"}"""))
-    val entry = read["items"]!!.jsonArray.single().jsonObject["entry_id"]!!.jsonPrimitive.content
+    // 第一条是启用的「旧规则」；第二条 disabled 也保留在列表里。
+    val entry = read["items"]!!.jsonArray.first().jsonObject["entry_id"]!!.jsonPrimitive.content
     val patch = fields("""{"personality":"冷淡"}""")
     val ops = Json.parseToJsonElement(
       """[{"op":"update","entry_id":"$entry","fields":{"content":"修改旧规则"}},
@@ -68,7 +69,7 @@ class CardLibraryWorkflowTest {
     val replay = update(base, "tool-update", patch, ops)
     assertTrue(replay.replay)
     assertEquals(changed.snapshot.revision, replay.appliedRevision)
-    assertEquals(2, replay.snapshot.card.world.size)
+    assertEquals(3, replay.snapshot.card.world.size)
     assertThrows(CardOperationException::class.java) {
       storage.update(base.card.id, base.revision) { it.copy(name = "过期UI草稿") }
     }

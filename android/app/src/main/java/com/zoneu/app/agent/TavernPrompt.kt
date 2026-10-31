@@ -33,8 +33,11 @@ object TavernPrompt {
   /** 命中条目合计字符上限（粗算 token：中文约一字一 token）。 */
   internal const val MAX_CHARS = WorldScan.MAX_CHARS
 
-  /** 关键词只回看最近几条用户消息 —— 「她呢」这种指代只有连着上文才命中。 */
-  internal const val LOOK_BACK = 3
+  /** 关键词只回看最近几条消息（ST `scan_depth`，默认 2，数的是消息不是轮）。 */
+  internal const val SCAN_DEPTH = 2
+
+  /** 旧调用点仍可用：等价于默认扫描深度。 */
+  internal const val LOOK_BACK = SCAN_DEPTH
 
   /**
    * 组装一整轮要发出去的 messages。
@@ -63,20 +66,23 @@ object TavernPrompt {
     val vars = state.vars
     val tail = state.tail
     // 先按预算裁历史：裁完再算关键词，否则命中的条目可能来自一段已经被丢掉的对话
-    val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }).turns
-    val hits = hits(card, keywordSource(history), random, state.tracking, state.turn, preset.recursionDepth)
+    val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }, preset.historyChars).turns
+    val hits = hits(card, keywordSource(history, preset.scanDepth), random, state.tracking, state.turn, preset.recursionDepth)
     state.onHits(hits)
     // 第一轮 = 还没有任何助手回复。调用时这一轮的用户消息已经落库并进了 [turns]，
     // 所以不能拿 history.isEmpty() 判断 —— 那会让开场白永远出不来。
     val firstTurn = history.none { it.role == TavernMessage.ASSISTANT }
     val values = values(card, memory, firstTurn, hasLore = hits.isNotEmpty(), vars = vars) + blocks(hits, card, vars)
+    // 卡作者的系统提示只在用户显式打开时替换应用模板；{{original}} 代表原来的模板。
+    val effective = effectivePreset(card, preset)
 
     val out = ArrayList<TavernMessage>(history.size + hits.size + 2)
-    out += TavernMessage(TavernMessage.SYSTEM, systemMessage(preset, values, vars))
+    out += TavernMessage(TavernMessage.SYSTEM, systemMessage(effective, values, vars))
+    if (card.useExampleDialogue) out += exampleMessages(card, vars)
     out += history
     // 只有「按深度」的条目进聊天中间：人设之前/之后的两种已经并进上面那条系统消息了
     placeInChat(out, hits, card, vars)
-    out += TavernMessage(TavernMessage.SYSTEM, renderPreset(preset.postHistory, values, vars))
+    out += TavernMessage(TavernMessage.SYSTEM, renderPreset(effective.postHistory, values, vars))
     // 空的 tail 不能发：一条内容为空的 system 会让部分提供商直接 400
     if (!tail.isNullOrBlank()) out += TavernMessage(TavernMessage.SYSTEM, tail.trim())
     return out
@@ -91,37 +97,35 @@ object TavernPrompt {
     state: TurnState,
     injections: List<WorldInjection>,
   ): List<TavernMessage> {
-    val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }).turns
+    val history = ContextBudget.trim(turns.filter { it.content.isNotBlank() }, preset.historyChars).turns
+    val effective = effectivePreset(card, preset)
+    // 常驻条目有独立预算，走 {{world}} 槽位，不和关键词条目抢位置与名额。
+    val constants = injections.filter { it.position == "constant" }
     val values = values(
       card.copy(world = emptyList()),
       memory,
       history.none { it.role == TavernMessage.ASSISTANT },
-      injections.isNotEmpty(),
+      injections.any { it.position != "constant" },
       state.vars,
     ) +
-      mapOf("world_before" to "", "world_after" to "")
+      mapOf(
+        "world" to constants.joinToString("\n") { "· ${it.content}" },
+        "world_before" to "",
+        "world_after" to "",
+      )
     val before = injections.filter { it.position == "before" }.joinToString("\n\n") { it.content }
     val after = injections.filter { it.position == "after" }.joinToString("\n\n") { it.content }
 
-    // An old template without exact slots cannot express character-relative placement.
-    fun requireSlot(content: String, slot: String) {
-      if (content.isBlank()) return
-      worldCheck(
-        preset.system.indexOf(slot) >= 0 && preset.system.indexOf(slot) == preset.system.lastIndexOf(slot),
-        "WORLD_CHARACTER_ANCHOR_INCOMPATIBLE",
-      )
-    }
-    requireSlot(before, "{{world_before}}")
-    requireSlot(after, "{{world_after}}")
-    val system = renderPreset(preset.system, values + mapOf("world_before" to before, "world_after" to after), state.vars)
+    val system = plannedSystem(effective, values, state.vars, before, after)
     val out = arrayListOf(TavernMessage(TavernMessage.SYSTEM, system))
+    if (card.useExampleDialogue) out += exampleMessages(card, state.vars)
     out += history
     injections.filter { it.position == "depth" }
-      .groupBy { (1 + history.size - it.depth.coerceIn(0, MAX_DEPTH)).coerceIn(1, 1 + history.size) }
+      .groupBy { (out.size - it.depth.coerceIn(0, MAX_DEPTH)).coerceIn(1, out.size) }
       .toSortedMap(reverseOrder()).forEach { (at, entries) ->
         out.addAll(at, entries.map { TavernMessage(it.role, it.content) })
       }
-    val post = renderPreset(preset.postHistory, values, state.vars)
+    val post = renderPreset(effective.postHistory, values, state.vars)
     if (post.isNotBlank()) out += TavernMessage(TavernMessage.SYSTEM, post)
     state.tail?.takeIf { it.isNotBlank() }?.let { out += TavernMessage(TavernMessage.SYSTEM, it.trim()) }
     return out
@@ -142,13 +146,45 @@ object TavernPrompt {
     return if (after.isNotBlank() && !preset.system.contains("{{world_after}}")) "$head\n\n$after" else head
   }
 
+  /** 槽位缺失时退化成附在系统提示末尾；重复槽位仍然拒绝（位置有歧义）。 */
+  private fun plannedSystem(
+    preset: TavernPreset,
+    values: Map<String, String>,
+    vars: TavernVars,
+    before: String,
+    after: String,
+  ): String {
+    fun slotState(slot: String): Int =
+      when {
+        preset.system.indexOf(slot) < 0 -> 0
+        preset.system.indexOf(slot) == preset.system.lastIndexOf(slot) -> 1
+        else -> 2
+      }
+
+    fun requireSlot(content: String, slot: String) {
+      if (content.isNotBlank()) worldCheck(slotState(slot) != 2, "WORLD_CHARACTER_ANCHOR_INCOMPATIBLE")
+    }
+    requireSlot(before, "{{world_before}}")
+    requireSlot(after, "{{world_after}}")
+    val fallback =
+      buildString {
+        if (before.isNotBlank() && slotState("{{world_before}}") == 0) append("\n\n【世界设定·前置】\n").append(before)
+        if (after.isNotBlank() && slotState("{{world_after}}") == 0) append("\n\n【世界设定·补充】\n").append(after)
+      }
+    return renderPreset(
+      preset.system + fallback,
+      values + mapOf("world_before" to before, "world_after" to after),
+      vars,
+    )
+  }
+
   /** 把「按深度」的条目插进 [out] 的聊天段。从最深的一处往近处插，先插远的不会被后面挤偏。 */
   private fun placeInChat(out: MutableList<TavernMessage>, hits: List<WorldEntry>, card: CharacterCard, vars: TavernVars) {
     hits
       .filter { it.position == WorldEntry.POSITION_DEPTH }
       .sortedByDescending { it.depth }
       .forEach { entry ->
-        val at = (out.size - entry.depth.coerceIn(1, MAX_DEPTH)).coerceIn(1, out.size)
+        val at = (out.size - entry.depth.coerceIn(0, MAX_DEPTH)).coerceIn(1, out.size)
         out.add(at, TavernMessage(roleOf(entry), loreBlock(entry, card, vars)))
       }
   }
@@ -205,7 +241,7 @@ object TavernPrompt {
     val constant =
       WorldScan.constantBlock(card.world.map { it.copy(content = cardText(it.content, card, vars)) })
     return buildMap {
-      put("char", card.name)
+      put("char", card.displayName)
       put("user", USER_NAME)
       put("description", cardText(card.description, card, vars))
       put("personality", cardText(card.personality, card, vars))
@@ -233,6 +269,39 @@ object TavernPrompt {
   internal fun cardText(text: String, card: CharacterCard, vars: TavernVars): String =
     CharacterStore.renderText(TavernMacros.render(text, vars), card)
 
+  /** 用户打开「使用卡内提示」时，把卡作者的两段模板接进预设；`{{original}}` 展开为原模板。 */
+  internal fun effectivePreset(card: CharacterCard, preset: TavernPreset): TavernPreset {
+    if (!card.useCardPrompt) return preset
+    val system = card.archivedText("system_prompt").replace("{{original}}", preset.system).ifBlank { preset.system }
+    val post =
+      card.archivedText("post_history_instructions")
+        .replace("{{original}}", preset.postHistory)
+        .ifBlank { preset.postHistory }
+    return preset.copy(system = system, postHistory = post)
+  }
+
+  /**
+   * `mes_example` → 交替的 user/assistant 消息（ST 的格式）。
+   *
+   * 认不出 `{{user}}:` / `{{char}}:` 前缀时退化成一条 system 块，至少不丢内容。
+   * 只有用户显式打开 `useExampleDialogue` 才会走到这里。
+   */
+  internal fun exampleMessages(card: CharacterCard, vars: TavernVars): List<TavernMessage> {
+    val raw = card.archivedText("mes_example").trim()
+    if (raw.isBlank()) return emptyList()
+    val messages = mutableListOf<TavernMessage>()
+    raw.split(Regex("(?i)<START>")).map { it.trim() }.filter { it.isNotEmpty() }.forEach { block ->
+      block.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach { line ->
+        when {
+          line.startsWith("{{user}}:") -> messages += TavernMessage(TavernMessage.USER, line.removePrefix("{{user}}:").trim())
+          line.startsWith("{{char}}:") -> messages += TavernMessage(TavernMessage.ASSISTANT, line.removePrefix("{{char}}:").trim())
+        }
+      }
+    }
+    if (messages.isEmpty()) return listOf(TavernMessage(TavernMessage.SYSTEM, "【示例对话】\n${cardText(raw, card, vars)}"))
+    return messages.map { it.copy(content = cardText(it.content, card, vars)) }
+  }
+
   /**
    * 渲染 + 收掉多余空行（条件块被整段消掉时前面会留下连续换行）。
    *
@@ -245,9 +314,16 @@ object TavernPrompt {
   internal fun loreBlock(entry: WorldEntry, card: CharacterCard, vars: TavernVars = TavernVars()): String =
     "${LoreInject.MARK_OPEN}\n${cardText(entry.content, card, vars)}\n${LoreInject.MARK_CLOSE}"
 
-  /** 关键词来源：这一轮 + 最近几条用户消息。 */
-  internal fun keywordSource(history: List<TavernMessage>): String =
-    history.filter { it.role == TavernMessage.USER }.map { it.content }.takeLast(LOOK_BACK).joinToString("\n")
+  /** 关键词来源：最近 [depth] 条消息（用户和角色都说过的都算），角色消息带说话人前缀。 */
+  internal fun keywordSource(history: List<TavernMessage>, depth: Int = SCAN_DEPTH, characterName: String = ""): String =
+    history.takeLast(depth.coerceIn(0, MAX_DEPTH)).joinToString("\n") { message ->
+      // 不给用户消息加通用前缀：像「用户」这种词一旦成了前缀，任何卡的对应关键词都会每轮命中。
+      if (message.role == TavernMessage.ASSISTANT && characterName.isNotBlank()) {
+        "$characterName: ${message.content}"
+      } else {
+        message.content
+      }
+    }
 
   /**
    * 一轮的跨轮状态。

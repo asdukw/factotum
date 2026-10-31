@@ -15,13 +15,22 @@ object CharacterImporter {
     val parsed = CardInput.parse(bytes)
     val result = map(parsed.root, fallbackName)
     val extra = mutableListOf<CardCompatibilityNote>()
-    if (parsed.keyword != null) {
+    if (parsed.keyword in setOf("chara", "ccv3", "character")) {
       extra += CardCompatibilityNote(
         "png_source",
         "PNG",
         CardHandling.CONVERTED,
         "采用 ${parsed.keyword} 载荷；只保存 JSON，不保存图片与附件实体。",
       )
+    }
+    if (parsed.keyword == "charx") {
+      extra +=
+        CardCompatibilityNote(
+          "charx_source",
+          "CHARX",
+          CardHandling.CONVERTED,
+          "只读取了 card.json；嵌入式图片与附件实体未解包，导出 CHARX 时不包含这些资产。",
+        )
     }
     if (parsed.fallback) {
       extra += CardCompatibilityNote(
@@ -96,8 +105,13 @@ object CharacterImporter {
     val name = data["name"]?.string()?.trim().orEmpty().ifEmpty { fallbackName }
     val description = data["description"]?.string().orEmpty().trim()
     val personality = data["personality"]?.string().orEmpty().trim()
-    if (description.isBlank() && personality.isBlank()) {
-      throw ImportException("这张卡没有 description / personality，导入后没法扮演")
+    // 空的人设字段在 CCv2/V3 里合法：旁白卡、设定卡、CYOA 卡经常只写 scenario / first_mes。
+    val hasAnyContent =
+      listOf("description", "personality", "scenario", "first_mes", "first_message").any {
+        data[it]?.string()?.isNotBlank() == true
+      }
+    if (!hasAnyContent) {
+      throw ImportException("这张卡没有任何扮演内容（description / personality / scenario / first_mes 都为空）")
     }
 
     val card =
@@ -105,12 +119,15 @@ object CharacterImporter {
         id = newId(),
         name = name,
         tagline = data["creator_notes"]?.string()?.trim()?.lines()?.firstOrNull()?.take(40).orEmpty(),
-        tags = data["tags"]?.let { element -> (element as? JsonArray)?.mapNotNull { it.string() } }.orEmpty().take(6),
+        // 完整保留：截断只属于列表展示，写回导出时必须带着作者的全部标签。
+        tags = data["tags"]?.let { element -> (element as? JsonArray)?.mapNotNull { it.string() } }.orEmpty(),
         description = description,
         personality = personality,
         scenario = data["scenario"]?.string().orEmpty().trim(),
         firstMes = (data["first_mes"] ?: data["first_message"])?.string().orEmpty().trim(),
-        alternateGreetings = readGreetings(data),
+        alternateGreetings = readGreetings(data, "alternate_greetings", "alternateGreetings"),
+        groupOnlyGreetings = readGreetings(data, "group_only_greetings", "groupOnlyGreetings"),
+        nickname = data["nickname"]?.string()?.trim().orEmpty(),
         world = readWorld(data),
         creator = data["creator"]?.string().orEmpty().trim(),
         license = "",
@@ -126,9 +143,9 @@ object CharacterImporter {
     return WorldEntryReader.entriesOf(book["entries"] as JsonArray)
   }
 
-  /** 备用开场白：v3 里是 `alternate_greetings` 数组，个别卡写成顶层 `alternateGreetings`。 */
-  private fun readGreetings(data: JsonObject): List<String> =
-    (data["alternate_greetings"] ?: data["alternateGreetings"])
+  /** 开场白数组：v3 里是 `alternate_greetings` / `group_only_greetings`，个别卡写成驼峰。 */
+  private fun readGreetings(data: JsonObject, vararg keys: String): List<String> =
+    keys.firstNotNullOfOrNull { data[it] }
       ?.let { element -> if (element is JsonArray) element else JsonArray(listOf(element)) }
       ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content?.trim() }
       ?.filter { it.isNotEmpty() }

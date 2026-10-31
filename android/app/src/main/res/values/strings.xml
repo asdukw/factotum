@@ -2,5 +2,5 @@
     <string name="app_name">zoneu</string>
     <string name="accessibility_service_label">zoneu 无障碍服务</string>
     <string name="accessibility_service_summary">读取屏幕 / 点击 / 输入 / 截图</string>
-    <string name="accessibility_service_description">供 zoneu agent 读取当前界面、点击、输入与截图。仅在你明确启用后生效；探针期只做能力实测，不采集页面内容。</string>
+    <string name="accessibility_service_description">供 zoneu agent 在你发起的任务中读取当前界面的控件树、点击、输入并截图。界面文字与截图会作为工具结果发送给你在设置中选择的模型提供商；除该请求外不写入日志或持久化。仅在你明确启用后生效。</string>
 </resources>

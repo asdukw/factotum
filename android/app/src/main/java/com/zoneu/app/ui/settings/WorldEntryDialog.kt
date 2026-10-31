@@ -31,6 +31,20 @@ private val worldFieldLabels = mapOf(
   "cooldown" to "冷却轮数",
   "position" to "位置 0 人设前 / 1 人设后 / 4 历史深度",
   "role" to "角色 0 system / 1 user / 2 assistant",
+  "selective" to "选择性副词 true / false（空 = 不指定）",
+  "group" to "互斥组（逗号分隔）",
+  "group_override" to "组内优先（true / false）",
+  "group_weight" to "组内权重",
+  "use_group_scoring" to "按命中数决定组内赢家（true / false）",
+  "delay" to "开场后延迟轮数",
+  "delay_until_recursion" to "递归门控层（0 = 不限）",
+  "ignore_budget" to "超出预算也插入（true / false）",
+  "triggers" to "生成类型（每行一个，空 = 全部）",
+  "character_filter_names" to "角色名过滤（每行一个）",
+  "character_filter_tags" to "角色标签过滤（每行一个）",
+  "character_filter_exclude" to "角色过滤取反（true / false）",
+  "scan_depth" to "扫描深度（空 = 用预设值）",
+  "vectorized" to "向量化标记（仅保留，不激活）",
 )
 private val worldSwitchLabels = mapOf(
   "enabled" to "条目启用",
@@ -70,7 +84,14 @@ internal fun WorldEntryDialog(
     },
     confirmButton = {
       TextButton(enabled = !busy, onClick = {
-        runCatching { form.patch() }.onSuccess { onSave(form) }.onFailure { invalid = "数值或字段无效；草稿仍保留。" }
+        // onSave 也必须包进来：条目校验与整本提交都是同步抛异常的，
+        // 只包 patch() 会让异常从 Compose 点击回调逃逸并带走未保存的草稿。
+        runCatching {
+          form.patch()
+          onSave(form)
+        }.onFailure {
+          invalid = "数值或字段无效；草稿仍保留。"
+        }
       }) { Text("保存条目") }
     },
     dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") } },

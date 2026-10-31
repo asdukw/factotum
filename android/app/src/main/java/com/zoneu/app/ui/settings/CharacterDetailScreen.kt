@@ -212,20 +212,37 @@ internal fun CharacterDetailScreen(
         AboutCard(card)
         CardCompatibilityReport(card)
 
-        if (card.imported) {
-          Spacer(Modifier.height(16.dp))
-          TextButton(onClick = onDelete) {
-            Text("删除这张卡", color = MaterialTheme.colorScheme.error)
-          }
-          Text(
-            text = "删卡不会删掉已经聊过的会话：历史仍然在酒馆里，只是标成「已删除的角色」。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-          )
-        }
+        DeleteCardSection(card, onDelete)
       }
     }
+  }
+}
+
+/** 导入卡才可删；记忆与世界书绑定会一起消失，所以点击后先确认。 */
+@Composable
+private fun DeleteCardSection(card: CharacterCard, onDelete: () -> Unit) {
+  var confirming by remember { mutableStateOf(false) }
+  if (!card.imported) return
+  Spacer(Modifier.height(16.dp))
+  TextButton(onClick = { confirming = true }) {
+    Text("删除这张卡", color = MaterialTheme.colorScheme.error)
+  }
+  Text(
+    text = "删卡会同时删除角色记忆与默认共享世界书绑定；已经聊过的会话会保留，" +
+      "只是标成「已删除的角色」。此操作无法撤销。",
+    style = MaterialTheme.typography.bodySmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(horizontal = 4.dp),
+  )
+  if (confirming) {
+    ConfirmDeleteCardDialog(
+      name = card.name,
+      onDismiss = { confirming = false },
+      onConfirm = {
+        confirming = false
+        onDelete()
+      },
+    )
   }
 }
 

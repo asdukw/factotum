@@ -47,15 +47,17 @@ object WorldRuntime {
           emptyList(),
         )
         return@withLock WorldRequestPlan(
-          request.requestId,
-          request.sessionId,
-          snapshot.manifest?.revision ?: "empty",
-          "auxiliary",
-          snapshot.state.turn,
-          seed,
-          emptyList(),
-          emptyList(),
-          emptyList(),
+          requestId = request.requestId,
+          sessionId = request.sessionId,
+          bindingRevision = snapshot.manifest?.revision ?: "empty",
+          generation = "auxiliary",
+          turn = snapshot.state.turn,
+          requestKind = request.generation,
+          advanceTurn = false,
+          seed = seed,
+          injections = emptyList(),
+          decisions = emptyList(),
+          activated = emptyList(),
           messages = rendered.first.map { WorldPromptMessage(it.role, it.content) },
         )
       }
@@ -64,14 +66,30 @@ object WorldRuntime {
         return@withLock it
       }
       val snapshot = snapshot(context, request.sessionId)
-      repo.savePlan(makePlan(snapshot, request.requestId, "direct", request.history, request.tail, request.recap))
+      repo.savePlan(
+        makePlan(
+          snapshot,
+          PlanSpec(
+            requestId = request.requestId,
+            generation = "direct",
+            history = request.history,
+            tail = request.tail,
+            recap = request.recap,
+            kind = request.generation,
+            anchorId = request.anchorId,
+          ),
+        ),
+      )
     }
 
     override suspend fun settle(requestId: String, success: Boolean, evidence: String) {
       val repo = context.worldBookRepository()
       val plan = repo.plan(requestId) ?: return
       val settled = repo.settlePlan(requestId, success, WorldResolver.digest(evidence))
-      if (success && plan.status == "prepared" && settled.status == "settled") PrefsVarsStore(context).save(plan.sessionId, plan.variables)
+      val settledOk = plan.status == "prepared" && settled.status == "settled"
+      if (success && settledOk && plan.advanceTurn) {
+        PrefsVarsStore(context).save(plan.sessionId, plan.variables)
+      }
     }
   }
 
@@ -105,7 +123,8 @@ object WorldRuntime {
       manifest,
       if (includeWorld) WorldResolver.resolve(sessionId, cards, manifest, books) else emptyList(),
       if (includeWorld) repo.runtimeState(sessionId) else WorldRuntimeState(),
-      if (readOnly) emptyMap() else PrefsVarsStore(context).load(sessionId),
+      // 读取是安全的：解释器要用真实变量渲染，才能和生成时的预算判定一致。
+      PrefsVarsStore(context).load(sessionId),
       memory,
       preset,
     )
@@ -116,73 +135,124 @@ object WorldRuntime {
     return if (clean.size > 1) GroupCast.merge(clean) else clean.first()
   }
 
-  private fun makePlan(
-    snapshot: Snapshot,
-    requestId: String,
-    generation: String,
-    history: List<TavernMessage>,
-    tail: String? = null,
-    recap: String? = null,
-    dshAnchor: String = "",
-  ): WorldRequestPlan {
-    val trimmed = ContextBudget.trim(history.filter { it.content.isNotBlank() }).turns
-    val seed = WorldResolver.digest(requestId).take(8).toLong(16).toInt()
-    val now = System.currentTimeMillis()
-    var values = snapshot.variables
+  /** 一次生成请求的输入；打包后 [makePlan] 不再跟着参数表增长。 */
+  private data class PlanSpec(
+    val requestId: String,
+    val generation: String,
+    val history: List<TavernMessage>,
+    val tail: String? = null,
+    val recap: String? = null,
+    val dshAnchor: String = "",
+    val kind: String = WorldSelection.GENERATION_NORMAL,
+    val anchorId: String = "",
+  )
+
+  private fun makePlan(snapshot: Snapshot, spec: PlanSpec): WorldRequestPlan {
+    val preset = snapshot.preset
+    val trimmed = ContextBudget.trim(spec.history.filter { it.content.isNotBlank() }, preset.historyChars).turns
+    // 同一个用户交换的重写/续写必须复用同一轮与同一个 seed，否则 sticky 会提前过期、
+    // 候选回答看到的设定也会互相矛盾。
+    val advance = spec.kind == WorldSelection.GENERATION_NORMAL
+    val planTurn = snapshot.state.turn + if (advance) 1 else 0
+    val seed = WorldResolver.digest("${spec.anchorId.ifBlank { spec.requestId }}:$planTurn").take(8).toLong(16).toInt()
     val persona = cleanPersona(snapshot.cards)
-    val selection = WorldSelection.select(
-      WorldSelection.Input(
-        snapshot.entries,
-        TavernPrompt.keywordSource(trimmed),
-        snapshot.state,
-        seed,
-        WorldScan.Limits(depth = snapshot.preset.recursionDepth),
-      ),
-    ) { entry, budget ->
-      val table = TavernVars(values)
-      val card = snapshot.cards.firstOrNull { "card:${it.id}" == entry.bookId } ?: persona
-      val content = CharacterStore.renderText(
-        TavernMacros.render(
-          entry.rule.content,
-          table,
-          now,
-          Random(seed.toLong() xor entry.key.hashCode().toLong()),
-        ),
-        card,
-      )
-      if (content.isNotBlank() && content.length <= budget) values = table.snapshot()
-      content
-    }
-    val rendered = if (generation == "direct") {
-      renderDirect(
-        snapshot,
-        persona,
-        trimmed,
-        tail to recap,
-        seed,
-        selection.injections,
-        values,
-      )
-    } else {
-      null
-    }
-    val anchor = rendered?.first?.firstOrNull { it.role == TavernMessage.SYSTEM }?.content ?: dshAnchor
+    val (selection, selectedValues) = selectEntries(snapshot, persona, trimmed, seed, spec.kind, advance)
+    var values = selectedValues
+    // dsh 的上下文由运行时定，停在前情提要里等于长会话失忆；把提要作为末尾 system 深度注入。
+    val recapInjection =
+      if (spec.generation != "direct" && !spec.recap.isNullOrBlank()) {
+        listOf(
+          WorldInjection(
+            entryId = "zoneu-recap",
+            key = "recap",
+            position = "depth",
+            depth = 0,
+            role = "system",
+            content = "【前情提要】\n${spec.recap.trim()}",
+          ),
+        )
+      } else {
+        emptyList()
+      }
+    // dsh 的唯一投影协议只认 before/after/depth：常驻条目在那边退化成末尾深度插入。
+    val injections =
+      if (spec.generation == "direct") {
+        selection.injections
+      } else {
+        selection.injections.map { if (it.position == "constant") it.copy(position = "depth", depth = 0) else it } + recapInjection
+      }
+    val rendered =
+      if (spec.generation == "direct") {
+        renderDirect(snapshot, persona, trimmed, spec.tail to spec.recap, seed, injections, values)
+      } else {
+        null
+      }
+    val anchor = rendered?.first?.firstOrNull { it.role == TavernMessage.SYSTEM }?.content ?: spec.dshAnchor
     val messages = rendered?.first.orEmpty()
     values = rendered?.second ?: values
     return WorldRequestPlan(
-      requestId,
-      snapshot.session.id,
-      snapshot.manifest?.revision ?: "empty",
-      generation,
-      snapshot.state.turn + 1,
-      seed,
-      selection.injections,
-      selection.decisions,
-      selection.activated,
+      requestId = spec.requestId,
+      sessionId = snapshot.session.id,
+      bindingRevision = snapshot.manifest?.revision ?: "empty",
+      generation = spec.generation,
+      turn = planTurn,
+      requestKind = spec.kind,
+      advanceTurn = advance,
+      seed = seed,
+      injections = injections,
+      decisions = selection.decisions,
+      activated = selection.activated,
       characterAnchor = anchor,
       variables = values,
       messages = messages.map { WorldPromptMessage(it.role, it.content) },
     )
+  }
+
+  /** 选条目并渲染宏；只有装进预算的那条才提交 `{{setvar}}` 的变量写入。 */
+  private fun selectEntries(
+    snapshot: Snapshot,
+    persona: CharacterCard,
+    trimmed: List<TavernMessage>,
+    seed: Int,
+    kind: String,
+    advance: Boolean,
+  ): Pair<WorldSelection.Result, Map<String, String>> {
+    val preset = snapshot.preset
+    val now = System.currentTimeMillis()
+    var values = snapshot.variables
+    val selection =
+      WorldSelection.select(
+        WorldSelection.Input(
+          entries = snapshot.entries,
+          text = TavernPrompt.keywordSource(trimmed, preset.scanDepth, persona.name),
+          state = snapshot.state,
+          seed = seed,
+          limits =
+            WorldScan.Limits(
+              maxEntries = preset.worldEntries,
+              maxChars = preset.worldChars,
+              maxConstantChars = preset.constantChars,
+              depth = preset.recursionDepth,
+            ),
+          generation = kind,
+          characterNames = snapshot.cards.map { it.name },
+          characterTags = snapshot.cards.flatMap { it.tags }.toSet(),
+          history = trimmed,
+          scanDepth = preset.scanDepth,
+          characterName = persona.name,
+          turnAdvance = advance,
+        ),
+      ) { entry, budget ->
+        val table = TavernVars(values)
+        val card = snapshot.cards.firstOrNull { "card:${it.id}" == entry.bookId } ?: persona
+        val content = CharacterStore.renderText(
+          TavernMacros.render(entry.rule.content, table, now, Random(seed.toLong() xor entry.key.hashCode().toLong())),
+          card,
+        )
+        if (content.isNotBlank() && content.length <= budget) values = table.snapshot()
+        content
+      }
+    return selection to values
   }
 
   private fun renderDirect(
@@ -215,36 +285,80 @@ object WorldRuntime {
 
   suspend fun explain(context: Context, sessionId: String, text: String = ""): JsonObject {
     val snapshot = snapshot(context, sessionId, readOnly = true)
+    val preset = snapshot.preset
+    val recent =
+      context.zoneuSessionStore().messages(sessionId)
+        .filter { it.status == com.zoneu.app.data.db.MessageStatus.Complete }
+        .map {
+          TavernMessage(
+            if (it.role == com.zoneu.app.data.db.MessageRole.User) TavernMessage.USER else TavernMessage.ASSISTANT,
+            it.content,
+          )
+        }
+    val scanned = if (text.isBlank()) TavernPrompt.keywordSource(recent, preset.scanDepth, snapshot.cards.first().name) else text
+    val seed = WorldResolver.digest("explain:$sessionId:${snapshot.state.turn + 1}").take(8).toLong(16).toInt()
+    val now = System.currentTimeMillis()
     val result = WorldSelection.select(
       WorldSelection.Input(
-        snapshot.entries,
-        text,
-        snapshot.state,
-        limits = WorldScan.Limits(depth = snapshot.preset.recursionDepth),
+        entries = snapshot.entries,
+        text = scanned,
+        state = snapshot.state,
+        seed = seed,
+        limits =
+          WorldScan.Limits(
+            maxEntries = preset.worldEntries,
+            maxChars = preset.worldChars,
+            maxConstantChars = preset.constantChars,
+            depth = preset.recursionDepth,
+          ),
         explain = true,
+        characterNames = snapshot.cards.map { it.name },
+        characterTags = snapshot.cards.flatMap { it.tags }.toSet(),
+        history = if (text.isBlank()) recent else emptyList(),
+        scanDepth = preset.scanDepth,
+        characterName = snapshot.cards.first().name,
       ),
-    )
+    ) { entry, _ ->
+      // 只读渲染：预算判定必须和真实生成用同一段宏展开结果，但不能回写变量。
+      val card = snapshot.cards.firstOrNull { "card:${it.id}" == entry.bookId } ?: snapshot.cards.first()
+      CharacterStore.renderText(
+        TavernMacros.render(
+          entry.rule.content,
+          TavernVars(snapshot.variables),
+          now,
+          Random(seed.toLong() xor entry.key.hashCode().toLong()),
+        ),
+        card,
+      )
+    }
     return buildJsonObject {
       put("kind", "zoneu.world.explain.v1")
       put("session_id", sessionId)
       put("binding_revision", snapshot.manifest?.revision ?: "empty")
-      put("turn", snapshot.state.turn)
+      put("turn", snapshot.state.turn + 1)
       put(
-        "decisions",
-        JsonArray(
-          result.decisions.map { decision ->
-            buildJsonObject {
-              put("entry_id", decision.entryId)
-              put("book_id", decision.bookId)
-              put("sources", JsonArray(decision.sources.map(::JsonPrimitive)))
-              put("reason", decision.reason)
-              put("selected", decision.selected)
-              put("chars", decision.chars)
-            }
-          },
-        ),
+        "budget",
+        buildJsonObject {
+          put("max_entries", preset.worldEntries)
+          put("max_chars", preset.worldChars)
+          put("max_constant_chars", preset.constantChars)
+        },
       )
+      put("decisions", JsonArray(result.decisions.map(::decisionJson)))
     }
+  }
+
+  private fun decisionJson(decision: WorldDecision): JsonObject = buildJsonObject {
+    put("entry_id", decision.entryId)
+    put("book_id", decision.bookId)
+    put("revision", decision.revision)
+    put("sources", JsonArray(decision.sources.map(::JsonPrimitive)))
+    put("reason", decision.reason)
+    put("selected", decision.selected)
+    put("chars", decision.chars)
+    put("position", decision.position)
+    put("role", decision.role)
+    put("depth", decision.depth)
   }
 
   /** Apply only the saved chat cast, then reload before acquiring the task lease. */
@@ -270,11 +384,31 @@ object WorldRuntime {
     val requestId = UUID.randomUUID().toString()
     val snapshot = snapshot(context, sessionId)
     val anchor = PersonaStore.worldCharacterAnchor(context, snapshot.cards)
-    val recent = context.zoneuSessionStore().messages(sessionId).filter {
-      it.role == com.zoneu.app.data.db.MessageRole.User && it.status == com.zoneu.app.data.db.MessageStatus.Complete
-    }.takeLast(TavernPrompt.LOOK_BACK).map { TavernMessage(TavernMessage.USER, it.content) }
+    val messages =
+      context.zoneuSessionStore().messages(sessionId).filter {
+        it.status == com.zoneu.app.data.db.MessageStatus.Complete
+      }
+    val recent =
+      messages.map {
+        TavernMessage(
+          if (it.role == com.zoneu.app.data.db.MessageRole.User) TavernMessage.USER else TavernMessage.ASSISTANT,
+          it.content,
+        )
+      }
+    val anchorId = messages.lastOrNull { it.role == com.zoneu.app.data.db.MessageRole.User }?.id.orEmpty()
     val history = if (recent.lastOrNull()?.content == text) recent else recent + TavernMessage(TavernMessage.USER, text)
-    val plan = makePlan(snapshot, requestId, "dsh", history, dshAnchor = anchor)
+    val plan =
+      makePlan(
+        snapshot,
+        PlanSpec(
+          requestId = requestId,
+          generation = "dsh",
+          history = history,
+          dshAnchor = anchor,
+          kind = WorldSelection.GENERATION_NORMAL,
+          anchorId = anchorId,
+        ),
+      )
     if (plan.injections.any { it.position != "depth" }) {
       val system = PersonaStore.compose(context)
       worldCheck(

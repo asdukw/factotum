@@ -56,6 +56,13 @@ docs/                     深度文档 + releases/<tag>.md
 
 ## 3. 构建与测试
 
+克隆后先装一次 pre-push 钩子（`core.hooksPath` 存在共享 `.git/config`，对全部 worktree 生效）：
+它会在推送前跑与 CI 相同的静态检查、JVM 单测和 androidTest 编译，避免「推到云上才发现红了」。
+
+```powershell
+git config core.hooksPath tools/hooks
+```
+
 从 `android/` 执行：
 
 ```powershell

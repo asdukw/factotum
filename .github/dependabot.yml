@@ -6,7 +6,9 @@ updates:
     directory: /android
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    # 常规版本升级 PR 会打断发版节奏（一个 androidX bump 就能让主线的 androidTest 变红）。
+    # 设为 0 只关掉版本升级；安全更新由 advisory 单独触发，不受这个上限影响。
+    open-pull-requests-limit: 0
     commit-message:
       prefix: build
     cooldown:

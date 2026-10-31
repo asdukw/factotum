@@ -17,7 +17,7 @@ kotlin = "2.4.21"
 kotlinxSerialization = "1.11.0"
 nav3Core = "1.0.1"
 lifecycleViewmodelNav3 = "2.10.0"
-okhttp = "4.12.0"
+okhttp = "5.5.1"
 # Markdown 渲染（Compose）：GFM + 表格 + 代码高亮，解析异步在库内完成
 markdownRenderer = "0.46.0"
 sqlcipher = "4.19.1"

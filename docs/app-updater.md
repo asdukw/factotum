@@ -35,7 +35,7 @@
 - **不静默安装、不后台轮询**（与连接器同一条原则）：只在用户点的时候联网，确认框留给系统安装器。
 - **debug 包不参与应用内更新**：debug 与 release 签名不同，下载的 release APK 必然装不上，
   自动检查（`UpdateReminder`）与设置页入口都只在 `!BuildConfig.DEBUG` 时生效。
-  日常真机装 debug（见 `AGENTS.md` §8.1），更新走 `adb install -r`；release 的更新流程在
+  日常真机装 debug（见 [device-verification.md](device-verification.md) §1），更新走 `adb install -r`；release 的更新流程在
   CI / 可随时清空的设备上验证。
 
 ## 3. 验证

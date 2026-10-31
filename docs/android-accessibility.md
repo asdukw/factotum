@@ -9,7 +9,7 @@
 > **已随功能一起删除** —— 它是开发期的诊断入口，不该出现在使用者面前。
 > 本文下面的实测结论与数值**保持原样**（它们是这台设备 / 这个 ROM 的记录，仍然有效），
 > 但文中的「怎么跑」部分现在只有历史意义：执行层的原子动作仍可用
-> `DeviceActionReceiver` 广播驱动（见 AGENTS.md 的 debug 广播一节），
+> `DeviceActionReceiver` 广播驱动（见 [device-verification.md](device-verification.md) §3），
 > 四问那套能力自检要重新做的话，得先把探针加回来。
 
 旧设计文档 `docs/mobile-agent.md` 已随旧管线一起删除，且**不在本仓库历史里**（2026-10-12 的历史重建把它连同其中的真实标识一起去掉了）。

@@ -8,7 +8,7 @@ param(
 )
 
 # 本机 debug 包上真机：打包 → 覆盖安装 → 重开无障碍 → 打印设备上的版本。
-# AGENTS.md §8.1 的手工步骤固化在这里，省掉每次手敲时的几个坑：
+# docs/device-verification.md §1 的手工步骤固化在这里，省掉每次手敲时的几个坑：
 #   - Gradle 的自动安装在 ColorOS 上会挂 ~5 分钟后失败，所以这里只用 `adb install -r`；
 #   - `install -r` 会关掉无障碍服务，装完必须重开；
 #   - 包名跟随 `zoneu.debugSuffix`，无障碍组件要写**完整类名**（相对写法会拼到带后缀的包名上）；

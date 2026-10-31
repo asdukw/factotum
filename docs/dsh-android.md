@@ -57,6 +57,11 @@ zoneu APK（单进程）
   去掉 shell/subprocess/sandbox/terminal/attachment，保留
   timer/llm/session/system-prompt/tools/mcp-resources/agent/llm-retry/jobs/agent-loop/
   sessions，  再挂 `llm-pi-ai`、android/chat 插件与 `ask-user`（审批）。
+- **桥的边界**：只监听 `127.0.0.1` + 每进程随机 token，只暴露 `POST /action`，
+  不往设备上安装任何东西。
+- **重载不重启**：宿主写非密的 `dsh-home/runtime-config.json` 并发 `runtime.reload`，
+  launcher 重挂 cordis 根；重载后要重新 `initialize` 并轮换会话命名空间（`runtimeTag`）。
+  密钥以 `ZONEU_LLM_KEY_<ID>` 预置，不落盘。
 
 ## 3. 产物与仓库策略
 
@@ -280,7 +285,7 @@ adb shell am broadcast --include-stopped-packages `
   - 会话抽屉列出会话（标题 + 时间）、新建 / 删按钮与底部 Web / 探针入口都在。
     （2026-10-17：底部那两个入口已删除，只剩「设置」。）
   - 坑：装完第一次用到无障碍时会弹 ColorOS「检测到 zoneu 获取无障碍权限」倒计时弹窗，
-    要点「保持开启」；否则服务会被关掉（AGENTS.md 已记，这里再确认一次）。
+    要点「保持开启」；否则服务会被关掉（见 [device-verification.md](device-verification.md) §1，这里再确认一次）。
   - 未覆盖：抽屉左滑手势、长按选中复制、Web 预览页的新返回栏（这几项靠 Compose 预览 / 后续真机补）。
 - **仍缺**：Web 面板里的会话不进 Room（两套会话各自独立，暂不合并）；工具卡的 `meta`
   （dsh-tool-fs 的 diff 预览）没接；dsh 仍只有 step 级 assistant/message，token 级增量见下条更新；

@@ -2,6 +2,15 @@
 
 > 书库、编辑器、绑定与请求投影已实现；真机验收仍按本文末尾的完成标准逐项记录。世界书条目支持 ST 的 `selective`、互斥组（`group` / `group_override` / `group_weight` / `use_group_scoring`）、`delay`、`delay_until_recursion`、`ignoreBudget`、`triggers`、角色过滤、条目级 `scanDepth`，以及书级 `scan_depth` / `token_budget` / `recursive_scanning`。正则匹配与向量化仍未执行：字段保留并报告，不静默降级为普通关键词。
 
+## 选择与激活语义
+
+- 激活计算集中在 `WorldSelection`：`selective=false` 时只看主关键词，次级关键词不参与；互斥组按 `group` / `group_override` / `group_weight` / `use_group_scoring` 计分。
+- `delay`、`delay_until_recursion`、`ignoreBudget`、`triggers`、角色过滤、条目级 `scanDepth`，以及书级 `scan_depth` / `token_budget` / `recursive_scanning` 都在这里执行。
+- 关键词扫描覆盖最近 `scanDepth` 条 user + assistant 消息。
+- 常驻条目有独立预算，占用 `{{world}}` 槽位。
+- 重写与续写不推进 sticky / cooldown 时钟。
+- 正则与向量化激活不执行：字段保留并报告，不静默降级成普通关键词。
+
 ## 数据与隐私
 
 只处理用户明确创建、选择导入或绑定的世界书；不扫描其他应用、聊天记录或远程资源。新共享世界书、不可变内容修订、角色默认绑定、会话清单、请求计划和幂等回执计划存于现有 SQLCipher 数据库。旧卡与记忆仍在应用私有文件，不自动迁移、不宣称已加密。

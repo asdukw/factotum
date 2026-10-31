@@ -427,7 +427,7 @@ adb -s $D shell "uiautomator dump /sdcard/ui.xml"
 adb -s $D exec-out cat /sdcard/ui.xml   # 注意：必须 exec-out，adb shell cat 会把 \n 翻成 \r\n
 ```
 
-> `uiautomator dump` 会把 zoneu 的无障碍服务顶掉约 1 秒（`AGENTS.md` 已记），
+> `uiautomator dump` 会把 zoneu 的无障碍服务顶掉约 1 秒（见 [device-verification.md](device-verification.md) §3），
 > 所以**先读屏、再截图**的顺序要固定，否则两次取到的不是同一屏。
 
 ## 11. 下一步（按性价比排序）

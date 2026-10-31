@@ -48,6 +48,7 @@ internal enum class GlyphKind {
   Sliders,
   Cog,
   Speaker,
+  Clock,
 }
 
 @Composable
@@ -97,6 +98,7 @@ private fun DrawScope.drawGlyph(kind: GlyphKind, tint: Color, u: Float) {
     GlyphKind.Sliders,
     GlyphKind.Cog,
     GlyphKind.Speaker,
+    GlyphKind.Clock,
     -> drawActionGlyph(kind, tint, u)
   }
 }
@@ -313,6 +315,13 @@ private fun DrawScope.drawActionGlyph(kind: GlyphKind, tint: Color, u: Float) {
     }
 
     GlyphKind.Speaker -> drawSpeakerGlyph(tint, u)
+
+    // 时钟：表盘 + 时针 / 分针。定时任务那一行用它，比复用 Cog 更像「时间」。
+    GlyphKind.Clock -> {
+      circle(tint, u, 12f, 12f, 8.5f)
+      line(tint, u, 12f, 12f, 12f, 7f)
+      line(tint, u, 12f, 12f, 16f, 13.5f)
+    }
 
     GlyphKind.Cog -> {
       circle(tint, u, 12f, 12f, 3.2f)

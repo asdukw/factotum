@@ -26,7 +26,7 @@ import com.zoneu.app.device.AccessibilityStatus
 
 /**
  * 设置首页：**只放分组入口**，具体项在各自的分页里 ——
- * 模型与服务 / 执行层 / 连接器 / 语音 / 关于。首页不再平铺开关与配置项：
+ * 模型与服务 / 执行层 / 连接器 / 语音 / 定时任务 / 关于。首页不再平铺开关与配置项：
  * 每多一个功能，平铺那版就多一行，很快会长成一棵没有层级的清单。
  *
  * 存在的理由不是「多个配置项」，而是 **发布物里不能有密钥**：密钥只有一个来源 ——
@@ -43,6 +43,7 @@ fun SettingsScreen(
   onOpenExecution: () -> Unit,
   onOpenConnectors: () -> Unit,
   onOpenVoice: () -> Unit,
+  onOpenScheduledTasks: () -> Unit,
   onOpenAbout: () -> Unit,
   onOpenCharacters: () -> Unit = {},
   onOpenTavernPresets: () -> Unit = {},
@@ -65,6 +66,7 @@ fun SettingsScreen(
     onOpenExecution = onOpenExecution,
     onOpenConnectors = onOpenConnectors,
     onOpenVoice = onOpenVoice,
+    onOpenScheduledTasks = onOpenScheduledTasks,
     onOpenAbout = onOpenAbout,
     onOpenCharacters = onOpenCharacters,
     onOpenTavernPresets = onOpenTavernPresets,
@@ -80,6 +82,7 @@ internal fun SettingsScreen(
   onOpenExecution: () -> Unit,
   onOpenConnectors: () -> Unit,
   onOpenVoice: () -> Unit,
+  onOpenScheduledTasks: () -> Unit,
   onOpenAbout: () -> Unit,
   onOpenCharacters: () -> Unit = {},
   onOpenTavernPresets: () -> Unit = {},
@@ -139,17 +142,13 @@ internal fun SettingsScreen(
           SettingsRow(
             glyph = GlyphKind.Speaker,
             title = "语音",
-            subtitle =
-              if (state.voiceAutoRead) {
-                "回复完自动朗读"
-              } else {
-                "点回复下方的喇叭朗读"
-              },
+            subtitle = if (state.voiceAutoRead) "回复完自动朗读" else "点回复下方的喇叭朗读",
             onClick = onOpenVoice,
           ) {
             ChevronRight()
           }
         }
+        ScheduledTasksSection(onOpenScheduledTasks)
         EntertainmentSection(onOpenCharacters, onOpenTavernPresets)
         SectionLabel("关于")
         SettingsGroup {
@@ -180,3 +179,19 @@ private fun connectorSubtitle(state: SettingsViewModel.UiState): String =
     state.gmailConnected -> "Gmail 已连接"
     else -> "Gmail 等云端数据源（只读）"
   }
+
+/** 定时任务入口。任务由对话创建和修改，设置首页只负责导航（`docs/scheduled-tasks.md`）。 */
+@Composable
+private fun ScheduledTasksSection(onOpen: () -> Unit) {
+  SectionLabel("任务")
+  SettingsGroup {
+    SettingsRow(
+      glyph = GlyphKind.Clock,
+      title = "定时任务",
+      subtitle = "查看排期、下次触发时间与上次结果",
+      onClick = onOpen,
+    ) {
+      ChevronRight()
+    }
+  }
+}

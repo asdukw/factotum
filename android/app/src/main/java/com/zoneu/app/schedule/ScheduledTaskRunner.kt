@@ -18,6 +18,16 @@ internal fun canClaim(task: ScheduledTaskEntity, revision: String, planned: Long
 object ScheduledTaskRunner {
   private const val TAG = "ZoneuSchedule"
 
+  /**
+   * 本进程内正在执行的任务 id。
+   *
+   * 库里领取时写 `RUNNING`，但进程被强杀时 `finish()` 不会执行，这个标记会永远留在库里。
+   * 进程内的集合随进程消失，列表页据此区分「真的在跑」与「上次没跑完」。
+   */
+  private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+  fun isRunning(id: String): Boolean = id in active
+
   suspend fun run(context: Context, id: String, revision: String, planned: Long, onForeground: () -> Unit = {}) {
     val app = context.applicationContext as? ZoneuApplication ?: return
     val dao = app.database.scheduledTasks()
@@ -27,6 +37,7 @@ object ScheduledTaskRunner {
       if (!canClaim(current, revision, planned, started)) return@withLock null
       if (dao.claim(id, revision, planned, started) == 1) current else null
     } ?: return
+    active.add(id)
     var foreground = false
     var error: String? = null
     try {
@@ -54,6 +65,7 @@ object ScheduledTaskRunner {
             dao.byId(id)?.takeIf { it.revision == revision }?.let { ScheduledTaskScheduler.schedule(app, it) }
           }
         } finally {
+          active.remove(id)
           if (foreground) NodeTaskService.stop(app)
         }
       }

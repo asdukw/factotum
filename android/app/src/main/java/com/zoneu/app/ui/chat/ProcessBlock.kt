@@ -270,7 +270,7 @@ private fun ToolDetailSheet(call: ToolCallView, onDismiss: () -> Unit) {
       modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      Text("工具调用", style = MaterialTheme.typography.titleLarge)
+      Text("工具调用", style = MaterialTheme.typography.titleLargeEmphasized)
       Text("调用工具 ${toolDisplayName(call.name)}", style = MaterialTheme.typography.bodyMedium)
       Text(
         text =

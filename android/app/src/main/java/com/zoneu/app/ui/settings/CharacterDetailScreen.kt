@@ -473,7 +473,7 @@ private fun AboutCard(card: CharacterCard) {
 private fun CardHero(card: CharacterCard) {
   SettingsGroup {
     Column(Modifier.fillMaxWidth().padding(18.dp)) {
-      Text(card.name, style = MaterialTheme.typography.headlineSmall)
+      Text(card.name, style = MaterialTheme.typography.headlineSmallEmphasized)
       if (card.tagline.isNotBlank()) {
         Spacer(Modifier.height(6.dp))
         Text(
@@ -550,7 +550,7 @@ private fun Detail(label: String, value: String) {
 @Composable
 private fun MissingCard() {
   Column(Modifier.fillMaxSize().padding(24.dp)) {
-    Text("这张卡不在了", style = MaterialTheme.typography.titleMedium)
+    Text("这张卡不在了", style = MaterialTheme.typography.titleMediumEmphasized)
     Spacer(Modifier.height(6.dp))
     Text(
       text = "可能刚被删除，或者从别的设备同步掉了。已经聊过的会话不会跟着消失。",

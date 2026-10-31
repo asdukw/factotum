@@ -52,7 +52,7 @@ fun ApprovalSheet(pending: PendingApproval) {
       // 工具名原样显示：用户要能看出「批准的是什么」，映射成中文反倒藏掉了信息。
       Text(
         "工具「${pending.toolName}」想执行一次操作",
-        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        style = MaterialTheme.typography.titleMediumEmphasized.copy(fontWeight = FontWeight.SemiBold),
       )
       detail?.takeIf { it.isNotBlank() }?.let {
         Spacer(Modifier.height(8.dp))

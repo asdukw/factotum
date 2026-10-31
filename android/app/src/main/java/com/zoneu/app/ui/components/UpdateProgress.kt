@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,12 +29,12 @@ internal fun UpdateProgressBar(progress: UpdateDownloader.Progress, modifier: Mo
   Column(modifier) {
     val shape = RoundedCornerShape(2.dp)
     if (progress.known) {
-      LinearProgressIndicator(
+      LinearWavyProgressIndicator(
         progress = { progress.fraction },
-        modifier = Modifier.fillMaxWidth().height(4.dp).clip(shape),
+        modifier = Modifier.fillMaxWidth().clip(shape),
       )
     } else {
-      LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(shape))
+      LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth().clip(shape))
     }
     Spacer(Modifier.height(6.dp))
     Text(

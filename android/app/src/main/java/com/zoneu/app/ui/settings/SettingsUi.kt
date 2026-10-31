@@ -228,7 +228,7 @@ internal fun SettingsHeader(
     Spacer(Modifier.width(16.dp))
     Text(
       text = title,
-      style = MaterialTheme.typography.headlineMedium,
+      style = MaterialTheme.typography.headlineMediumEmphasized,
       fontWeight = FontWeight.SemiBold,
       modifier = Modifier.weight(1f),
     )
@@ -243,7 +243,7 @@ internal fun BigTitle(title: String, subtitle: String? = null) {
   Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
     Text(
       text = title,
-      style = MaterialTheme.typography.headlineLarge,
+      style = MaterialTheme.typography.headlineLargeEmphasized,
       fontWeight = FontWeight.SemiBold,
     )
     if (subtitle != null) {

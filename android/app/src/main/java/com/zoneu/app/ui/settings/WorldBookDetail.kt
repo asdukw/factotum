@@ -172,7 +172,7 @@ private fun WorldBookSummary(
   onReload: () -> Unit,
   onDelete: () -> Unit,
 ) {
-  Text(current.name, style = MaterialTheme.typography.headlineSmall)
+  Text(current.name, style = MaterialTheme.typography.headlineSmallEmphasized)
   Text("修订 ${current.revision}", style = MaterialTheme.typography.labelSmall)
   Text("默认引用：${usage.characterIds.size} 个角色；固定引用：${usage.sessionIds.size} 段会话。修改影响未来会话，不自动升级旧会话。")
   Text(current.description)

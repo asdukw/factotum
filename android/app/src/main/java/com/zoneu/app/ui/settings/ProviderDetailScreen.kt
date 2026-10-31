@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package com.zoneu.app.ui.settings
 
 import androidx.compose.foundation.border
@@ -26,7 +28,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -196,7 +199,7 @@ private fun ProviderDetailHeader(state: ProviderDetailViewModel.UiState, onBack:
     Column(Modifier.weight(1f)) {
       Text(
         text = state.name,
-        style = MaterialTheme.typography.titleLarge,
+        style = MaterialTheme.typography.titleLargeEmphasized,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -542,7 +545,7 @@ private fun RemoteModelsSection(
         }
         Spacer(Modifier.width(8.dp))
         if (state.fetchingModels) {
-          CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+          LoadingIndicator(modifier = Modifier.size(22.dp))
         } else {
           TextButton(onClick = onFetchModels) {
             Text(if (state.remoteModels.isEmpty()) "获取" else "刷新")

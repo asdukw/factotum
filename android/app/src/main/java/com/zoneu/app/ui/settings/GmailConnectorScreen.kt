@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package com.zoneu.app.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -207,7 +210,7 @@ private fun ClientIdSection(
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Button(onClick = onConnect, enabled = !state.connecting && state.clientId.isNotBlank()) {
           if (state.connecting) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            LoadingIndicator(modifier = Modifier.size(18.dp))
           } else {
             Text(if (state.connected) "重新连接" else "连接")
           }

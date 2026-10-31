@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package com.zoneu.app.ui.chat
 
 import android.Manifest
@@ -47,12 +49,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
@@ -655,7 +658,7 @@ private fun MicButton(state: VoiceInput.State, onClick: () -> Unit) {
     contentAlignment = Alignment.Center,
   ) {
     if (busy) {
-      CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+      LoadingIndicator(modifier = Modifier.size(18.dp))
     } else {
       MicGlyph(tint = tint.copy(alpha = alpha))
     }
@@ -1154,7 +1157,7 @@ private fun ChatTopBar(
     Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
       Text(
         text = title,
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.titleMediumEmphasized,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -1360,7 +1363,7 @@ private fun DrawerHeader(enabled: Boolean, showPlus: Boolean, onPlus: () -> Unit
   Row(verticalAlignment = Alignment.CenterVertically) {
     Text(
       text = "会话",
-      style = MaterialTheme.typography.titleMedium,
+      style = MaterialTheme.typography.titleMediumEmphasized,
       modifier = Modifier.weight(1f).padding(start = 12.dp),
     )
     if (showPlus) {
@@ -1829,11 +1832,11 @@ private fun EmptyHint(
       modifier = Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
       contentAlignment = Alignment.Center,
     ) {
-      Text(text = "M", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimary)
+      Text(text = "M", style = MaterialTheme.typography.titleLargeEmphasized, color = MaterialTheme.colorScheme.onPrimary)
     }
     Text(
       text = if (characterName != null) characterName else "你好，我是 zoneu",
-      style = MaterialTheme.typography.titleMedium,
+      style = MaterialTheme.typography.titleMediumEmphasized,
       modifier = Modifier.padding(top = 18.dp),
     )
     Text(
@@ -2427,7 +2430,7 @@ private fun ModelSwitchSheet(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+          LoadingIndicator(modifier = Modifier.size(16.dp))
           Spacer(Modifier.width(10.dp))
           Text("切换中…", style = MaterialTheme.typography.bodySmall)
         }
@@ -2621,7 +2624,7 @@ private fun ModelChoiceCard(
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
           text = choice.model,
-          style = MaterialTheme.typography.titleSmall,
+          style = MaterialTheme.typography.titleSmallEmphasized,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )

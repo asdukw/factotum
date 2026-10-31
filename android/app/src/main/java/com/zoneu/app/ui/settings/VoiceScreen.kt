@@ -180,7 +180,7 @@ private fun VoiceList(voices: List<TtsVoice>, selected: String, onSelect: (Strin
   Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
     Text(
       text = "音色",
-      style = MaterialTheme.typography.titleMedium,
+      style = MaterialTheme.typography.titleMediumEmphasized,
       fontWeight = FontWeight.SemiBold,
       modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
     )

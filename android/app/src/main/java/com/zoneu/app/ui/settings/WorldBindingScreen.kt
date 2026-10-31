@@ -130,7 +130,7 @@ private fun WorldPinnedBook(binding: WorldBookBinding, head: WorldBook?, enabled
   var pending by remember(binding) { mutableStateOf<String?>(null) }
   SettingsGroup {
     Column(Modifier.padding(12.dp)) {
-      Text(head?.name ?: binding.bookId, style = MaterialTheme.typography.titleMedium)
+      Text(head?.name ?: binding.bookId, style = MaterialTheme.typography.titleMediumEmphasized)
       Text("使用修订 ${binding.revision}")
       Text("来源：${binding.sources.joinToString()}；当前 ${binding.override}")
       Row {

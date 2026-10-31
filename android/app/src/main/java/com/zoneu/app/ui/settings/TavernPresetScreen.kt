@@ -175,7 +175,7 @@ private fun LazyListScope.presetEditor(state: TavernPresetViewModel.UiState, vie
 
 /** 渲染结果：用第一张卡，条件块与开场白都能看见。 */
 private fun LazyListScope.presetPreview(state: TavernPresetViewModel.UiState) {
-  item { Text("预览（用第一张卡渲染，含本轮世界书命中）", style = MaterialTheme.typography.titleSmall) }
+  item { Text("预览（用第一张卡渲染，含本轮世界书命中）", style = MaterialTheme.typography.titleSmallEmphasized) }
   item {
     Text(
       state.preview.ifBlank { "没有可用的角色卡，预览为空" },

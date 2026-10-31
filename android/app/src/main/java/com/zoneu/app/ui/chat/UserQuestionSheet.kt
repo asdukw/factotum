@@ -150,7 +150,7 @@ private fun QuestionText(question: UserQuestion, showHeader: Boolean) {
   }
   Text(
     question.question,
-    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+    style = MaterialTheme.typography.titleMediumEmphasized.copy(fontWeight = FontWeight.SemiBold),
   )
   question.detail?.takeIf { it.isNotBlank() }?.let {
     Spacer(Modifier.height(8.dp))

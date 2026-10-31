@@ -45,7 +45,7 @@ zoneu APK（单进程）
           ├─ llm-pi-ai → opencode zen
           ├─ core：session / tools / system-prompt / agent / agent-loop
           ├─ sessions：jsonl（compression none）
-          └─ dsh-plugin-android-tools（8 个通用原语，工具 → BridgeServer）
+          └─ dsh-plugin-android-tools（设备工具，工具 → BridgeServer；清单见 [tools.md](tools.md)）
 ```
 
 - **为什么插件而不是 MCP**：dsh 的 MCP client 走 streamable-http 要我们实现完整
@@ -62,6 +62,7 @@ zoneu APK（单进程）
 - **重载不重启**：宿主写非密的 `dsh-home/runtime-config.json` 并发 `runtime.reload`，
   launcher 重挂 cordis 根；重载后要重新 `initialize` 并轮换会话命名空间（`runtimeTag`）。
   密钥以 `ZONEU_LLM_KEY_<ID>` 预置，不落盘。
+- **运行时补丁幂等**：`patch-runtime.mjs` 的补丁可重复执行；锚点不匹配时直接抛错，不会静默跳过。
 
 ## 3. 产物与仓库策略
 

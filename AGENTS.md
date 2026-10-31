@@ -29,8 +29,8 @@ These lose data, leak it, or break the only runtime. Full text: [docs/privacy.md
 [docs/identity.md](docs/identity.md), [docs/dsh-android.md](docs/dsh-android.md).
 
 - Secrets live only in `SecretVault` (Keystore-wrapped) and reach dsh as env at Node start. They
-  never enter the repo, logs, or build artifacts; the OAuth client secret is a deliberate
-  public-client exception ([docs/email-connector.md](docs/email-connector.md) §4.1b).
+  never enter the repo or logs. A build artifact carries only the OAuth client secret, a public
+  identifier by design ([docs/email-connector.md](docs/email-connector.md) §4.1b).
 - Log counts, class names, coordinates, and error codes. Screen text, UI-tree text, chat, mail,
   card, and world-book content appear only in model tool results. `capture_screenshot` sends the
   full screen image to the model provider.
@@ -39,12 +39,14 @@ These lose data, leak it, or break the only runtime. Full text: [docs/privacy.md
 - Write tools go through the dsh approval seam (`tools/pre-execute` → `ask`). A write tool without
   it is a security regression; `policy: never` is a denial, not a grant.
 - Generate, don't hand-edit `assets/dsh-runtime.zip`, `libnode/`, `jniLibs/`. Don't add to
-  `detekt` `baseline.xml`; don't rewrite pushed history or force-push `master`.
+  `detekt` `baseline.xml`; don't rewrite pushed history or force-push `master` without explicit
+  approval.
 - The daily-driver device runs **debug builds only**. Release has a different signature; switching
   back means uninstalling and losing the SQLCipher database and keys. Update with `adb install -r`.
 - Read [docs/dsh-android.md](docs/dsh-android.md) before changing the runtime: `boot()` / the CLI
-  loader, `process.exit()` / `shutdown`, stdout logging, and touch exploration each break the
-  in-process Node.
+  loader, `process.exit()` / `shutdown`, and stdout logging each break the in-process Node.
+- Touch exploration stays off during tasks: it swallows injected gestures and cannot rescue a
+  running app ([docs/android-accessibility.md](docs/android-accessibility.md) §9).
 - A new collection capability gets a documented boundary and privacy gate in `docs/` first.
 
 ## 4. Build, test, gates
@@ -65,7 +67,7 @@ $env:JAVA_HOME = 'C:\Program Files\Microsoft\jdk-21.0.2.13-hotspot\'
 |---|---|
 | Kotlin | `:app:testDebugUnitTest` + the three gates above |
 | UI / database / permissions | device check per [docs/device-verification.md](docs/device-verification.md) |
-| dsh runtime / profile / plugin | `bundle-dsh.ps1` + reinstall + one real task |
+| dsh runtime / profile / plugin | `:app:testDebugUnitTest` + `bundle-dsh.ps1` + reinstall + one real task |
 | Release | [docs/releasing.md](docs/releasing.md) checklist |
 
 Report what actually ran, not "tests pass". CI green ≠ usable: the execution layer and the embedded
@@ -74,10 +76,13 @@ Node need a device.
 ## 6. Commits
 
 Conventional commits (`feat(android): ...`, `docs: ...`); the body says what changed and how it was
-verified. A behavior change carries its test in the same commit. Push, merge, and release need
-explicit approval. No secrets or personal data.
+verified. Run the gates and the tests that cover the change before committing, and don't re-run an
+unrelated passing suite. A behavior change carries its test in the same commit. Push, merge, and
+release need explicit approval. No secrets or personal data.
 
 ## 7. Where to read next
+
+Follow-up steps (bundle, reinstall, device check) live in the doc; the row only says where to start.
 
 | Change / question | Read |
 |---|---|
@@ -107,10 +112,11 @@ explicit approval. No secrets or personal data.
 
 ## 8. Editing this file
 
-- `CLAUDE.md` imports this file; edit here only.
+- `CLAUDE.md` imports this file; edit here only — this is the only project memory.
 - One home per fact: the rule here, depth in `docs/`. A rule must be obeyable without opening the
   link; only the detail behind it moves.
-- If a rule can be checked mechanically, add the test instead of more prose.
+- If a rule can be checked mechanically, add the test in the same change instead of more prose.
+- Update the routing table when a doc is added or removed.
 - Current state only: no changelog, no migration history. Delete stale rules rather than letting
   them rot.
-- Keep this file under ~120 lines. New detail goes to `docs/`.
+- Keep this file under ~130 lines. New detail goes to `docs/`.

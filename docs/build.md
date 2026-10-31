@@ -3,6 +3,22 @@
 AGENTS.md 只留命令；本文是正常路径的完整版。按**现象**排障看 [pitfalls.md](pitfalls.md)，
 发版与签名看 [releasing.md](releasing.md)，运行时产物为什么不入库看 [dsh-android.md](dsh-android.md) §3。
 
+## 0. 仓库结构
+
+```
+android/                 唯一的运行时（Kotlin / Compose）
+  app/src/main/java/com/zoneu/app/
+    agent/ accessibility/ bridge/ connector/ data/ device/ node/ voice/ ui/
+  app/src/main/cpp/       JNI（node::Start + stdout 转发）
+  app/src/test/           JVM 单测
+  app/src/androidTest/    真机测试
+tools/                    fetch-libnode, fetch-sherpa, fetch-proot, bundle-dsh, check-sensitive,
+                          install-debug, audit/（任务轨迹）, dsh-phone/（launcher、profile、patch、插件）
+docs/                     深度文档 + releases/<tag>.md
+```
+
+`libnode.so` 和 dsh 运行时不入库，由 `tools/` 按 pin 的版本装配（见下文）。
+
 ## 1. 环境
 
 | 项 | 值 |

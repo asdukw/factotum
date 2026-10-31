@@ -33,6 +33,9 @@
   application context，`unknownSourcesIntent` 少这个 flag 会 `ActivityNotFoundException`，
   现象是「更新没完成：NO_SETTINGS」（模拟器实测踩过一次）。
 - **不静默安装、不后台轮询**（与连接器同一条原则）：只在用户点的时候联网，确认框留给系统安装器。
+- **下载失败即停，不自动重试**：下载循环内不重试（会让人以为还在下），半截 `.part` 留着，
+  用户重新点「更新」时续传。失败原因用 `UpdateHttp.failReason` 翻成可执行的说明，不直接显示
+  异常原文；读到的长度不足 `Content-Length` 是 `TRANSFER_TRUNCATED`，不是下载完成。
 - **debug 包不参与应用内更新**：debug 与 release 签名不同，下载的 release APK 必然装不上，
   自动检查（`UpdateReminder`）与设置页入口都只在 `!BuildConfig.DEBUG` 时生效。
   日常真机装 debug（见 [device-verification.md](device-verification.md) §1），更新走 `adb install -r`；release 的更新流程在

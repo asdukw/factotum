@@ -1,13 +1,14 @@
 // 对 vendored dsh 运行时做 Android 适配补丁（幂等）。
 // 用法：node patch-runtime.mjs <node_modules 目录>
 //
-// 三处补丁：
+// 补丁清单：
 // 1. @deepseek-ai/node-addon-system/flock：jsonl 会话持久化的写租约在非 win32 平台走
 //    POSIX flock 原生 addon；该 addon 没有 Android 预编译。内嵌 Node 是单进程，
 //    没有跨进程争用，Android 上直接放行。PC 上若缺 koffi/win32 binding 也会报同族的错，
 //    但那是测试环境的安装平台问题（用 --os=android 安装在 PC 上跑不了写租约）。
 // 2. dsh-session-persistence-jsonl：见下方注释。
 // 3. dsh-client-ui-settings-models：见下方注释。
+// 4. dsh-sdk-jsonrpc-server：token 级增量转发；以及把 dsh 的 resume / cancel 暴露给宿主。
 //
 // **幂等判定一律看「补丁效果」，不看标记串。** 踩过的坑：标记串里带过项目名，
 // 项目改名（Memex → zoneu）后旧标记对不上，脚本误判成「还没打过补丁」，
@@ -165,4 +166,80 @@ if (/return null; \/\/[^\n]*hide preview notice/.test(welcome)) {
   }
   writeFileSync(welcomePath, welcome.replace(welcomeAnchor, `return null; // ${welcomeMarker}`))
   console.log(`patched: ${welcomePath}`)
+}
+
+
+// 补丁 5：把 dsh 的 resume / cancel 能力暴露给宿主。
+//
+// SDK 的 JSON-RPC server 只暴露 session/prompt；同名会话再 create 会 already exists，
+// 于是旧实现（每次进程/重载换 runtimeTag 后缀）只能新开会话，模型上下文整段丢失。
+// dsh-agent 本身支持 resume：它加载磁盘事件、补写中断 turn 的结束事件，并把上一个进程
+// 留下的排队输入清掉。这里把能力接到 JSON-RPC 上：
+//   session/resume → 有磁盘会话就接回来（resumed:true），没有就 resumed:false；
+//   session/cancel → 中断正在跑的 turn 并清空排队输入（卡死恢复）。
+const resumeMarker = 'zoneu patch: expose session resume and cancel'
+const resumePath = streamPath
+const resumeOriginal = readFileSync(resumePath, 'utf8')
+if (resumeOriginal.includes('case "session/resume"')) {
+  console.log('session resume patch already applied')
+} else {
+  const dispatchAnchor = '			case "session/prompt": return this.prompt(params);'
+  const methodAnchor = '	hasAdapterFor(provider) {'
+  if (!resumeOriginal.includes(dispatchAnchor)) {
+    throw new Error(`session dispatch 结构变了，找不到锚点：${resumePath}`)
+  }
+  if (!resumeOriginal.includes(methodAnchor)) {
+    throw new Error(`session server 结构变了，找不到方法锚点：${resumePath}`)
+  }
+  const methods = [
+    '	// ' + resumeMarker,
+    '	async resumeSession(params) {',
+    '		if (!this.initialized) throw new Error("SDK server is not initialized");',
+    '		const sessionId = params.sessionId;',
+    '		if (this.sessions.has(sessionId)) return { sessionId, resumed: true };',
+    '		let record;',
+    '		try {',
+    '			record = { handle: await this.ctx.agents.resume({',
+    '				resumeSessionId: brandString(sessionId),',
+    '				agentOptions: {',
+    '					provider: this.provider,',
+    '					model: this.model,',
+    '					...this.reasoningEffort === void 0 ? {} : { reasoningEffort: this.reasoningEffort },',
+    '					...this.maxTokens === void 0 ? {} : { maxTokens: this.maxTokens }',
+    '				}',
+    '			}) };',
+    '		} catch (error) {',
+    '			if (error?.name === "SessionPersistenceNotFoundError") return { sessionId, resumed: false };',
+    '			throw error;',
+    '		}',
+    '		// 上个进程留下的排队输入只在这次 resume 里处理：它们已经不在宿主的发送路径上，',
+    '		// 留着会让下一轮先回答旧消息。',
+    '		try {',
+    '			const inbox = record.handle.agent.inbox;',
+    '			if (inbox?.hasPending) console.error("[zoneu] resume dropped pending inbox input");',
+    '			inbox?.clear?.();',
+    '		} catch (error) {',
+    '			console.error(`[zoneu] resume inbox clear failed: ${error?.message ?? error}`);',
+    '		}',
+    '		this.sessions.set(sessionId, record);',
+    '		return { sessionId, resumed: true };',
+    '	}',
+    '	// zoneu patch: expose session resume and cancel',
+    '	async cancelSession(params) {',
+    '		const record = this.sessions.get(params.sessionId);',
+    '		if (record === void 0) return { sessionId: params.sessionId, cancelled: false };',
+    '		record.handle.agent.cancel({ kind: "user" });',
+    '		return { sessionId: params.sessionId, cancelled: true };',
+    '	}',
+    '',
+  ].join('\n')
+  let patched = resumeOriginal.replace(
+    dispatchAnchor,
+    dispatchAnchor +
+      '\n			case "session/resume": return this.resumeSession(params);' +
+      '\n			case "session/cancel": return this.cancelSession(params);',
+  )
+  patched = patched.replace(methodAnchor, methods + methodAnchor)
+  writeFileSync(resumePath, patched)
+  console.log(`patched: ${resumePath}`)
 }

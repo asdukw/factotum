@@ -15,10 +15,10 @@ import com.zoneu.app.bridge.ApprovalBridgeServer
 import com.zoneu.app.bridge.ConnectorBridgeServer
 import com.zoneu.app.bridge.DeviceBridgeServer
 import com.zoneu.app.bridge.UserQuestionBridgeServer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -34,12 +34,12 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -122,10 +122,18 @@ object NodeRuntime : NodeLineListener {
     MutableSharedFlow<JsonObject>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
   val notifications: SharedFlow<JsonObject> = _notifications.asSharedFlow()
 
+  /** 当前通知订阅者数量；配合 [awaitMoreSubscribers] 等**这一个**收集器订阅上。 */
+  internal fun notificationSubscribers(): Int = _notifications.subscriptionCount.value
+
+  /** 等到订阅者数量超过 [baseline]，即 launch 之后新起的收集器已经接上。 */
+  internal suspend fun awaitMoreSubscribers(baseline: Int) {
+    _notifications.subscriptionCount.first { it > baseline }
+  }
+
   /**
    * 解析后的 dsh 领域事件流（UI 与调试可以各自收集）。
    *
-   * dsh 侧会话 id 是「调用方 id + 本次运行时标记」（见 [dshSessionId]），这里映射回调用方传入的 id，
+   * dsh 侧会话 id 是「zoneu- + 调用方 id」（见 [dshSessionId]），这里映射回调用方传入的 id，
    * 收集方仍按自己的 sessionId 过滤。
    */
   val dshEvents: Flow<DshEvent> =
@@ -137,29 +145,27 @@ object NodeRuntime : NodeLineListener {
     }
 
   /**
-   * 调用方 sessionId → 本次进程内稳定的 dsh sessionId。
+   * 调用方 sessionId → 磁盘上稳定的 dsh sessionId。
    *
-   * 同一进程内复用（保持多轮上下文），进程重启后自动换新，避免撞上 DSH_HOME 里已存在的同名会话。
+   * 不再带运行时随机后缀：重启/重载后先 `session/resume` 把磁盘会话接回来，接不上才让
+   * `session/prompt` 新建。dsh 的 resume 会补写中断 turn 的结束事件，所以卡住的轮次不会
+   * 继续堵住后续消息。
    */
   private fun dshSessionId(sessionId: String): String =
     dshSessionIds.computeIfAbsent(sessionId) { caller ->
-      "$caller-$runtimeTag".also { callerSessionIds[it] = caller }
+      "zoneu-$caller".also { callerSessionIds[it] = caller }
     }
-
-  /** 等到至少有一个事件收集者订阅（避免提交任务时丢掉第一个 running 通知）。 */
-  suspend fun awaitEventSubscribers() {
-    _notifications.subscriptionCount.first { it > 0 }
-  }
 
   private val started = AtomicBoolean(false)
   private val nextId = AtomicLong(1)
 
   /**
-   * 本次运行时实例的 dsh 会话命名空间：dsh 会话持久化在磁盘上，同名 id 再 create 会 already exists。
-   * **重载时换新**（Node 进程没重启，但 dsh 运行时是新的）。
+   * 本次运行时实例里已经尝试过 resume 的 dsh 会话；重载时清空。
+   * 只影响「是否再发一次 session/resume」，不影响会话 id 本身。
    */
-  @Volatile private var runtimeTag = newRuntimeTag()
+  private val ensuredSessions = ConcurrentHashMap.newKeySet<String>()
 
+  /** 只用于 resume 失败时的兜底 id，不参与正常路径。 */
   private fun newRuntimeTag(): String = UUID.randomUUID().toString().take(8)
 
   private val dshSessionIds = ConcurrentHashMap<String, String>()
@@ -285,11 +291,11 @@ object NodeRuntime : NodeLineListener {
       it.completeExceptionally(IllegalStateException("runtime reloading"))
     }
     pending.clear()
-    runtimeTag = newRuntimeTag()
     WorldRuntime.clearBindings()
     unsettledWorldRequests.clear()
     dshSessionIds.clear()
     callerSessionIds.clear()
+    ensuredSessions.clear()
     initResult = null
     _status.value = Status.Preparing("重载运行时")
     Log.i(TAG, "reload requested (provider=${config.preset.label}, model=${config.model})")
@@ -338,8 +344,6 @@ object NodeRuntime : NodeLineListener {
   internal class TaskLease
 
   private var activeTaskLease: TaskLease? = null
-  private var taskIdle = CompletableDeferred<Unit>().apply { complete(Unit) }
-  private var taskSubmitted = false
 
   private fun admissionBusy(): Boolean = taskActive || reloadActive || unsettledWorldRequests.isNotEmpty()
 
@@ -366,7 +370,6 @@ object NodeRuntime : NodeLineListener {
       taskPreparation = null
       TaskLease().also {
         taskActive = true
-        taskIdle = CompletableDeferred()
         activeTaskLease = it
       }
     }
@@ -376,28 +379,15 @@ object NodeRuntime : NodeLineListener {
       if (activeTaskLease === lease) {
         taskActive = false
         activeTaskLease = null
-        taskSubmitted = false
-        taskIdle.complete(Unit)
       }
     }
-  }
-
-  internal fun markTaskSubmitted(lease: TaskLease) {
-    synchronized(operationGate) {
-      if (activeTaskLease === lease) taskSubmitted = true
-    }
-  }
-
-  private suspend fun awaitTaskIdle(lease: TaskLease) {
-    val shouldWait = synchronized(operationGate) { activeTaskLease === lease && taskSubmitted }
-    if (shouldWait) withContext(NonCancellable) { taskIdle.await() }
   }
 
   suspend fun prompt(sessionId: String, text: String): String = submitPrompt(sessionId, text)
 
   /** Roleplay streams register their exact pending identity before the SDK creates the user message. */
   suspend fun worldPrompt(context: Context, sessionId: String, text: String, onRegistered: (String?) -> Unit): String {
-    val dshId = dshSessionId(sessionId)
+    val dshId = ensureSession(sessionId)
     val requestId = WorldRuntime.register(context, sessionId, dshId, text)
     requestId?.let(unsettledWorldRequests::add)
     onRegistered(requestId)
@@ -420,8 +410,67 @@ object NodeRuntime : NodeLineListener {
     return terminal
   }
 
-  private suspend fun submitPrompt(sessionId: String, text: String, worldRequestId: String? = null): String {
+  /**
+   * 新运行时实例里第一次用到某个会话时，先把磁盘上的 dsh 会话接回来。
+   *
+   * dsh 的 `session/resume` 会加载持久化事件、补写中断 turn 的结束事件，并丢掉上一个
+   * 进程留下的排队输入；磁盘上没有这个会话时返回 resumed=false，由 `session/prompt` 新建。
+   * resume 本身失败（会话损坏等）就换一个一次性 id 新建，保证本轮还能跑。
+   */
+  private suspend fun ensureSession(sessionId: String): String {
     val dshId = dshSessionId(sessionId)
+    if (!ensuredSessions.add(dshId)) return dshId
+    val params = buildJsonObject { put("sessionId", dshId) }
+    return try {
+      val resumed = request("session/resume", params, PROMPT_TIMEOUT_MS)["resumed"]?.jsonPrimitive?.booleanOrNull == true
+      if (!resumed) Log.i(TAG, "session resume: no persisted log, will create")
+      dshId
+    } catch (timeout: TimeoutCancellationException) {
+      freshSession(sessionId, timeout)
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (
+      @Suppress("TooGenericExceptionCaught") error: Exception,
+    ) {
+      freshSession(sessionId, error)
+    }
+  }
+
+  /** resume 失败时换一个一次性 dsh id，至少让这一轮还能新建会话。 */
+  private fun freshSession(sessionId: String, cause: Throwable): String {
+    Log.w(TAG, "session resume failed; using a fresh dsh session", cause)
+    val fresh = "zoneu-$sessionId-${newRuntimeTag()}"
+    dshSessionIds[sessionId] = fresh
+    callerSessionIds[fresh] = sessionId
+    ensuredSessions.add(fresh)
+    return fresh
+  }
+
+  /**
+   * 中断某会话正在跑的 turn 并清掉排队输入，用于 30 秒内没等到 running 的卡死恢复：
+   * 不换会话 id，下一轮还能沿用已有上下文。
+   */
+  suspend fun cancelSession(sessionId: String): Boolean {
+    if (!started.get() || initResult == null) return false
+    val dshId = dshSessionIds[sessionId] ?: return false
+    return try {
+      val params = buildJsonObject { put("sessionId", dshId) }
+      request("session/cancel", params, PROMPT_TIMEOUT_MS)["cancelled"]?.jsonPrimitive?.booleanOrNull == true
+    } catch (timeout: TimeoutCancellationException) {
+      Log.w(TAG, "session cancel timed out", timeout)
+      false
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (
+      @Suppress("TooGenericExceptionCaught") error: Exception,
+    ) {
+      Log.w(TAG, "session cancel failed", error)
+      false
+    }
+  }
+
+  private suspend fun submitPrompt(sessionId: String, text: String, worldRequestId: String? = null): String {
+    val dshId = ensureSession(sessionId)
     val params =
       buildJsonObject {
         put("sessionId", dshId)
@@ -474,6 +523,9 @@ object NodeRuntime : NodeLineListener {
         val turnErrors = mutableListOf<String>()
         val completed = CompletableDeferred<TaskOutcome>()
 
+        // 只等「有任意订阅者」会在别的收集器已订阅时过早放行，把第一个 running 状态漏掉；
+        // 记下 baseline，等这个收集器真正订阅上再提交。
+        val subscribersBefore = notificationSubscribers()
         val collector =
           CoroutineScope(Dispatchers.Default).launch {
             dshEvents.collect { event ->
@@ -501,15 +553,14 @@ object NodeRuntime : NodeLineListener {
           }
 
         try {
-          // 等收集器真正订阅上再提交，避免丢掉第一个状态通知。
-          awaitEventSubscribers()
-          prompt(sessionId, text).also { markTaskSubmitted(lease) }
+          // 等这个收集器真正订阅上再提交，避免丢掉第一个状态通知。
+          awaitMoreSubscribers(subscribersBefore)
+          prompt(sessionId, text)
           completed.await()
         } finally {
           collector.cancel()
         }
       } finally {
-        awaitTaskIdle(lease)
         endTask(lease)
       }
     }

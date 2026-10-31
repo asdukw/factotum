@@ -28,7 +28,7 @@ ask_user_question(questions[])
 
 | 件 | 职责 |
 |---|---|
-| `tools/dsh-phone/plugins/user-questions/` | answerer：透传形状、等答案；接不了就 `next()` |
+| `tools/dsh-phone/plugins/user-questions/` | answerer：透传形状、等答案；没配桥/已取消才 `next()` |
 | `bridge/UserQuestionBridgeServer.kt` | 本地桥，阻塞等 UI 回答 |
 | `ui/chat/UserQuestionSheet.kt` | 底部 sheet：一屏一题、选项 / 自由文本 / 跳过 |
 | `agent/UserQuestionHub.kt` | 进程级单例状态 |
@@ -37,15 +37,18 @@ ask_user_question(questions[])
   推进没人消费的 remote 队列。排在它后面，请求永远不落地。
 - **状态放单例，不放 ViewModel**：桥那边挂起的协程属于进程，UI 会随导航重建；
   放进 ViewModel 会导致「切走再切回来，答案丢了、插件还在等」。
-- **绝不编答案**：桥没配、用户关掉面板、桥报错、超时，四种情况一律 `next()` 让路。
-  空答案只能来自用户点了「跳过」；`test/answerer.mjs` 逐条钉住。
+- **绝不编答案**：空答案只能来自用户点了「跳过」；`test/answerer.mjs` 逐条钉住。
+- **桥在但没答时不能 `next()`**：下一个 answerer（`dsh-api-remotes`）把请求推进没有消费者的
+  remote 队列，`next()` 会让 `ask()` 永远不返回、turn 一直开着，后续消息全部排队。用户关掉
+  面板 / 等待超时 / 桥报错时，插件抛错让工具以明确失败结束本轮；只有桥没配或请求已被取消
+  才让路。
 
 ## 3. UI 语义
 
 - 一屏一题，顶部页码。
 - 单选点了就走；多选按「继续」。
 - 自由文本随时可写；单选时与选项互斥，多选时叠加。
-- 「跳过」= 空答案；下滑关闭 = 让路，不是回答。
+- 「跳过」= 空答案；下滑关闭 = 本轮以明确错误结束，不是回答（也不能让给下一个 answerer）。
 - 推荐项放第一个，label 末尾加 `(Recommended)`。
 
 ## 4. 未实现

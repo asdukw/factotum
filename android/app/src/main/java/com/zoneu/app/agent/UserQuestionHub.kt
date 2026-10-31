@@ -55,8 +55,8 @@ object UserQuestionHub {
   /**
    * 登记一批问题并挂起，直到用户作答（返回答案）、关掉面板、或调用方取消（返回 null）。
    *
-   * 返回 null 时**调用方必须让路**（插件的 `next()`），绝不能当成「用户全跳过了」——
-   * 那会让模型拿着一个编出来的答案继续做事。
+   * 返回 null 时调用方必须结束本轮（插件抛错），绝不能当成「用户全跳过了」——
+   * 那会让模型拿着一个编出来的答案继续做事；也不能 `next()`，下一个 answerer 没有消费者。
    */
   suspend fun ask(request: PendingUserQuestions): List<UserQuestionAnswer>? {
     if (waiter != null) return null
@@ -76,7 +76,7 @@ object UserQuestionHub {
     waiter?.complete(answers)
   }
 
-  /** UI 关闭面板 —— **不是回答**：让插件让路，问题留给下一个 answerer（或按 dsh 的语义超时）。 */
+  /** UI 关闭面板 —— **不是回答**：插件收到 null 后让工具以明确错误结束本轮，不能交给下一个 answerer。 */
   fun dismiss() {
     waiter?.complete(null)
   }

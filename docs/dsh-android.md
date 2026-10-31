@@ -51,8 +51,12 @@ dsh 官方的 `boot()` / CLI loader 在 Android 上不可用：host preparation 
 - **stdout 只能走 JSON-RPC**。phone profile 不挂 stdout logger；所有诊断走 stderr。
 - **`prepareStdio()` 必须在 `node::Start` 之前取到 JavaVM**，否则 stdout 线程 attach 失败。
 - **`initialize` 必须等状态到 Running 再写 stdin**，否则报「stdin 不可写」。
-- **会话 id 加 `runtimeTag` 后缀**。dsh SDK 只有 create、没有 resume；进程重启后复用磁盘
-  id 会报 `-32603 session already exists`。重载或重启后上下文不延续，界面历史仍在 Room。
+- **会话 id 稳定，重启/重载后 resume**。JSON-RPC server 原本只暴露 create；zoneu 的运行时
+  补丁加了 `session/resume`：加载磁盘会话、补写中断 turn 的结束事件、丢掉上一个进程留下的
+  排队输入。`NodeRuntime` 在每次运行时实例里第一次用到某会话时 resume 一次，磁盘上没有才
+  由 `session/prompt` 新建。不要让 id 再随运行时变化 —— 那等于每次重启都丢上下文。
+- **卡死恢复用 `session/cancel`**：30 秒内没等到 `running` 时宿主中断该 turn 并清空排队
+  输入，下一轮沿用同一段上下文；不要靠换会话 id 绕过。
 - **profile 是启动路径**：一份坏 YAML 或一个 mount 失败会让整棵 cordis 根起不来，而 Node
   与宿主同进程，表现是整个 App 起不来。`bundle-dsh.ps1` 用真实 parser 校验。
 - **工具 schema 编译失败会丢掉整个插件的全部工具**，模型侧只看到 `tools: []`，不会报错。
@@ -61,7 +65,8 @@ dsh 官方的 `boot()` / CLI loader 在 Android 上不可用：host preparation 
 ## 4. 重载与配置
 
 宿主写非密的 `dsh-home/runtime-config.json`，再发 `runtime.reload`；launcher 重挂 cordis 根，
-重新 `initialize` 并轮换会话命名空间。重载不重启 App，但模型上下文从下一条消息重新开始。
+重新 `initialize`。重载不重启 App，会话 id 不变，下一次 prompt 前会 `session/resume`
+把磁盘会话接回来，模型上下文继续。
 
 提供商、模型、密钥变化都走这条路径。细节见 [providers.md](providers.md)。
 

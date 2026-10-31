@@ -67,6 +67,9 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       var streamedReasoningThisStep = false
       val finished = CompletableDeferred<Unit>()
       val started = CompletableDeferred<Unit>()
+      // 只等「有任意订阅者」会在别的收集器已订阅时过早放行，把第一个 running 状态漏掉；
+      // 记下 baseline，等这个收集器真正订阅上再提交。
+      val subscribersBefore = NodeRuntime.notificationSubscribers()
       val collector =
         launch(Dispatchers.Default) {
           NodeRuntime.dshEvents.collect { event ->
@@ -164,12 +167,21 @@ class DshStreamer(private val context: Context) : ChatStreamer {
       // 不在气泡里塞「已提交，等待模型…」：等待期间留空（界面显示省略号）比一句会立刻被顶掉的
       // 状态文案安静；进度在系统悬浮层（AgentProgressCenter）里看。
       AgentProgressCenter.step(sessionId, "正在思考", "等待模型返回下一步")
-      NodeRuntime.awaitEventSubscribers()
+      NodeRuntime.awaitMoreSubscribers(subscribersBefore)
       NodeRuntime.worldPrompt(app, sessionId, prompt) { worldRequestId = it }
-      taskLease?.let(NodeRuntime::markTaskSubmitted)
-      // 会话若卡在上一轮（进程被杀留下未闭合的 turn），prompt 会一直排队不启动。
+      // 会话若卡在上一轮，prompt 会一直排队不启动。先中断它：同一段上下文还能继续用，
+      // 中断失败才让用户新建会话。
       withTimeoutOrNull(RUNNING_TIMEOUT_MS) { started.await() }
-        ?: throw AgentException("任务未能启动（会话可能卡在上一轮，请新建会话或清除会话数据）")
+        ?: run {
+          val cancelled = NodeRuntime.cancelSession(sessionId)
+          throw AgentException(
+            if (cancelled) {
+              "上一轮任务卡住，已中断；请重试"
+            } else {
+              "任务未能启动（会话可能卡在上一轮，请新建会话或清除会话数据）"
+            },
+          )
+        }
       finished.await()
       collector.cancel()
       // 模型侧失败（额度用尽、鉴权失败…）走 turn/end 的 error，不抛就等于没发生：

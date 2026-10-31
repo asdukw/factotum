@@ -29,7 +29,8 @@
 | dsh 启动报 `node-addon-require-builtin` | 用了 `boot()`/loader → 改用 `launcher.mjs` |
 | dsh 启动报 `bad indentation of a mapping entry`，**App 直接崩** | profile 里 `!!js` 表达式写了对象字面量（YAML 的 plain scalar 不能含 `": "`）→ 整个表达式加双引号；`check-profile.mjs` 提前拦 |
 | dsh 会话写文件报 flock / link 错误 | 未打补丁 → 跑 `patch-runtime.mjs`（flock 放行、jsonl 改 rename） |
-| dsh 报 `session ... already exists`（-32603） | 进程重启后复用磁盘会话 id；dsh SDK 只有 create 无 resume → `NodeRuntime` 的 runtimeTag 后缀别去掉 |
+| dsh 报 `session ... already exists`（-32603） | `NodeRuntime` 没走 `session/resume` 就直接 prompt 同名会话 → 先 resume；磁盘上没有时由 prompt 新建。不要把会话 id 改成随运行时变化 |
+| 任务 30 秒后报「上一轮卡住 / 任务未能启动」 | 上一轮 turn 没闭合（常见于 `ask_user_question` 无人回答）→ 已由 `session/cancel` 中断；面板关闭会让工具明确报错，不再挂住 |
 | 助手回复整段蹦出来、没有逐字效果 | 运行时补丁 4 没生效（stdout 上没有 `session.stream` 帧）→ 重跑 `tools/bundle-dsh.ps1` 并重装 APK；Kotlin 侧另有 50ms 合并，纯聊天不涉及无障碍 |
 | 装了 `rememberViewModelStoreNavEntryDecorator()` 后启动即崩 | Nav3 1.0.1 要求配套的 `SavedStateNavEntryDecorator`（该版本没有）→ 别装它；VM 用 Activity 作用域 + `viewModel(key = ...)`（提供商详情即如此，按 providerId 区分） |
 | 输入框快速打字丢字符 | 每次击键同步 `commit()` 落盘（主线程 fsync）→ 频繁写的字段用 `apply()`，只有需要「写进去没有」答案的凭据才用 `commit` |

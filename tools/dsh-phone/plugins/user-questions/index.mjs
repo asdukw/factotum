@@ -19,8 +19,12 @@
 // （实测：会话一直 running，几分钟没有后续事件）。waterfall 按注册顺序跑、第一个不调 `next()`
 // 的赢，所以要排到它前面。
 //
-// **接不了就让路**：桥没配、或用户关掉面板，一律 `next()` 交给下一个 answerer，
-// 绝不自己编一个答案 —— 编出来的答案会被当成用户说的，比超时危险得多。
+// **两种失败要分开**：
+//   - 桥没配 / 请求已被取消：`next()` 让路；
+//   - 桥配了、但用户关掉面板或等待超时：**抛错结束这一轮**，不能 `next()`。
+//     下一个 answerer 是 `dsh-api-remotes`，它把请求推进没人消费的 remote 队列 ——
+//     `next()` 不会让路，而是把 ask() 永远挂住（实测：turn 永远不结束，后续消息全部排队）。
+// 两种情况都绝不编答案：编出来的答案会被当成用户说的。
 const BRIDGE_TIMEOUT_MS = 30 * 60 * 1000
 
 function bridge() {
@@ -54,8 +58,9 @@ function payloadOf(request) {
 /**
  * 交给 UI 去问，等回答。
  *
- * 返回 `undefined` 表示「这次没拿到答案」（桥不可用 / 用户关掉 / 超时 / 被取消）——
- * 调用方据此 `next()` 让路，而不是编一个空答案。**空答案只能来自用户点了「跳过」。**
+ * 返回 `undefined` 只表示「这次该让路」（桥没配 / 请求已被取消）。
+ * 桥配了但用户没答（关掉面板 / 超时 / 桥报错）则抛错，让模型收到明确的工具失败，
+ * 而不是把整轮交给一个没有消费者的 answerer。**空答案只能来自用户点了「跳过」。**
  */
 async function askUi(request) {
   const endpoint = bridge()
@@ -68,6 +73,7 @@ async function askUi(request) {
   const timer = AbortSignal.timeout(BRIDGE_TIMEOUT_MS)
   const abort = signal === undefined ? timer : AbortSignal.any([signal, timer])
 
+  let body
   try {
     const response = await fetch(`${endpoint.baseUrl}/action`, {
       method: 'POST',
@@ -75,13 +81,19 @@ async function askUi(request) {
       body: JSON.stringify({ action: 'ask', ...payload }),
       signal: abort,
     })
-    const body = await response.json().catch(() => ({}))
-    if (body?.ok !== true || !Array.isArray(body.answers)) return undefined
-    return { answers: body.answers }
+    body = await response.json().catch(() => ({}))
   } catch {
-    // 取消（用户关了会话 / 工具调用被中止）与超时都走这里：让路，不编答案。
-    return undefined
+    // 轮次被中止（用户关会话 / 工具调用取消）：调用方本来就要退出，让路。
+    if (signal?.aborted) return undefined
+    if (timer.aborted) throw new Error('ask_user_question timed out before the user answered')
+    throw new Error('ask_user_question: host bridge became unavailable before the user answered')
   }
+  if (signal?.aborted) return undefined
+  if (body?.ok === true && Array.isArray(body.answers)) return { answers: body.answers }
+  if (body?.code === 'DISMISSED') {
+    throw new Error('ask_user_question was dismissed before the user answered')
+  }
+  throw new Error(`ask_user_question: host bridge refused the request (${body?.code ?? 'UNKNOWN'})`)
 }
 
 export const name = 'dsh-plugin-user-questions'

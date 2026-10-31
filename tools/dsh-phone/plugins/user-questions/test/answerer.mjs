@@ -1,8 +1,8 @@
-// answerer 的行为：**接不了就让路，绝不编答案**。
+// answerer 的行为：**桥没配/请求取消就让路；桥在但用户没答就报错结束本轮**。
 //
 // 这是这个插件唯一危险的地方 —— waterfall 的返回值会被宿主当成「用户说的」。桥挂了却回一个
-// 空答案，模型会以为用户跳过了所有问题，然后据此继续做事。所以这里逐条钉：
-// 桥没配 / 用户关掉 / 桥报错 / 超时，四种情况都必须 `next()`。
+// 空答案，模型会以为用户跳过了所有问题，然后据此继续做事。所以这里逐条钉。
+// 另外：桥在但用户没答时不能 `next()` —— 下一个 answerer 没有消费者，会把整轮挂死。
 import assert from 'node:assert/strict'
 
 process.env.ZONEU_QUESTION_BRIDGE_URL = 'http://127.0.0.1:1'
@@ -72,21 +72,34 @@ reply = { status: 200, body: { ok: true, answers: [{ id: 'q1', selected: ['买�
   ])
 }
 
-// --- 2) 桥报错（ok:false）：让路，**不是**回一个空答案 ---
+// --- 2) 用户关掉面板：明确报错，**不是**让路，更不是回空答案 ---
 calls.length = 0
 reply = { status: 200, body: { ok: false, code: 'DISMISSED' } }
 {
-  const { answer, delegated } = await run()
-  assert.equal(delegated, true, '桥没给答案时必须让路')
-  assert.deepEqual(answer, { answers: [{ id: 'from-next', selected: [] }] }, '必须返回下一个 answerer 的结果')
+  let delegated = false
+  await assert.rejects(
+    listener(request, async () => {
+      delegated = true
+      return { answers: [] }
+    }),
+    /dismissed/,
+  )
+  assert.equal(delegated, false, '桥在但用户没答时不能 next()')
 }
 
-// --- 3) fetch 抛（桥挂了 / 超时 / 取消）：让路 ---
+// --- 3) 桥报错 / 超时：同样明确报错 ---
 calls.length = 0
 fetchThrows = true
 {
-  const { delegated } = await run()
-  assert.equal(delegated, true)
+  let delegated = false
+  await assert.rejects(
+    listener(request, async () => {
+      delegated = true
+      return { answers: [] }
+    }),
+    /bridge became unavailable/,
+  )
+  assert.equal(delegated, false)
 }
 fetchThrows = false
 
@@ -119,4 +132,4 @@ calls.length = 0
   assert.equal(calls.length, 0)
 }
 
-console.log('ok: 形状透传 + 四种「接不了」全部让路（不编答案）')
+console.log('ok: 形状透传 + 桥没配/取消让路 + 用户没答报错（都不编答案）')

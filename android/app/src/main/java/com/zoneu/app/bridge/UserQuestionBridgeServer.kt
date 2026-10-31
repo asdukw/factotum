@@ -120,8 +120,9 @@ object UserQuestionBridgeServer {
    * 把一批问题交给 UI 并挂起等答案。
    *
    * **挂起的是这条 HTTP 请求本身**：插件那边的 `fetch` 会一直等，直到这里返回。
-   * 用户关掉面板 → 回 `DISMISSED`（ok:false），插件据此 `next()` 让路 ——
-   * 这与 dsh「关闭不是回答」的语义一致（见 `docs/user-questions.md` §3）。
+   * 用户关掉面板 → 回 `DISMISSED`（ok:false），插件据此让工具以明确错误结束本轮。
+   * 不能 `next()`：下一个 answerer 没有消费者，会把整轮永远挂住
+   * （见 `docs/user-questions.md` §3）。
    */
   private fun ask(body: JsonObject): String {
     val questions = parseQuestions(body["questions"])

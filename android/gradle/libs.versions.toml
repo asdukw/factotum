@@ -1,9 +1,9 @@
 [versions]
 androidGradlePlugin = "9.4.1"
-androidxCore = "1.18.0"
+androidxCore = "1.19.1"
 androidxLifecycle = "2.10.0"
 androidxActivity = "1.13.0"
-androidxComposeBom = "2026.03.01"
+androidxComposeBom = "2026.09.00"
 # M3 Expressive 组件（ButtonGroup / SplitButton / LoadingIndicator / MaterialShapes）尚未进入稳定版；
 # 显式版本覆盖 BOM 锁定的 1.4.0，其余 Compose 依赖仍由 BOM 管理。
 androidxMaterial3 = "1.5.0-beta02"

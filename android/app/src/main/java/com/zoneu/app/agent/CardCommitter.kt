@@ -29,7 +29,13 @@ internal class CardCommitter(private val storage: CardStorage) {
     current.card
   }
 
-  fun submit(request: String, parameters: String, card: CharacterCard, control: CardDownloadControl, png: ByteArray? = null): Pair<CharacterCard, Boolean> =
+  fun submit(
+    request: String,
+    parameters: String,
+    card: CharacterCard,
+    control: CardDownloadControl,
+    png: ByteArray? = null,
+  ): Pair<CharacterCard, Boolean> =
     storage.transaction {
       existing(request, parameters)?.let { return@transaction it to true }
       control.check()

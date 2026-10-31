@@ -17,7 +17,7 @@
 # `core.hooksPath` 存在**共享的** `.git/config` 里，所以对所有 worktree 一起生效 ——
 # 这个仓库常年有好几个 worktree，这一点是刻意的。
 #
-# 顺序按**代价从小到大**排：submodule 指针 → node 那几项（秒级）→ Gradle（分钟级）。
+# 顺序按**代价从小到大**排：node 那几项（秒级）→ Gradle（分钟级）。
 
 set -u
 
@@ -74,16 +74,6 @@ run() {
   printf '\n▶ %s\n' "$label"
   "$@" || fail "$label"
 }
-
-# ---------- 插件 submodule 的指针推上去了吗 ----------
-# 这是**踩过的**坑：插件仓库里的提交还没推，zoneu 这边的指针先推了 —— CI 在 checkout
-# 就失败，而报错看不出是「少推了一个仓库」。
-if [ "$run_all" = 1 ] || has '^tools/dsh-phone/plugins/android-tools$'; then
-  plugin=tools/dsh-phone/plugins/android-tools
-  if [ -d "$plugin" ] && ! git -C "$plugin" branch -r --contains HEAD 2>/dev/null | grep -q .; then
-    fail "插件 submodule 的提交还没推到插件仓库（先在 $plugin 里 git push）"
-  fi
-fi
 
 # ---------- node 那几项（与 ci.yml 的 offline-checks job 逐条对应）----------
 if [ "$need_node" = 1 ]; then

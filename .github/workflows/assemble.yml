@@ -10,7 +10,7 @@ on:
   push:
     branches: [master]
     paths: &assembly-paths
-      - "tools/**" # 装配脚本、phone profile、插件 submodule 指针
+      - "tools/**" # 装配脚本、phone profile、插件源码
       - "android/app/src/main/cpp/**" # JNI
       - "android/app/CMakeLists.txt"
       - "android/app/build.gradle.kts"

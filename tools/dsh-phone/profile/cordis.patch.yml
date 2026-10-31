@@ -280,7 +280,7 @@
       name: 'dsh-android-attachments'
 
 # --- 设备工具：本地桥（Kotlin DeviceBridgeServer）→ 无障碍执行层 ---
-# 插件源码是独立公开仓库的 git submodule（tools/dsh-phone/plugins/*）。
+# 插件源码随本仓库一起检出（tools/dsh-phone/plugins/*）。
 - insert:
     - id: dsh-android-tools
       name: 'dsh-plugin-android-tools'

@@ -11,7 +11,7 @@ agent 能在手机的**文件系统**上干活：APK 里带一份 Debian rootfs�
 
 ```powershell
 .\tools\fetch-proot.ps1    # Termux 的 proot/loader/依赖 → jniLibs；debian:bookworm-slim 镜像层 → assets
-.\tools\bundle-dsh.ps1     # 插件改动之后（插件在独立仓库，先提交再更新 submodule 指针）
+.\tools\bundle-dsh.ps1     # 插件改动之后（插件源码随仓库提交）
 ```
 
 | 产物 | 来源（摘要钉死在脚本里） |

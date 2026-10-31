@@ -15,7 +15,7 @@ calls. The only runtime is the Android app (Kotlin).
 | Data | Room + SQLCipher; API keys wrapped by Android Keystore |
 | Agent runtime | Embedded Node 24 (nodejs-mobile fork) + dsh phone profile |
 | Device execution | `AccessibilityService` (UI tree first, screenshots fallback) + `DeviceBridgeServer` (127.0.0.1 + token) |
-| Tools | dsh plugin in `tools/dsh-phone/plugins/` (submodule) → HTTP bridge; optional mail connector |
+| Tools | dsh plugin in `tools/dsh-phone/plugins/` → HTTP bridge; optional mail connector |
 | Native | JNI (`app/src/main/cpp/native-lib.cpp`): Kotlin ↔ `node::Start`; needs NDK |
 
 ## 2. Ask first

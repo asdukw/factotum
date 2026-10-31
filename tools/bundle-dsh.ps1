@@ -106,7 +106,7 @@ Remove-Item -Recurse -Force (Join-Path $work "node_modules/@factotum") -ErrorAct
 foreach ($plugin in $plugins) {
   $pluginDir = Join-Path $src $plugin.Src
   if (-not (Test-Path -LiteralPath (Join-Path $pluginDir "index.mjs"))) {
-    throw "插件源码缺失：$pluginDir（先运行 git submodule update --init --recursive）"
+    throw "插件源码缺失：$pluginDir（检查 tools/dsh-phone/plugins/ 是否完整检出）"
   }
   $pluginOut = Join-Path $work "node_modules/$($plugin.Package)"
   New-Item -ItemType Directory -Force -Path $pluginOut | Out-Null

@@ -1,0 +1,48 @@
+{
+  "name": "dsh-plugin-android-tools",
+  "version": "0.7.0",
+  "description": "Android device automation tools for DeepSeek Harness (dsh): read, tap, long press, type, system keys, launch, swipe, system-app intents and run_command over a local HTTP bridge",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "accessibility",
+    "android",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "mobile-agent",
+    "shell",
+    "termux"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asdukw/dsh-plugin-android-tools.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/contract.mjs && node test/schedule.mjs && node test/shell.mjs && node test/real-schema.mjs"
+  }
+}

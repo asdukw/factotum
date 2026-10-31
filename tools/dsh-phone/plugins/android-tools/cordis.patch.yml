@@ -1,0 +1,4 @@
+# dsh bundle 层：安装后把设备工具插件插入运行时。
+- insert:
+    - id: dsh-android-tools
+      name: 'dsh-plugin-android-tools'

@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test
+      - run: npm pack
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes ./*.tgz
+
+  npm:
+    # Gated until the package exists on npm and the trusted publisher is configured.
+    # Bootstrap: publish the first version locally, add the trusted publisher on
+    # npmjs.com (workflow filename: release.yml), then run:
+    #   gh variable set NPM_PUBLISH_READY --body true -R asdukw/<repo>
+    if: vars.NPM_PUBLISH_READY == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm test
+      # OIDC trusted publishing: npm detects the GitHub OIDC token automatically
+      # and attaches provenance. Do not set NODE_AUTH_TOKEN/NPM_TOKEN here, or npm
+      # falls back to token auth.
+      - run: npm publish --access public

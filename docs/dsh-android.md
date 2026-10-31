@@ -75,8 +75,7 @@ dsh 官方的 `boot()` / CLI loader 在 Android 上不可用：host preparation 
 | `assets/dsh-runtime.zip` | `tools/bundle-dsh.ps1`（pinned dsh + profile + 插件 + 补丁） |
 | sherpa / proot / rg 原生库 | `tools/fetch-sherpa.ps1` / `fetch-proot.ps1` / `fetch-rg.ps1` |
 
-插件源码在 `tools/dsh-phone/plugins/`（submodule，独立公开仓库）：先在插件仓库提交，再更新
-submodule 指针，最后 `bundle-dsh.ps1` 并重装 APK。插件名在 `package.json`、profile insert、
+插件源码在 `tools/dsh-phone/plugins/`，随本仓库提交；改完 `bundle-dsh.ps1` 并重装 APK。插件名在 `package.json`、profile insert、
 `bundle-dsh.ps1` 的 `Package` 三处必须逐字相同；`NodeRuntimeProfileTest` 钉住。
 
 装配顺序与门禁见 [build.md](build.md)。

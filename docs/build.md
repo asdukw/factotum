@@ -34,7 +34,6 @@ docs/                     深度文档 + releases/<tag>.md
 首次检出、以及 `tools/**` 或运行时 pin 变更后，按顺序跑：
 
 ```powershell
-git submodule update --init --recursive   # 设备工具插件在独立仓库
 .\tools\fetch-libnode.ps1                 # libnode + libc++_shared.so（从 NDK 取）
 .\tools\fetch-sherpa.ps1                  # sherpa 原生库 + silero VAD 模型（只服务 ASR）
 .\tools\bundle-dsh.ps1                    # vendored dsh -> assets/dsh-runtime.zip
@@ -50,10 +49,10 @@ git submodule update --init --recursive   # 设备工具插件在独立仓库
 
 ### 插件与 profile
 
-插件在 `tools/dsh-phone/plugins/`（submodule，独立公开仓库）：先在插件仓库提交，再把
-submodule 指针更新到这里。`bundle-dsh.ps1` 用真实 parser 校验 profile——Node 跑在进程内，
-一份坏 YAML 会让 App 直接起不来。改完插件或 profile 后必须重新 `bundle-dsh.ps1` 并重装
-APK（运行时在首次启动时解包），再在真机跑一个真实任务。插件发版走插件仓库自己的 `v*` tag workflow。
+插件在 `tools/dsh-phone/plugins/`，随本仓库一起提交（不再有 submodule）。
+`bundle-dsh.ps1` 用真实 parser 校验 profile——Node 跑在进程内，一份坏 YAML 会让 App 直接起不来。
+改完插件或 profile 后必须重新 `bundle-dsh.ps1` 并重装 APK（运行时在首次启动时解包），
+再在真机跑一个真实任务。
 
 ## 3. 构建与测试
 

@@ -2,6 +2,7 @@ package com.zoneu.app.ui.settings
 
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,7 @@ import com.zoneu.app.agent.WorldBookException
 import com.zoneu.app.agent.WorldBookFormat
 import com.zoneu.app.agent.WorldBookRepository
 import com.zoneu.app.agent.worldBookRepository
+import com.zoneu.app.ui.components.AppBanner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,8 +57,12 @@ fun WorldBookScreen(onBack: () -> Unit, initialBookId: String? = null) {
   }
   val id = selected
   val goBack: () -> Unit = { if (id == null) onBack() else selected = null }
+  // 详情页是同一路由里的内部状态：不拦系统返回，返回键会直接退出整个世界书页。
+  BackHandler(enabled = id != null, onBack = goBack)
   WorldPage(if (id == null) "世界书库" else "共享世界书", goBack) {
-    ui.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    ui.message?.let {
+      AppBanner(text = it, tone = if (ui.messageIsError) AppBanner.Tone.Error else AppBanner.Tone.Success)
+    }
     if (ui.busy) Text("正在处理…")
     if (id == null) {
       WorldLibrary(ui, context) { selected = it }

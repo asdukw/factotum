@@ -1,5 +1,6 @@
 package com.zoneu.app.ui.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -108,10 +109,75 @@ internal fun CharacterEditPage(
   var tags by remember(card.id) { mutableStateOf(card.tags.joinToString("、")) }
   var memoryText by remember(card.id) { mutableStateOf(memory) }
   val world = remember(card.id) { worldDrafts(CardStorageIdentity.draft(card)) }
+  var confirmDiscard by remember(card.id) { mutableStateOf(false) }
+
+  fun draftCard(): CharacterCard =
+    baseline.copy(
+      name = name.trim().ifBlank { "未命名角色" },
+      nickname = nickname.trim(),
+      tagline = tagline.trim(),
+      description = description.trim(),
+      personality = personality.trim(),
+      scenario = scenario.trim(),
+      firstMes = firstMes.trim(),
+      alternateGreetings = splitGreetings(greetingsText),
+      groupOnlyGreetings = splitGreetings(groupGreetingsText),
+      useCardPrompt = useCardPrompt,
+      useExampleDialogue = useExampleDialogue,
+      tags = if (tags == baseline.tags.joinToString("、")) baseline.tags else splitTokens(tags),
+      world = toWorldEntries(world),
+      imported = true,
+    )
+
+  // 与 baseline 比较得出「有未保存改动」：返回和取消都要先问一句，
+  // 这个页面有十几个字段，误触一次丢的是整页编辑。
+  val dirty =
+    remember(
+      baseline,
+      name,
+      nickname,
+      tagline,
+      description,
+      personality,
+      scenario,
+      firstMes,
+      greetingsText,
+      groupGreetingsText,
+      useCardPrompt,
+      useExampleDialogue,
+      tags,
+      memoryText,
+      world.toList(),
+    ) { draftCard() != baseline || memoryText != memory }
+
+  fun save() {
+    val result = onSave(draftCard(), memoryText)
+    conflict = result is CharacterSaveResult.NotCommitted
+    val saved =
+      when (result) {
+        is CharacterSaveResult.Saved -> result.snapshot.card
+        is CharacterSaveResult.MemoryFailed -> result.snapshot.card
+        is CharacterSaveResult.NotCommitted -> null
+      }
+    if (saved != null) {
+      baseline = saved
+      rebaseWorldDrafts(world, saved)
+    }
+  }
+
+  fun requestExit() {
+    if (dirty) confirmDiscard = true else onCancel()
+  }
+
+  // 系统返回也要拦：NavDisplay 的返回不经过上面两个按钮，直接弹栈会把草稿一起带走。
+  BackHandler(enabled = dirty) { confirmDiscard = true }
 
   Surface(Modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-      SettingsHeader(title = "编辑角色", onBack = onCancel)
+      SettingsHeader(title = "编辑角色", onBack = ::requestExit) {
+        // 长表单的保存原本只在页脚：改完顶部的字段要一路滚到底才能存，这里再给一个入口。
+        TextButton(onClick = ::save, enabled = dirty && name.isNotBlank()) { Text("保存") }
+      }
       Column(
         modifier =
           Modifier.fillMaxSize()
@@ -156,41 +222,30 @@ internal fun CharacterEditPage(
         Spacer(Modifier.height(10.dp))
         EditorFooter(
           enabled = name.isNotBlank(),
-          onCancel = onCancel,
-          onSave = {
-            val result = onSave(
-              baseline.copy(
-                name = name.trim().ifBlank { "未命名角色" },
-                nickname = nickname.trim(),
-                tagline = tagline.trim(),
-                description = description.trim(),
-                personality = personality.trim(),
-                scenario = scenario.trim(),
-                firstMes = firstMes.trim(),
-                alternateGreetings = splitGreetings(greetingsText),
-                groupOnlyGreetings = splitGreetings(groupGreetingsText),
-                useCardPrompt = useCardPrompt,
-                useExampleDialogue = useExampleDialogue,
-                tags = if (tags == baseline.tags.joinToString("、")) baseline.tags else splitTokens(tags),
-                world = toWorldEntries(world),
-                imported = true,
-              ),
-              memoryText,
-            )
-            conflict = result is CharacterSaveResult.NotCommitted
-            val saved = when (result) {
-              is CharacterSaveResult.Saved -> result.snapshot.card
-              is CharacterSaveResult.MemoryFailed -> result.snapshot.card
-              is CharacterSaveResult.NotCommitted -> null
-            }
-            if (saved != null) {
-              baseline = saved
-              rebaseWorldDrafts(world, saved)
-            }
-          },
+          onCancel = ::requestExit,
+          onSave = ::save,
         )
       }
     }
+  }
+
+  if (confirmDiscard) {
+    AlertDialog(
+      onDismissRequest = { confirmDiscard = false },
+      title = { Text("放弃未保存的更改？") },
+      text = { Text("名字、人设、开场白、世界设定和角色记忆的改动都会丢失。") },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            confirmDiscard = false
+            onCancel()
+          },
+        ) {
+          Text("放弃", color = MaterialTheme.colorScheme.error)
+        }
+      },
+      dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } },
+    )
   }
 }
 

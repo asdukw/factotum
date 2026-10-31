@@ -36,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,10 +87,13 @@ internal fun ProcessBlock(message: ChatMessage) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier =
-          Modifier.fillMaxWidth().clickable {
-            expanded = !expanded
-            userToggled = true
-          }.padding(horizontal = 12.dp, vertical = 10.dp),
+          Modifier.fillMaxWidth()
+            .clickable {
+              expanded = !expanded
+              userToggled = true
+            }
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
       ) {
         ChevronDownGlyph(
           tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -267,7 +272,13 @@ private fun ThinkingStepRow(
 private fun ToolDetailSheet(call: ToolCallView, onDismiss: () -> Unit) {
   ModalBottomSheet(onDismissRequest = onDismiss) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          // 长参数 / 长结果 + 大字号时会超出屏幕；不滚就只能看到开头。
+          .heightIn(max = 480.dp)
+          .verticalScroll(rememberScrollState())
+          .padding(horizontal = 20.dp)
+          .padding(bottom = 28.dp),
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
       Text("工具调用", style = MaterialTheme.typography.titleLargeEmphasized)

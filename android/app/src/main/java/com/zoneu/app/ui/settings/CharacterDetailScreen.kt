@@ -1,5 +1,6 @@
 package com.zoneu.app.ui.settings
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,12 +17,14 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +47,8 @@ import com.zoneu.app.agent.SecondaryLogic
 import com.zoneu.app.agent.TavernPresetStore
 import com.zoneu.app.agent.WorldEntry
 import com.zoneu.app.ui.chat.LocalWorldNavigation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 一张角色卡的详情页。
@@ -65,51 +70,55 @@ fun CharacterDetailScreen(
   val viewModel: CharacterViewModel = viewModel { CharacterViewModel(appContext) }
   val state by viewModel.state.collectAsStateWithLifecycle()
   // 本地持一份，编辑保存后不用等列表刷新回来（列表是另一条流，回来晚一步就会闪一下旧文案）。
-  var card by remember(characterId) { mutableStateOf(runCatching { CharacterStore.byId(appContext, characterId) }.getOrNull()) }
+  var card by remember(characterId) { mutableStateOf<CharacterCard?>(null) }
+  var memory by remember(characterId) { mutableStateOf("") }
+  var loaded by remember(characterId) { mutableStateOf(false) }
   var editEpoch by remember(characterId) { mutableStateOf(0) }
-  var pinned by remember(characterId) { mutableStateOf(CharacterPins.isPinned(appContext, characterId)) }
+  var pinned by remember(characterId) { mutableStateOf(false) }
   // 空白卡建完直接进编辑：它的第一个动作一定是「写名字」，没有别的可看。
-  var editing by remember(characterId) { mutableStateOf(card?.name.isNullOrBlank()) }
+  var editing by remember(characterId) { mutableStateOf(false) }
+
+  // 读卡 / 读记忆 / 读收藏都是磁盘 IO，放进协程：在组合里同步读会让每次重组都摸一次主线程，
+  // 内置卡多的时候进页会顿一下。
+  LaunchedEffect(characterId) {
+    val (restored, notes) =
+      withContext(Dispatchers.IO) {
+        runCatching { CharacterStore.byId(appContext, characterId) }.getOrNull() to
+          CharacterMemory.notes(appContext, characterId)
+      }
+    card = restored
+    memory = notes
+    pinned = withContext(Dispatchers.IO) { CharacterPins.isPinned(appContext, characterId) }
+    editing = restored?.name.isNullOrBlank()
+    loaded = true
+  }
 
   val current = card
-  if (editing && current != null) {
-    key(editEpoch) {
-      CharacterEditPage(
-        card = current,
-        memory = CharacterMemory.notes(appContext, characterId),
-        onCancel = {
-          card = runCatching { CharacterStore.byId(appContext, characterId) }.getOrNull()
-          editing = false
-        },
-        onReload = {
-          val latest = runCatching { CharacterStore.readSnapshot(appContext, characterId) }
-          if (latest.isSuccess) {
-            card = latest.getOrNull()?.card
-            editEpoch++
-            if (card == null) editing = false
-          } else {
-            Toast.makeText(appContext, "读取失败，草稿仍保留", Toast.LENGTH_LONG).show()
-          }
-        },
-        onSave = { updated, memory ->
-          val result = viewModel.save(updated, memory)
-          when (result) {
-            is CharacterSaveResult.Saved -> {
-              card = result.snapshot.card
-              editing = false
-            }
-
-            is CharacterSaveResult.MemoryFailed -> card = result.snapshot.card
-
-            is CharacterSaveResult.NotCommitted -> Unit
-          }
-          if (result !is CharacterSaveResult.Saved) {
-            Toast.makeText(appContext, viewModel.state.value.message ?: "保存失败", Toast.LENGTH_LONG).show()
-          }
-          result
-        },
-      )
+  if (!loaded) {
+    // 读卡期间先给进度，别闪一帧「角色不存在」。
+    Surface(Modifier.fillMaxSize(), color = settingsPageColor()) {
+      Column(
+        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        CircularProgressIndicator()
+      }
     }
+    return
+  }
+  if (editing && current != null) {
+    CharacterEditor(
+      card = current,
+      memory = memory,
+      editEpoch = editEpoch,
+      appContext = appContext,
+      viewModel = viewModel,
+      onCard = { card = it },
+      onMemory = { memory = it },
+      onEditing = { editing = it },
+      onBumpEpoch = { editEpoch++ },
+    )
     return
   }
 
@@ -117,7 +126,7 @@ fun CharacterDetailScreen(
     card = current,
     pinned = pinned,
     applying = state.applying,
-    memory = CharacterMemory.notes(appContext, characterId),
+    memory = memory,
     onBack = onBack,
     onStart = { id -> viewModel.start(id) { onStartChat() } },
     onTogglePin = { pinned = CharacterPins.toggle(appContext, characterId) },
@@ -133,6 +142,59 @@ fun CharacterDetailScreen(
     },
     modifier = modifier,
   )
+}
+
+/** 编辑态单独成一支：返回、重读、保存三条路径都在这里收口。 */
+@Composable
+private fun CharacterEditor(
+  card: CharacterCard,
+  memory: String,
+  editEpoch: Int,
+  appContext: Context,
+  viewModel: CharacterViewModel,
+  onCard: (CharacterCard?) -> Unit,
+  onMemory: (String) -> Unit,
+  onEditing: (Boolean) -> Unit,
+  onBumpEpoch: () -> Unit,
+) {
+  key(editEpoch) {
+    CharacterEditPage(
+      card = card,
+      memory = memory,
+      onCancel = {
+        onCard(runCatching { CharacterStore.byId(appContext, card.id) }.getOrNull())
+        onEditing(false)
+      },
+      onReload = {
+        val latest = runCatching { CharacterStore.readSnapshot(appContext, card.id) }
+        if (latest.isSuccess) {
+          onCard(latest.getOrNull()?.card)
+          onBumpEpoch()
+          if (latest.getOrNull()?.card == null) onEditing(false)
+        } else {
+          Toast.makeText(appContext, "读取失败，草稿仍保留", Toast.LENGTH_LONG).show()
+        }
+      },
+      onSave = { updated, savedMemory ->
+        val result = viewModel.save(updated, savedMemory)
+        when (result) {
+          is CharacterSaveResult.Saved -> {
+            onCard(result.snapshot.card)
+            onMemory(savedMemory)
+            onEditing(false)
+          }
+
+          is CharacterSaveResult.MemoryFailed -> onCard(result.snapshot.card)
+
+          is CharacterSaveResult.NotCommitted -> Unit
+        }
+        if (result !is CharacterSaveResult.Saved) {
+          Toast.makeText(appContext, viewModel.state.value.message ?: "保存失败", Toast.LENGTH_LONG).show()
+        }
+        result
+      },
+    )
+  }
 }
 
 @Composable

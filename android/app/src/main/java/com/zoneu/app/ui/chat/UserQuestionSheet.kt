@@ -5,12 +5,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -92,7 +97,8 @@ fun UserQuestionSheet(pending: PendingUserQuestions) {
   }
 
   ModalBottomSheet(onDismissRequest = { UserQuestionHub.dismiss() }, sheetState = sheetState) {
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
+    // imePadding：写自定义回答时键盘会盖住输入框和「继续 / 提交」，这一步不能靠用户自己滚。
+    Column(Modifier.fillMaxWidth().imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
       SheetHeader(pending, index)
       Spacer(Modifier.height(10.dp))
       Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
@@ -180,13 +186,23 @@ private fun QuestionOptions(
 @Composable
 private fun OptionRow(option: UserQuestionOption, checked: Boolean, multiSelect: Boolean, onClick: () -> Unit) {
   Row(
-    modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+    modifier =
+      Modifier.fillMaxWidth()
+        // selectable 会把「单选/多选」和「已选中」一起交给读屏；裸 clickable 只会念出一个按钮。
+        .selectable(
+          selected = checked,
+          role = if (multiSelect) Role.Checkbox else Role.RadioButton,
+          onClick = onClick,
+        )
+        .defaultMinSize(minHeight = 48.dp)
+        .padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
+    // 控件本身只是视觉：语义已经在外层 selectable 上，再读一遍会重复两次。
     if (multiSelect) {
-      Checkbox(checked = checked, onCheckedChange = null)
+      Checkbox(checked = checked, onCheckedChange = null, modifier = Modifier.clearAndSetSemantics {})
     } else {
-      RadioButton(selected = checked, onClick = null)
+      RadioButton(selected = checked, onClick = null, modifier = Modifier.clearAndSetSemantics {})
     }
     Spacer(Modifier.width(8.dp))
     Column {

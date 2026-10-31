@@ -2,7 +2,6 @@ package com.zoneu.app.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,11 +28,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zoneu.app.agent.LlmPreset
+import com.zoneu.app.theme.LocalZoneuDarkTheme
 import com.zoneu.app.ui.components.AppBanner
 import com.zoneu.app.ui.components.ProviderModelIcon
 
@@ -45,11 +44,19 @@ import com.zoneu.app.ui.components.ProviderModelIcon
  */
 @Composable
 internal fun settingsPageColor(): Color =
-  if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceContainer
+  if (LocalZoneuDarkTheme.current) {
+    MaterialTheme.colorScheme.background
+  } else {
+    MaterialTheme.colorScheme.surfaceContainer
+  }
 
 @Composable
 internal fun settingsCardColor(): Color =
-  if (isSystemInDarkTheme()) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface
+  if (LocalZoneuDarkTheme.current) {
+    MaterialTheme.colorScheme.surfaceContainer
+  } else {
+    MaterialTheme.colorScheme.surface
+  }
 
 @Composable
 internal fun SectionLabel(text: String) {
@@ -153,7 +160,7 @@ internal enum class BadgeTone {
 /** 语义色徽章：绿=启用、琥珀=禁用、蓝=数量/信息、灰=未支持。深浅色各一套，保证对比度。 */
 @Composable
 internal fun StatusBadge(text: String, tone: BadgeTone, modifier: Modifier = Modifier) {
-  val dark = isSystemInDarkTheme()
+  val dark = LocalZoneuDarkTheme.current
   val (background, foreground) =
     when (tone) {
       BadgeTone.Enabled ->
@@ -202,7 +209,7 @@ internal fun BackCircle(onClick: () -> Unit, modifier: Modifier = Modifier) {
   Box(
     modifier =
       modifier
-        .size(44.dp)
+        .size(48.dp)
         .shadow(1.dp, CircleShape)
         .clip(CircleShape)
         .background(settingsCardColor())
@@ -229,7 +236,6 @@ internal fun SettingsHeader(
     Text(
       text = title,
       style = MaterialTheme.typography.headlineMediumEmphasized,
-      fontWeight = FontWeight.SemiBold,
       modifier = Modifier.weight(1f),
     )
     actions()
@@ -244,7 +250,6 @@ internal fun BigTitle(title: String, subtitle: String? = null) {
     Text(
       text = title,
       style = MaterialTheme.typography.headlineLargeEmphasized,
-      fontWeight = FontWeight.SemiBold,
     )
     if (subtitle != null) {
       Spacer(Modifier.height(6.dp))
@@ -289,7 +294,7 @@ internal fun DetailTabBar(selected: DetailTab, onSelect: (DetailTab) -> Unit) {
             .clip(RoundedCornerShape(18.dp))
             .background(
               if (active) {
-                MaterialTheme.colorScheme.primary.copy(alpha = if (isSystemInDarkTheme()) 0.22f else 0.10f)
+                MaterialTheme.colorScheme.primary.copy(alpha = if (LocalZoneuDarkTheme.current) 0.22f else 0.10f)
               } else {
                 Color.Transparent
               },

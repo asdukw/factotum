@@ -598,6 +598,8 @@ private fun FetchedModelsDialog(
   onDismiss: () -> Unit,
 ) {
   var query by remember { mutableStateOf("") }
+  // 勾选状态是 Set 查询：几百条模型时，每行再线性扫一遍 List 是白费。
+  val selectedSet = remember(selectedModels) { selectedModels.toSet() }
   val visible = remember(models, query) {
     val needle = query.trim()
     if (needle.isEmpty()) models else models.filter { it.contains(needle, ignoreCase = true) }
@@ -625,10 +627,10 @@ private fun FetchedModelsDialog(
           )
         } else {
           LazyColumn(Modifier.heightIn(max = 420.dp)) {
-            items(visible) { id ->
+            items(visible, key = { it }) { id ->
               FetchedModelRow(
                 id = id,
-                checked = id in selectedModels,
+                checked = id in selectedSet,
                 onToggle = { onToggle(id) },
               )
             }

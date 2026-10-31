@@ -45,6 +45,10 @@ fun MarkdownText(
   style: TextStyle = MaterialTheme.typography.bodyMedium,
 ) {
   val baseStyle = style.copy(color = style.color.takeIf { it.isSpecified } ?: MaterialTheme.colorScheme.onSurface)
+  val scheme = MaterialTheme.colorScheme
+  val type = MaterialTheme.typography
+  // markdownTypography / markdownColor 本身就是 @Composable，只能在组合里调用；
+  // 传进去的都是主题里的稳定对象，颜色变了它们会跟着重组。
   val typography =
     markdownTypography(
       text = baseStyle,
@@ -53,27 +57,27 @@ fun MarkdownText(
       bullet = baseStyle,
       list = baseStyle,
       table = baseStyle,
-      h1 = MaterialTheme.typography.titleLargeEmphasized.copy(color = baseStyle.color),
-      h2 = MaterialTheme.typography.titleMediumEmphasized.copy(color = baseStyle.color),
-      h3 = MaterialTheme.typography.titleSmallEmphasized.copy(color = baseStyle.color),
+      h1 = type.titleLargeEmphasized.copy(color = baseStyle.color),
+      h2 = type.titleMediumEmphasized.copy(color = baseStyle.color),
+      h3 = type.titleSmallEmphasized.copy(color = baseStyle.color),
       h4 = baseStyle.copy(fontWeight = FontWeight.SemiBold),
       h5 = baseStyle.copy(fontWeight = FontWeight.SemiBold),
       h6 = baseStyle.copy(fontWeight = FontWeight.SemiBold),
-      quote = baseStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-      code = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, color = baseStyle.color),
+      quote = baseStyle.copy(color = scheme.onSurfaceVariant),
+      code = type.bodySmall.copy(fontFamily = FontFamily.Monospace, color = baseStyle.color),
       inlineCode = baseStyle.copy(fontFamily = FontFamily.Monospace),
       textLink =
         TextLinkStyles(
-          style = SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline),
+          style = SpanStyle(color = scheme.primary, textDecoration = TextDecoration.Underline),
         ),
     )
   val colors =
     markdownColor(
       text = baseStyle.color,
-      codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
-      inlineCodeBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
-      dividerColor = MaterialTheme.colorScheme.outlineVariant,
-      tableBackground = MaterialTheme.colorScheme.surfaceContainerLow,
+      codeBackground = scheme.surfaceContainerHighest,
+      inlineCodeBackground = scheme.surfaceContainerHighest,
+      dividerColor = scheme.outlineVariant,
+      tableBackground = scheme.surfaceContainerLow,
     )
   // 组件对象整棵树共用；highlighted* 是库里的顶层 val，引用稳定。
   val components =

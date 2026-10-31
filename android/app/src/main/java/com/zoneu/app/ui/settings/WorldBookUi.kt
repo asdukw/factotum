@@ -19,6 +19,20 @@ internal class WorldBookUi(val repository: WorldBookRepository, private val scop
   var busy by mutableStateOf(false)
     private set
   var message by mutableStateOf<String?>(null)
+    private set
+  var messageIsError by mutableStateOf(false)
+    private set
+
+  /** 成功提示：与失败共用一条横幅，但用成功色，不然「已保存」是红的。 */
+  fun notice(text: String) {
+    message = text
+    messageIsError = false
+  }
+
+  fun fail(text: String) {
+    message = text
+    messageIsError = true
+  }
 
   fun run(block: suspend () -> Unit) {
     if (busy) return
@@ -33,6 +47,7 @@ internal class WorldBookUi(val repository: WorldBookRepository, private val scop
         @Suppress("TooGenericExceptionCaught") error: Exception,
       ) {
         message = worldUiFailure(error)
+        messageIsError = true
       } finally {
         busy = false
       }

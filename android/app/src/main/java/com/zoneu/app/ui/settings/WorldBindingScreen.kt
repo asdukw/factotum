@@ -62,7 +62,7 @@ fun WorldBindingScreen(scope: String, targetId: String, onBack: () -> Unit) {
       TextButton(enabled = !ui.busy, onClick = {
         ui.run {
           role = ui.repository.setRoleBindings(role.copy(bookIds = selected), role.revision)
-          ui.message = "已保存未来会话的默认绑定"
+          ui.notice("已保存未来会话的默认绑定")
         }
       }) { Text("保存角色默认绑定") }
     }

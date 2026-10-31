@@ -1,9 +1,12 @@
 package com.zoneu.app.ui.settings
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
@@ -13,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -104,61 +108,66 @@ internal fun SettingsScreen(
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
       SettingsHeader(title = "设置", onBack = onBack)
-      Column(
-        modifier =
-          Modifier.fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 24.dp),
-      ) {
-        SettingsGroup {
-          SettingsRow(
-            glyph = GlyphKind.Sparkles,
-            title = "模型与服务",
-            subtitle = providerSubtitle(state),
-            onClick = onOpenModelServices,
-          ) {
-            ChevronRight()
+      // 大屏上把设置列限宽居中：一整行横跨 1000dp 的条目读起来很费劲。
+      // weight(1f) 而不是 fillMaxSize：后者在 Column 里会按整页高度量，底部被顶出屏幕。
+      Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Column(
+          modifier =
+            Modifier.widthIn(max = 840.dp)
+              .fillMaxSize()
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 16.dp)
+              .padding(bottom = 24.dp),
+        ) {
+          SettingsGroup {
+            SettingsRow(
+              glyph = GlyphKind.Sparkles,
+              title = "模型与服务",
+              subtitle = providerSubtitle(state),
+              onClick = onOpenModelServices,
+            ) {
+              ChevronRight()
+            }
+            SettingsDivider()
+            SettingsRow(
+              glyph = GlyphKind.Accessibility,
+              title = "执行层",
+              subtitle = executionSubtitle(accessibilityEnabled, allowAllWrites),
+              onClick = onOpenExecution,
+            ) {
+              ChevronRight()
+            }
+            SettingsDivider()
+            SettingsRow(
+              glyph = GlyphKind.Mail,
+              title = "连接器",
+              subtitle = connectorSubtitle(state),
+              onClick = onOpenConnectors,
+            ) {
+              ChevronRight()
+            }
+            SettingsDivider()
+            SettingsRow(
+              glyph = GlyphKind.Speaker,
+              title = "语音",
+              subtitle = if (state.voiceAutoRead) "回复完自动朗读" else "点回复下方的喇叭朗读",
+              onClick = onOpenVoice,
+            ) {
+              ChevronRight()
+            }
           }
-          SettingsDivider()
-          SettingsRow(
-            glyph = GlyphKind.Accessibility,
-            title = "执行层",
-            subtitle = executionSubtitle(accessibilityEnabled, allowAllWrites),
-            onClick = onOpenExecution,
-          ) {
-            ChevronRight()
-          }
-          SettingsDivider()
-          SettingsRow(
-            glyph = GlyphKind.Mail,
-            title = "连接器",
-            subtitle = connectorSubtitle(state),
-            onClick = onOpenConnectors,
-          ) {
-            ChevronRight()
-          }
-          SettingsDivider()
-          SettingsRow(
-            glyph = GlyphKind.Speaker,
-            title = "语音",
-            subtitle = if (state.voiceAutoRead) "回复完自动朗读" else "点回复下方的喇叭朗读",
-            onClick = onOpenVoice,
-          ) {
-            ChevronRight()
-          }
-        }
-        ScheduledTasksSection(onOpenScheduledTasks)
-        EntertainmentSection(onOpenCharacters, onOpenTavernPresets)
-        SectionLabel("关于")
-        SettingsGroup {
-          SettingsRow(
-            glyph = GlyphKind.Info,
-            title = "关于",
-            subtitle = "zoneu ${appVersionName()}",
-            onClick = onOpenAbout,
-          ) {
-            ChevronRight()
+          ScheduledTasksSection(onOpenScheduledTasks)
+          EntertainmentSection(onOpenCharacters, onOpenTavernPresets)
+          SectionLabel("关于")
+          SettingsGroup {
+            SettingsRow(
+              glyph = GlyphKind.Info,
+              title = "关于",
+              subtitle = "zoneu ${appVersionName()}",
+              onClick = onOpenAbout,
+            ) {
+              ChevronRight()
+            }
           }
         }
       }

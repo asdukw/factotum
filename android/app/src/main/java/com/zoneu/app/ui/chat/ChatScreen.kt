@@ -20,10 +20,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,11 +42,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -88,6 +92,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.SoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -139,6 +144,7 @@ import com.zoneu.app.device.DeviceAction
 import com.zoneu.app.node.NodeRuntime
 import com.zoneu.app.schedule.ScheduledTaskScheduler
 import com.zoneu.app.schedule.needsExactAlarmReminder
+import com.zoneu.app.ui.components.AppBanner
 import com.zoneu.app.ui.components.ProviderModelIcon
 import com.zoneu.app.ui.settings.ChevronRight
 import com.zoneu.app.voice.RecognizedText
@@ -235,7 +241,8 @@ fun ChatScreen(
     onSeedGreeting = viewModel.seedGreeting,
     onImpersonate = viewModel.replies.impersonate,
     onStartGroup = viewModel.roleplayActions::newGroup,
-    actions = bubbleActions(viewModel),
+    // 每次重组新建一个 BubbleActions 会让每个气泡都认为参数变了，整列消息跟着重组。
+    actions = remember(viewModel) { bubbleActions(viewModel) },
     modifier = modifier,
   )
 }
@@ -648,19 +655,25 @@ private fun MicButton(state: VoiceInput.State, onClick: () -> Unit) {
       1f
     }
 
+  val label = if (listening) "停止录音" else "语音输入"
+  // 视觉圆仍是 40dp，命中区扩到 48dp：小圆点好看，但按不准。
   Box(
     modifier =
-      Modifier.size(38.dp)
+      Modifier.size(48.dp)
         .clip(CircleShape)
-        .background(background)
-        .clickable(onClick = onClick)
-        .semantics { contentDescription = if (listening) "停止录音" else "语音输入" },
+        .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+        .semantics { contentDescription = label },
     contentAlignment = Alignment.Center,
   ) {
-    if (busy) {
-      LoadingIndicator(modifier = Modifier.size(18.dp))
-    } else {
-      MicGlyph(tint = tint.copy(alpha = alpha))
+    Box(
+      modifier = Modifier.size(40.dp).clip(CircleShape).background(background),
+      contentAlignment = Alignment.Center,
+    ) {
+      if (busy) {
+        LoadingIndicator(modifier = Modifier.size(18.dp))
+      } else {
+        MicGlyph(tint = tint.copy(alpha = alpha))
+      }
     }
   }
 }
@@ -787,11 +800,13 @@ private fun ChatBody(
     PermissionPrompts()
     StatusBanners(state = state, voiceError = voiceError, dictation = dictation)
 
-    Box(Modifier.weight(1f).fillMaxWidth()) {
+    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
       MessageList(
         onOpenCharacterDetail = onOpenCharacterDetail,
         state = state,
         listState = listState,
+        // 平板 / 横屏上正文铺满整屏一行会超过 100 个字符，读起来很累；限宽后居中。
+        modifier = Modifier.widthIn(max = CHAT_CONTENT_MAX_WIDTH).fillMaxSize(),
         speakingId = voiceState?.messageId,
         greetings = greetings,
         onPickGreeting = onSeedGreeting,
@@ -799,19 +814,13 @@ private fun ChatBody(
         canContinue = state.tavernDirect && !state.isStreaming,
       )
 
-      // 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。
-      if (!following) {
-        SmallFloatingActionButton(
-          onClick = {
-            following = true
-            listState.requestScrollToBottom()
-          },
-          modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp),
-          containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ) {
-          ChevronDownGlyph(tint = MaterialTheme.colorScheme.onSurface)
-        }
-      }
+      JumpToBottomButton(
+        visible = !following,
+        onClick = {
+          following = true
+          listState.requestScrollToBottom()
+        },
+      )
     }
 
     // 前情提要只出现在扮演会话里：日常对话没有「记忆」这回事，摆一行只会让人以为有。
@@ -835,6 +844,22 @@ private fun ChatBody(
       onImpersonate = onImpersonate.takeIf { state.tavernDirect && !state.writingLine },
       writingLine = state.writingLine,
     )
+  }
+}
+
+/** 用户上滑后自动跟随会暂停；给一个明确的「回到底部」出口（RikkaHub / Chatbox 同款）。 */
+@Composable
+private fun BoxScope.JumpToBottomButton(visible: Boolean, onClick: () -> Unit) {
+  if (!visible) return
+  SmallFloatingActionButton(
+    onClick = onClick,
+    modifier =
+      Modifier.align(Alignment.BottomEnd)
+        .padding(end = 16.dp, bottom = 16.dp)
+        .semantics { contentDescription = "回到底部" },
+    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+  ) {
+    ChevronDownGlyph(tint = MaterialTheme.colorScheme.onSurface)
   }
 }
 
@@ -1003,6 +1028,7 @@ private class ModelSheet {
 private fun MessageList(
   state: ChatUiState,
   listState: LazyListState,
+  modifier: Modifier = Modifier.fillMaxSize(),
   speakingId: String?,
   greetings: List<String> = emptyList(),
   onPickGreeting: (String) -> Unit = {},
@@ -1015,17 +1041,22 @@ private fun MessageList(
   val tailId = state.messages.lastOrNull { it.role == ChatRole.Assistant }?.id
   LazyColumn(
     state = listState,
-    modifier = Modifier.fillMaxSize(),
+    modifier = modifier,
     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
     verticalArrangement = Arrangement.spacedBy(18.dp),
   ) {
     if (state.messages.isEmpty()) {
       item {
-        EmptyHint(
-          characterName = state.activeCharacterName,
-          greetings = greetings,
-          onPickGreeting = onPickGreeting,
-        )
+        // 读库还没完成时先给「正在读取」，别让用户对着空态问候以为历史丢了。
+        if (!state.ready) {
+          RestoringHint()
+        } else {
+          EmptyHint(
+            characterName = state.activeCharacterName,
+            greetings = greetings,
+            onPickGreeting = onPickGreeting,
+          )
+        }
       }
     }
     items(items = state.messages, key = { it.id }) { message ->
@@ -1153,7 +1184,12 @@ private fun ChatTopBar(
     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    IconButton(onClick = onOpenSessions) { MenuGlyph(tint = MaterialTheme.colorScheme.onSurface) }
+    IconButton(
+      onClick = onOpenSessions,
+      modifier = Modifier.semantics { contentDescription = "打开会话列表" },
+    ) {
+      MenuGlyph(tint = MaterialTheme.colorScheme.onSurface)
+    }
     Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
       Text(
         text = title,
@@ -1177,12 +1213,18 @@ private fun ChatTopBar(
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier =
-          Modifier.clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onLeaveRoleplay)
+          Modifier.defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClickLabel = "退出角色扮演", onClick = onLeaveRoleplay)
             .padding(horizontal = 8.dp, vertical = 6.dp),
       )
     }
-    IconButton(onClick = onNewSession) { PlusGlyph(tint = MaterialTheme.colorScheme.onSurface) }
+    IconButton(
+      onClick = onNewSession,
+      modifier = Modifier.semantics { contentDescription = "新建会话" },
+    ) {
+      PlusGlyph(tint = MaterialTheme.colorScheme.onSurface)
+    }
   }
 }
 
@@ -1322,8 +1364,11 @@ private fun ExactAlarmPrompt() {
 @Composable
 private fun StatusBanners(state: ChatUiState, voiceError: String?, dictation: VoiceInput.State) {
   if (!state.configured) {
-    // 别再指向 local.properties：构建期注入已经去掉，那里没有密钥可填了。
-    BannerText("未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。")
+    // 没填 key 是「还没配好」而不是出错：用警告色，别让首屏第一眼就是红的。
+    BannerText(
+      "未配置 API key：点左上角菜单 → 设置，填自己的 key（存进 Keystore）。",
+      tone = AppBanner.Tone.Warning,
+    )
   }
   state.storageError?.let { reason -> BannerText("本地存储不可用，消息无法保存：$reason") }
   voiceError?.let { reason -> BannerText("朗读失败：$reason") }
@@ -1331,13 +1376,29 @@ private fun StatusBanners(state: ChatUiState, voiceError: String?, dictation: Vo
 }
 
 @Composable
-private fun BannerText(text: String) {
-  Text(
+private fun BannerText(text: String, tone: AppBanner.Tone = AppBanner.Tone.Error) {
+  AppBanner(
     text = text,
-    style = MaterialTheme.typography.bodySmall,
-    color = MaterialTheme.colorScheme.error,
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+    tone = tone,
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
   )
+}
+
+/** 首屏读库：一句话 + 系统进度，比一个静态空态更诚实。 */
+@Composable
+private fun RestoringHint() {
+  Column(
+    modifier = Modifier.fillMaxWidth().padding(top = 96.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    LoadingIndicator()
+    Text(
+      text = "正在读取会话…",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(top = 12.dp),
+    )
+  }
 }
 
 /** 点一下：先做事，再收抽屉。抽出来是因为六个入口都要这一下，写在行内会把版面撑散。 */
@@ -1367,7 +1428,11 @@ private fun DrawerHeader(enabled: Boolean, showPlus: Boolean, onPlus: () -> Unit
       modifier = Modifier.weight(1f).padding(start = 12.dp),
     )
     if (showPlus) {
-      IconButton(onClick = onPlus, enabled = enabled) {
+      IconButton(
+        onClick = onPlus,
+        enabled = enabled,
+        modifier = Modifier.semantics { contentDescription = "新建会话" },
+      ) {
         PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
       }
     }
@@ -1391,7 +1456,7 @@ private fun DrawerTabs(tab: DrawerTab, onSelect: (DrawerTab) -> Unit) {
       Surface(
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.weight(1f).clickable { onSelect(entry) },
+        modifier = Modifier.weight(1f).selectable(selected = selected, role = Role.Tab) { onSelect(entry) },
       ) {
         Text(
           text = entry.label,
@@ -1540,8 +1605,18 @@ private fun RoleplayHeader(
         )
       }
       // 去详情页：人设、开场、世界设定都在那儿，和「开新会话」是两个动作。
-      IconButton(onClick = onDetail, enabled = enabled) { ChevronRight() }
-      IconButton(onClick = onNew, enabled = enabled) {
+      IconButton(
+        onClick = onDetail,
+        enabled = enabled,
+        modifier = Modifier.semantics { contentDescription = "查看角色详情" },
+      ) {
+        ChevronRight()
+      }
+      IconButton(
+        onClick = onNew,
+        enabled = enabled,
+        modifier = Modifier.semantics { contentDescription = "用这张卡开新会话" },
+      ) {
         PlusGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
       }
     }
@@ -1573,8 +1648,9 @@ private fun SessionDrawer(
   var tab by remember(activeCharacterId) {
     mutableStateOf(if (activeCharacterId != null) DrawerTab.Roleplay else DrawerTab.Normal)
   }
-  val normalSessions = sessions.filter { !it.isRoleplay }
-  val grouped = groupSessions(normalSessions, System.currentTimeMillis())
+  val normalSessions = remember(sessions) { sessions.filter { !it.isRoleplay } }
+  // 只在会话列表变化时重算：聊天每来一个 token 都重组这一层，filter + 分组 + 读时钟没必要跟着跑。
+  val grouped = remember(normalSessions) { groupSessions(normalSessions, System.currentTimeMillis()) }
 
   ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
     Column(Modifier.fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp)) {
@@ -1789,7 +1865,7 @@ private fun SessionRow(
   Surface(
     color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
     shape = RoundedCornerShape(12.dp),
-    modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onOpen),
+    modifier = Modifier.fillMaxWidth().selectable(selected = selected, enabled = enabled, role = Role.Button, onClick = onOpen),
   ) {
     Row(
       // 支线缩进一格并加个转折符：侧栏要能一眼看出「这几条是从上面那段分出来的」。
@@ -1808,12 +1884,20 @@ private fun SessionRow(
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f),
       )
-      Text(
-        text = "删",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onDelete).padding(8.dp),
-      )
+      Box(
+        modifier =
+          Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = "删除会话", onClick = onDelete)
+            .semantics { contentDescription = "删除会话" },
+        contentAlignment = Alignment.Center,
+      ) {
+        Text(
+          text = "删",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
     }
   }
 }
@@ -1929,16 +2013,28 @@ private fun UserBubble(content: String) {
     Surface(
       color = MaterialTheme.colorScheme.secondaryContainer,
       shape = RoundedCornerShape(22.dp),
-      modifier = Modifier.widthIn(max = USER_BUBBLE_MAX_WIDTH),
+      modifier =
+        Modifier.widthIn(max = USER_BUBBLE_MAX_WIDTH)
+          // 读屏要能听出这句是「你说的」，不然整段对话只剩一个声音。
+          .semantics(mergeDescendants = true) { contentDescription = "你说：$content" },
     ) {
-      Text(
-        text = content,
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onSecondaryContainer,
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-      )
+      // 和助手正文一样可以长按选中：用户消息也要能复制出去。
+      SelectionContainer {
+        Text(
+          text = content,
+          style = MaterialTheme.typography.bodyLarge,
+          color = MaterialTheme.colorScheme.onSecondaryContainer,
+          modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        )
+      }
     }
   }
+}
+
+/** 「删这轮」「从此处重来」都是永久删除：先确认，再做。 */
+private enum class ConfirmingTurn(val title: String, val body: String) {
+  Delete("删除这一轮？", "这一轮回复和它的工具调用会一起删除，不能撤销。"),
+  RetryFrom("从此处重来？", "这句话之后的所有消息都会被删除，然后重新回答，不能撤销。"),
 }
 
 /** 助手消息：全宽正文（无气泡），上面依次挂思考折叠与工具卡，末尾一行操作。 */
@@ -1951,72 +2047,154 @@ private fun AssistantMessage(
   canContinue: Boolean = false,
   onOpenCharacterDetail: (String) -> Unit = {},
 ) {
+  var confirming by remember(message.id) { mutableStateOf<ConfirmingTurn?>(null) }
   Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     // 过程（工具 + 思考）收进一个可折叠块；正文永远在块外面。
     ProcessBlock(message)
     CharacterCardResultActions(message.toolCalls, onOpenCharacterDetail)
     WorldBookResultActions(message.toolCalls)
-
-    val error = message.error
-    when {
-      // 先看正文：流到一半断了、或者续写时请求失败，已经写出来的字必须留着 ——
-      // 只因为最后出过错就把整段回复藏起来，用户会以为内容丢了（其实是库里还在）。
-      message.content.isNotEmpty() ->
-        MarkdownText(markdown = message.content + if (message.streaming) STREAMING_CURSOR else "")
-
-      error != null ->
-        Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-
-      message.reasoning.isNullOrBlank() && message.toolCalls.isEmpty() ->
-        if (message.thinking) ThinkingIndicator() else Text(text = "…", style = MaterialTheme.typography.bodyMedium)
+    AssistantBody(message)
+    if ((message.content.isNotBlank() || message.error != null) && !message.streaming) {
+      AssistantActions(
+        message = message,
+        speaking = speaking,
+        tail = tail,
+        actions = actions,
+        canContinue = canContinue,
+        onConfirm = { confirming = it },
+      )
     }
+  }
+  confirming?.let { pending ->
+    TurnConfirmDialog(
+      pending = pending,
+      messageId = message.id,
+      actions = actions,
+      onDismiss = { confirming = null },
+    )
+  }
+}
 
-    if (error != null && message.content.isNotEmpty()) {
-      Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
-    }
+/** 助手正文与错误：正文优先，已经写出来的字不因为最后出错而消失。 */
+@Composable
+private fun AssistantBody(message: ChatMessage) {
+  val error = message.error
+  when {
+    message.content.isNotEmpty() ->
+      MarkdownText(
+        markdown = message.content + if (message.streaming) STREAMING_CURSOR else "",
+        // 正文是阅读主体，和用户气泡同字号（16sp）；层级靠标题和行距区分，而不是让长回答更小。
+        style = MaterialTheme.typography.bodyLarge,
+      )
 
-    if (message.content.isNotBlank() && !message.streaming) {
-      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    error != null ->
+      Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Text(
+          text = error,
+          color = MaterialTheme.colorScheme.onErrorContainer,
+          style = MaterialTheme.typography.bodyMedium,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        )
+      }
+
+    message.reasoning.isNullOrBlank() && message.toolCalls.isEmpty() ->
+      if (message.thinking) ThinkingIndicator() else Text(text = "…", style = MaterialTheme.typography.bodyMedium)
+  }
+
+  if (error != null && message.content.isNotEmpty()) {
+    Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+  }
+}
+
+/** 正文下面那一行操作：FlowRow 负责窄屏换行，token 计数固定在右侧不参与换行。 */
+@Composable
+private fun AssistantActions(
+  message: ChatMessage,
+  speaking: Boolean,
+  tail: Boolean,
+  actions: BubbleActions,
+  canContinue: Boolean,
+  onConfirm: (ConfirmingTurn) -> Unit,
+) {
+  Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(
+      modifier = Modifier.weight(1f),
+      horizontalArrangement = Arrangement.spacedBy(2.dp),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      if (message.content.isNotBlank()) {
         SpeakAction(messageId = message.id, markdown = message.content, speaking = speaking)
-        Spacer(Modifier.width(2.dp))
         CopyAction(text = message.content)
-        if (tail) {
-          if (message.variantTotal > 1) {
-            Spacer(Modifier.width(2.dp))
-            VariantStepper(
-              index = message.variantIndex,
-              total = message.variantTotal,
-              onStep = actions.swipe,
-            )
-          }
-          // 续写只在直连通道下出现：dsh 那边做不到「接着写」，给个按不动的按钮比不给更糟
-          if (canContinue) {
-            Spacer(Modifier.width(2.dp))
-            TextAction(text = "续写", onClick = actions.continueReply)
-          }
-          Spacer(Modifier.width(2.dp))
+      } else {
+        // 只有错误没有正文：唯一有意义的下一步是重来，而不是「重写」一段不存在的话。
+        TextAction(text = "重试", onClick = { actions.retryFrom(message.id) })
+      }
+      if (tail) {
+        if (message.variantTotal > 1) {
+          VariantStepper(index = message.variantIndex, total = message.variantTotal, onStep = actions.swipe)
+        }
+        // 续写只在直连通道下出现：dsh 那边做不到「接着写」，给个按不动的按钮比不给更糟
+        if (canContinue) {
+          TextAction(text = "续写", onClick = actions.continueReply)
+        }
+        if (message.content.isNotBlank()) {
           TextAction(text = "重写", onClick = actions.regenerate)
           // 支线：复制到此为止的历史到新会话。放在「重写」旁边是因为两者回答的是同一个问题
           // （「这句不满意」），只是重写保留候选、支线保留整条走法。
           TextAction(text = "开新支线", onClick = { actions.fork(message.id) })
-          TextAction(text = "删这轮", onClick = actions.deleteTurn)
-        } else {
-          // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，
-          // 删了它会让后面悬空。给的是「从此处重来」—— 连同后面的一起丢掉，回到这句话重新回答。
-          Spacer(Modifier.width(2.dp))
-          TextAction(text = "从此处重来", onClick = { actions.retryFrom(message.id) })
         }
-        // token 计数贴在末尾：它是「这一条花了多少上下文」，不是这句话的一部分，
-        // 所以用最轻的字重与最旁边的位置，不抢正文的注意力。
-        Spacer(Modifier.weight(1f))
-        Text(
-          text = "≈${Tokens.format(Tokens.estimate(message.content))} tokens",
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        TextAction(text = "删这轮", onClick = { onConfirm(ConfirmingTurn.Delete) })
+      } else {
+        // 中间那几条不给「重写」：重写的是这一轮，而这一轮后面还接着别人说的话，
+        // 删了它会让后面悬空。给的是「从此处重来」—— 连同后面的一起丢掉，回到这句话重新回答。
+        TextAction(text = "从此处重来", onClick = { onConfirm(ConfirmingTurn.RetryFrom) })
       }
     }
+    // token 计数贴在末尾：它是「这一条花了多少上下文」，不是这句话的一部分，
+    // 所以用最轻的字重与最旁边的位置，不抢正文的注意力。maxLines=1 保证它不会被压成竖排。
+    if (message.content.isNotBlank()) {
+      Text(
+        text = "≈${Tokens.format(Tokens.estimate(message.content))} tokens",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        modifier = Modifier.padding(start = 8.dp),
+      )
+    }
   }
+}
+
+/** 删除类操作的二次确认：两处入口共用一套文案与危险色。 */
+@Composable
+private fun TurnConfirmDialog(
+  pending: ConfirmingTurn,
+  messageId: String,
+  actions: BubbleActions,
+  onDismiss: () -> Unit,
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(pending.title) },
+    text = { Text(pending.body) },
+    confirmButton = {
+      TextButton(
+        onClick = {
+          onDismiss()
+          when (pending) {
+            ConfirmingTurn.Delete -> actions.deleteTurn()
+            ConfirmingTurn.RetryFrom -> actions.retryFrom(messageId)
+          }
+        },
+      ) {
+        Text("删除", color = MaterialTheme.colorScheme.error)
+      }
+    },
+    dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+  )
 }
 
 /**
@@ -2030,8 +2208,11 @@ private fun SpeakAction(messageId: String, markdown: String, speaking: Boolean) 
   Row(
     verticalAlignment = Alignment.CenterVertically,
     modifier =
-      Modifier.clip(RoundedCornerShape(8.dp))
-        .clickable { VoiceReader.toggle(context, messageId, markdown) }
+      Modifier.defaultMinSize(minHeight = 48.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .clickable(role = Role.Button, onClickLabel = if (speaking) "停止朗读" else "朗读") {
+          VoiceReader.toggle(context, messageId, markdown)
+        }
         .padding(horizontal = 8.dp, vertical = 6.dp),
   ) {
     SpeakerGlyph(tint = tint)
@@ -2052,13 +2233,21 @@ private fun SpeakAction(messageId: String, markdown: String, speaking: Boolean) 
  */
 @Composable
 private fun TextAction(text: String, onClick: () -> Unit) {
-  Text(
-    text = text,
-    style = MaterialTheme.typography.labelSmall,
-    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  // 文字小、命中区不能小：48dp 高是平台最小值，直接写进这一层，调用点就不用各记一遍。
+  Box(
     modifier =
-      Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
-  )
+      Modifier.defaultMinSize(minHeight = 48.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .clickable(role = Role.Button, onClickLabel = text, onClick = onClick)
+        .padding(horizontal = 8.dp, vertical = 6.dp),
+    contentAlignment = Alignment.Center,
+  ) {
+    Text(
+      text = text,
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
 }
 
 /** 复制助手正文（用户点按触发；不打印、不落日志）。 */
@@ -2075,10 +2264,13 @@ private fun CopyAction(text: String) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
     modifier =
-      Modifier.clip(RoundedCornerShape(8.dp)).clickable {
-        copyTextToClipboard(context, text)
-        copied = true
-      }.padding(horizontal = 8.dp, vertical = 6.dp),
+      Modifier.defaultMinSize(minHeight = 48.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .clickable(role = Role.Button, onClickLabel = "复制") {
+          copyTextToClipboard(context, text)
+          copied = true
+        }
+        .padding(horizontal = 8.dp, vertical = 6.dp),
   ) {
     if (copied) {
       CheckGlyph(tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2100,20 +2292,20 @@ internal fun reasoningSummary(text: String): String =
 
 @Composable
 private fun ThinkingIndicator() {
-  // 推理内容不展示正文，只做一个呼吸效果，避免界面看起来卡住。
-  val infiniteTransition = rememberInfiniteTransition(label = "thinking")
-  val alpha by
-    infiniteTransition.animateFloat(
-      initialValue = 0.35f,
-      targetValue = 1f,
-      animationSpec = infiniteRepeatable(animation = tween(durationMillis = 700), repeatMode = RepeatMode.Reverse),
-      label = "thinking-alpha",
+  // 用走动的省略号表示在跑，而不是把文字淡到 0.35 —— 那会让灰字掉到 1.5:1，
+  // 看起来像坏了。文字保持全对比度，动画只加在标点上。
+  val transition = rememberInfiniteTransition(label = "thinking")
+  val phase by
+    transition.animateFloat(
+      initialValue = 0f,
+      targetValue = 3f,
+      animationSpec = infiniteRepeatable(animation = tween(durationMillis = 900), repeatMode = RepeatMode.Restart),
+      label = "thinking-phase",
     )
   Text(
-    text = "思考中…",
+    text = "思考中" + ".".repeat(phase.toInt().coerceIn(0, 3)),
     style = MaterialTheme.typography.bodyMedium,
     color = MaterialTheme.colorScheme.onSurfaceVariant,
-    modifier = Modifier.alpha(alpha),
   )
 }
 
@@ -2138,8 +2330,12 @@ private fun ChatInputBar(
   writingLine: Boolean = false,
 ) {
   val textStyle = MaterialTheme.typography.bodyLarge
-  Column(modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+  Box(
+    modifier = Modifier.fillMaxWidth().imePadding().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+    contentAlignment = Alignment.Center,
+  ) {
     Surface(
+      modifier = Modifier.widthIn(max = CHAT_CONTENT_MAX_WIDTH).fillMaxWidth(),
       color = MaterialTheme.colorScheme.surface,
       shape = RoundedCornerShape(26.dp),
       border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -2155,8 +2351,8 @@ private fun ChatInputBar(
           textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
           cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
           maxLines = 5,
-          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-          keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
+          // 输入框最多 5 行，回车就该换行；发送只走右侧按钮，流式中也不会出现「按了没反应」。
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
           decorationBox = { inner ->
             Box(contentAlignment = Alignment.CenterStart) {
               if (value.isEmpty()) {
@@ -2174,7 +2370,7 @@ private fun ChatInputBar(
           if (modelPreset != null) {
             Box(
               modifier =
-                Modifier.size(40.dp)
+                Modifier.size(48.dp)
                   .clip(CircleShape)
                   .clickable(enabled = !isStreaming, onClick = onModelSwitchClick)
                   .semantics { contentDescription = "切换模型" },
@@ -2319,17 +2515,28 @@ private fun SendStopButton(
   val background = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
   val tint = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
 
+  val label = if (isStreaming) "停止生成" else "发送"
+  // 48dp 命中区包 40dp 视觉圆：这是聊天页最常按的键，不能比平台最小触控目标还小。
   Box(
     modifier =
-      modifier.size(38.dp).clip(CircleShape).background(background).clickable(enabled = enabled) {
-        if (isStreaming) onStop() else onSend()
-      },
+      modifier
+        .size(48.dp)
+        .clip(CircleShape)
+        .clickable(enabled = enabled, role = Role.Button, onClickLabel = label) {
+          if (isStreaming) onStop() else onSend()
+        }
+        .semantics { contentDescription = label },
     contentAlignment = Alignment.Center,
   ) {
-    if (isStreaming) {
-      StopGlyph(tint = tint)
-    } else {
-      ArrowUpGlyph(tint = tint)
+    Box(
+      modifier = Modifier.size(40.dp).clip(CircleShape).background(background),
+      contentAlignment = Alignment.Center,
+    ) {
+      if (isStreaming) {
+        StopGlyph(tint = tint)
+      } else {
+        ArrowUpGlyph(tint = tint)
+      }
     }
   }
 }
@@ -2376,6 +2583,9 @@ internal fun prettyJson(raw: String): String =
 private val PRETTY_JSON = Json { prettyPrint = true }
 private val WHITESPACE = Regex("\\s+")
 private val USER_BUBBLE_MAX_WIDTH = 300.dp
+
+/** 大屏上的阅读宽度上限：一行 40–50 个汉字，再宽就要靠眼球来回扫。 */
+private val CHAT_CONTENT_MAX_WIDTH = 720.dp
 
 private const val ARGUMENT_SUMMARY_CHARS = 72
 private const val STREAMING_CURSOR = " ▌"

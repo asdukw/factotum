@@ -28,6 +28,8 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
     val selectedId: String = TavernPreset.DEFAULT_ID,
     /** 编辑区来源的名字；内置的那套显示「默认（内置）· 另存为新预设才能保留改动」。 */
     val editingBuiltIn: Boolean = false,
+    /** 编辑区来源的名字：删除、另存这类动作要能指名道姓，不能只说「当前」。 */
+    val editingName: String = "",
     val system: String = TavernPreset.DEFAULT_SYSTEM,
     val postHistory: String = TavernPreset.DEFAULT_POST_HISTORY,
     /** 世界书递归层数（0–[TavernPreset.RECURSION_MAX]）。 */
@@ -91,6 +93,7 @@ class TavernPresetViewModel(private val appContext: Context) : ViewModel() {
         constantChars = preset.constantChars,
         historyChars = preset.historyChars,
         editingBuiltIn = preset.builtIn,
+        editingName = preset.name,
         dirty = false,
         preview = preview(preset.system, preset.postHistory),
       )

@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -20,13 +21,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.zoneu.app.agent.TavernPreset
 
@@ -40,7 +44,8 @@ import com.zoneu.app.agent.TavernPreset
 fun TavernPresetScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
   val appContext = LocalContext.current.applicationContext
   val viewModel: TavernPresetViewModel = viewModel { TavernPresetViewModel(appContext) }
-  val state by viewModel.state.collectAsState()
+  val state by viewModel.state.collectAsStateWithLifecycle()
+  var confirmDelete by remember { mutableStateOf(false) }
 
   Surface(modifier = modifier.fillMaxSize(), color = settingsPageColor()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -66,22 +71,51 @@ fun TavernPresetScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             onEdit = { viewModel.edit(preset.id) },
           )
         }
-        presetActions(state, viewModel)
+        presetActions(state, viewModel, onRequestDelete = { confirmDelete = true })
         presetEditor(state, viewModel)
         presetPreview(state)
       }
+    }
+    if (confirmDelete) {
+      AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("删除预设？") },
+        text = {
+          Text(
+            "「${state.editingName.ifBlank { "编辑中的预设" }}」会从列表移除，不能撤销。" +
+              "如果它正在生效，会回到内置默认。",
+          )
+        },
+        confirmButton = {
+          TextButton(
+            onClick = {
+              confirmDelete = false
+              viewModel.delete()
+            },
+          ) {
+            Text("删除", color = MaterialTheme.colorScheme.error)
+          }
+        },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
+      )
     }
   }
 }
 
 /** 列表下方的操作行：另存 / 恢复默认文本 / 删除（内置那套不给删）。 */
-private fun LazyListScope.presetActions(state: TavernPresetViewModel.UiState, viewModel: TavernPresetViewModel) {
+private fun LazyListScope.presetActions(
+  state: TavernPresetViewModel.UiState,
+  viewModel: TavernPresetViewModel,
+  onRequestDelete: () -> Unit,
+) {
   item {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       TextButton(onClick = { viewModel.saveAsCopy() }) { Text("另存为新预设") }
       TextButton(onClick = { viewModel.resetDraft() }) { Text("编辑区恢复默认") }
       if (!state.editingBuiltIn) {
-        TextButton(onClick = { viewModel.delete() }) { Text("删除当前") }
+        // 「当前」有两套含义（生效的那套 / 编辑区里那套）；按钮直接说清删的是谁。
+        val name = state.editingName.ifBlank { "编辑中的预设" }
+        TextButton(onClick = onRequestDelete) { Text("删除「$name」") }
       }
     }
   }

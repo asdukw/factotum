@@ -38,7 +38,7 @@ internal fun SharedWorldCardExport(card: CharacterCard) {
       ui.run {
         writeWorldDocument(context, uri, frozen)
         text = null
-        ui.message = "已导出便携卡片快照"
+        ui.notice("已导出便携卡片快照")
       }
     }
   }

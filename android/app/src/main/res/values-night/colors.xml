@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Compose 的 DarkBackground 一致：系统深色下冷启动不闪白。 -->
+    <color name="window_background">#111216</color>
+</resources>

@@ -56,7 +56,7 @@ internal fun WorldBookDetail(ui: WorldBookUi, id: String, onDeleted: () -> Unit)
       ui.refresh()
       usage = ui.repository.usage(id)
       done()
-      ui.message = "已保存。已有会话继续使用原共享修订，须主动升级。"
+      ui.notice("已保存。已有会话继续使用原共享修订，须主动升级。")
     }
   }
   WorldBookSummary(
@@ -154,7 +154,7 @@ private fun rememberWorldExporter(ui: WorldBookUi, current: WorldBook): androidx
     if (uri != null) {
       ui.run {
         writeWorldDocument(context, uri, WorldBookFormat.exportText(current))
-        ui.message = "已导出所示修订"
+        ui.notice("已导出所示修订")
       }
     }
   }
@@ -182,7 +182,7 @@ private fun WorldBookSummary(
     TextButton(onClick = {
       ui.run {
         ui.repository.copy(current.id, current.revision)
-        ui.message = "已复制；可返回书库查看副本"
+        ui.notice("已复制；可返回书库查看副本")
         ui.refresh()
       }
     }, enabled = !ui.busy) {

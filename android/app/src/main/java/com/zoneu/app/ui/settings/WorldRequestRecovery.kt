@@ -25,7 +25,11 @@ internal fun WorldRequestRecovery(sessionId: String, ui: WorldBookUi) {
   TextButton(enabled = !ui.busy, onClick = {
     ui.run {
       val verified = com.zoneu.app.agent.WorldRequestRecovery.reconcile(context, sessionId, plan.requestId)
-      ui.message = if (verified) "已核对正式结算证据" else "仍无法核对，保留待结算状态；可明确放弃本次计时。"
+      if (verified) {
+        ui.notice("已核对正式结算证据")
+      } else {
+        ui.fail("仍无法核对，保留待结算状态；可明确放弃本次计时。")
+      }
     }
   }) { Text("重新核对结算证据") }
   TextButton(enabled = !ui.busy, onClick = { confirm = true }) { Text("明确放弃待结算请求") }
@@ -35,7 +39,7 @@ internal fun WorldRequestRecovery(sessionId: String, ui: WorldBookUi) {
       ui.run {
         com.zoneu.app.agent.WorldRequestRecovery.abandon(context, sessionId, plan.requestId)
         pending = null
-        ui.message = "已明确放弃本次待结算计时"
+        ui.notice("已明确放弃本次待结算计时")
       }
     }
   }

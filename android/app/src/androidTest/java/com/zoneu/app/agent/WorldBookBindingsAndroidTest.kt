@@ -142,7 +142,20 @@ class WorldBookBindingsAndroidTest {
     runBlocking {
       val session = sessions.createSession(null, SessionKind.Roleplay, "role")
       val manifest = repository.manifest(session.id)!!
-      val plan = WorldRequestPlan("request", session.id, manifest.revision, "send", 1, 4, emptyList(), emptyList(), emptyList())
+      // 具名参数：这个构造器随着 requestKind / advanceTurn 的加入挪过位置，
+      // 位置参数一旦错位，编译器会把它报成 Map.Entry.copy 之类完全不相干的错。
+      val plan =
+        WorldRequestPlan(
+          requestId = "request",
+          sessionId = session.id,
+          bindingRevision = manifest.revision,
+          generation = "send",
+          turn = 1,
+          seed = 4,
+          injections = emptyList(),
+          decisions = emptyList(),
+          activated = emptyList(),
+        )
       val book = repository.create(WorldBook())
       val updated = repository.setManifest(manifest.copy(books = listOf(WorldBookBinding(book.id, book.revision))), manifest.revision)
       fails("WORLD_REVISION_CONFLICT") { repository.savePlan(plan) }

@@ -17,72 +17,59 @@
   <a href="README_zh.md">简体中文</a> · English
 </p>
 
-zoneu is an Android app that hands your phone to an AI model. Ask it to find a setting, send a
-message, check your calendar or work through an app. It reads the screen and taps, types and
-swipes the way you would, so it works with any app it can see — not just a fixed list.
+zoneu lets you ask an AI to do things on your phone: find a setting, send a message, check your
+calendar, or get something done inside an app. It works with whatever is on screen, not a fixed
+list of apps.
 
 > [!IMPORTANT]
-> zoneu does not include an AI model. You need your own API key from a provider such as OpenAI,
-> Anthropic, DeepSeek, OpenCode Go or OpenRouter. Usage is billed by that provider.
-
-## What you need
-
-- An Android phone with an arm64 chip (almost all modern phones). Screenshots need Android 11+.
-- An API key from a supported provider, or any OpenAI-compatible endpoint.
+> zoneu does not include an AI. Bring your own API key from OpenAI, Anthropic, DeepSeek,
+> OpenCode Go or OpenRouter. Usage is billed by that provider.
 
 ## Install
 
 1. Download `zoneu-vX.Y.Z-arm64-v8a.apk` from [Releases](https://github.com/asdukw/zoneu/releases).
 2. Open the file and allow installing apps from this source.
-3. Install over the old version when updating — this keeps your chats and settings.
+3. To update, install the new version over the old one — your chats and settings are kept.
 
 > [!WARNING]
-> Uninstalling zoneu permanently deletes your chat history and saved keys.
+> Uninstalling zoneu erases your chats and saved keys.
 
-## First setup
+## Set up
 
-1. **Add your API key.** Open Settings → Providers, pick a provider and paste your key.
-2. **Turn on accessibility.** Android Settings → Accessibility → zoneu. Only you can do this.
-   Android will warn that the app can read everything on screen; that is what lets it operate
-   your phone. Turn it off at any time to stop zoneu from acting.
-3. **Optional: connect Gmail** in Settings if you want zoneu to read your mail.
+1. **Add your API key** in Settings → Providers.
+2. **Turn on screen access** for zoneu in Android Settings → Accessibility. Only you can do this;
+   it is what lets the AI see and operate your phone. Turn it off whenever you want.
+3. **Optional:** connect Gmail in Settings if you want help with email.
 
-## What it can do
+## What you can ask it to do
 
-- **Use any app** — search, tap, type, scroll, and move between apps to finish a task.
-- **Calendar and alarms** — add, change or delete events and alarms without opening an app.
-- **Scheduled tasks** — "every morning at 8, check the weather"; daily, weekly, monthly, yearly or
-  once.
-- **Gmail** — search and read mail. Changing, drafting or sending mail always asks you first.
-- **Voice** — talk to it (speech stays on your phone) and have replies read aloud.
-- **Roleplay** — tavern-style chat with character cards, world books, group chats and memory.
+- Get things done in any app — find, open, fill in, send or scroll until the task is finished.
+- Manage your calendar and alarms.
+- Run a task on a schedule, such as checking the weather every morning.
+- Read and handle your Gmail.
+- Talk to it, and have replies read aloud.
+- Chat in character with cards and world books.
 
-Actions that change something — sending mail, editing your calendar, running a command — show a
-confirmation panel first. Nothing is sent or changed until you tap allow.
+Anything that changes or sends something asks for your approval first.
 
-## Privacy
+## Your privacy
 
-- Your API key is stored in Android's Keystore and never written to logs or the app package.
-- **What the AI sees is sent to the provider you chose.** That includes screen text, screenshots
-  (the whole screen, including anything visible), and any mail or character-card content you ask
-  it to work with. Choose a provider you trust.
-- Chat history is encrypted on your phone. zoneu keeps no copy of your mailbox and does not read
-  mail in the background.
-- You can revoke access at any time by turning off accessibility or disconnecting Gmail.
+- Your API key is stored securely on your phone.
+- **Whatever the AI sees goes to the provider you chose** — screen content, and anything you ask it
+  to work with, such as email or character cards. Pick a provider you trust.
+- Chats are encrypted on your phone. zoneu keeps no copy of your mailbox and never reads it in the
+  background.
+- Turn off screen access or disconnect Gmail at any time to revoke that access.
 
-## If something goes wrong
+## If something does not work
 
-- **Tasks stall when you switch apps:** some phones freeze background apps. Allow zoneu to run in
-  the background in your phone's battery settings.
-- **An app shows nothing to read:** some apps hide their screen from accessibility (WeChat is one).
-  zoneu falls back to screenshots, which is slower and needs Android 11+.
-- **Gmail will not connect with the built-in client:** it is in Google testing mode, so only
-  allowlisted accounts work. Add your own OAuth client in Settings to use any account.
+- **Tasks stop when you switch apps:** allow zoneu to run in the background in your phone's
+  battery settings.
+- **An app cannot be read:** some apps block screen access (WeChat, for example). zoneu falls back
+  to screenshots, which is slower.
+- **Gmail will not connect:** the built-in connection is limited to test accounts. See the Q&A.
 - **Scheduled tasks fire late:** allow "Alarms & reminders" for zoneu in Android settings.
 
 More answers: [docs/Q&A.md](docs/Q&A.md).
 
-## For developers
-
-Build instructions, architecture and verification status live in [AGENTS.md](AGENTS.md),
-[docs/build.md](docs/build.md) and the [docs](docs/) folder.
+For developers: [AGENTS.md](AGENTS.md) and [docs/](docs/).
